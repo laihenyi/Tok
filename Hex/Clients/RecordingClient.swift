@@ -283,23 +283,22 @@ actor RecordingClientLive {
 
   func startRecording() async {
     // If audio is playing on the default output, pause it.
-    if await isAudioPlayingOnDefaultOutput() && hexSettings.pauseMediaOnRecord {
-      print("Audio is playing on the default output; pausing it for recording.")
+    if hexSettings.pauseMediaOnRecord {
       // First, pause all media applications using their AppleScript interface.
       pausedPlayers = await pauseAllMediaApplications()
       // If no specific players were paused, pause generic media using the media key.
       if pausedPlayers.isEmpty {
-        await MainActor.run {
-          sendMediaKey()
+        if await isAudioPlayingOnDefaultOutput() {
+          print("Audio is playing on the default output; pausing it for recording.")
+          await MainActor.run {
+            sendMediaKey()
+          }
+          didPauseMedia = true
+          print("Media was playing; pausing it for recording.")
         }
-        didPauseMedia = true
-        print("Media was playing; pausing it for recording.")
       } else {
         print("Paused media players: \(pausedPlayers.joined(separator: ", "))")
       }
-    } else {
-      print("Audio is not playing on the default output; not pausing it.")
-      didPauseMedia = false
     }
 
     let settings: [String: Any] = [
