@@ -133,25 +133,25 @@ func pauseAllMediaApplications() async -> [String] {
       // VLC has a different AppleScript interface
       scriptParts.append("""
       try
-        tell application "VLC"
-          if it is running then
-          tell application "VLC" to set isVLCplaying to playing
+        set appName to "VLC"
+        if application appName is running then
+          tell application appName to set isVLCplaying to playing
             if isVLCplaying then
-              tell application "VLC" to play
-              set end of pausedPlayers to "VLC"
+              tell application appName to play
+              set end of pausedPlayers to appName
             end if
-          end if
-        end tell
+        end if
       end try
       """)
     } else {
       // Standard interface for Music/iTunes/Spotify
       scriptParts.append("""
       try
-        tell application "\(appName)"
+        set appName to "\(appName)"
+        tell application appName
           if it is running and player state is playing then
             pause
-            set end of pausedPlayers to "\(appName)"
+            set end of pausedPlayers to appName
           end if
         end tell
       end try
@@ -217,11 +217,9 @@ func resumeMediaApplications(_ players: [String]) async {
       // Standard interface for Music/iTunes/Spotify
       scriptParts.append("""
       try
-        tell application "\(player)"
-          if it is running then
-            play
-          end if
-        end tell
+        if application "\(player)" is running then
+          tell application "\(player)" to play
+        end if
       end try
       """)
     }
