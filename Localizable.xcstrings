@@ -279,6 +279,16 @@
         }
       }
     },
+    "Ignore below %.1fs" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unter %0.1fs ignorieren"
+          }
+        }
+      }
+    },
     "Microphone" : {
       "comment" : "Microphone permission.",
       "localizations" : {
