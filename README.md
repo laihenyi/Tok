@@ -3,6 +3,7 @@
 Press-and-hold a hotkey to transcribe your voice and paste the result wherever you're typing.
 
 **[Download Hex for macOS](https://hex-updates.s3.us-east-1.amazonaws.com/hex-latest.dmg)**
+> **Note:** Hex is currently only available for **Apple Silicon** Macs.
 
 I've opened-sourced the project in the hopes that others will find it useful! We rely on the awesome [WhisperKit](https://github.com/argmaxinc/WhisperKit) for transcription, and the incredible [Swift Composable Architecture](https://github.com/pointfreeco/swift-composable-architecture) for structuring the app. Please open issues with any questions or feedback! ❤️
 
