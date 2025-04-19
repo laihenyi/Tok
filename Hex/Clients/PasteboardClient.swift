@@ -14,14 +14,20 @@ import SwiftUI
 @DependencyClient
 struct PasteboardClient {
     var paste: @Sendable (String) async -> Void
+    var copy: @Sendable (String) async -> Void
 }
 
 extension PasteboardClient: DependencyKey {
     static var liveValue: Self {
         let live = PasteboardClientLive()
-        return .init { text in
-            await live.paste(text: text)
-        }
+        return .init(
+            paste: { text in
+                await live.paste(text: text)
+            },
+            copy: { text in
+                await live.copy(text: text)
+            }
+        )
     }
 }
 
@@ -42,6 +48,13 @@ struct PasteboardClientLive {
         } else {
             simulateTypingWithAppleScript(text)
         }
+    }
+    
+    @MainActor
+    func copy(text: String) async {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     // Function to save the current state of the NSPasteboard
@@ -154,10 +167,12 @@ struct PasteboardClientLive {
             cmdUp?.post(tap: .cghidEventTap)
         }
 
-        // Restore original pasteboard contents
-        try? await Task.sleep(for: .seconds(0.1))
-        pasteboard.clearContents()
-        restorePasteboardState(pasteboard: pasteboard, savedItems: originalItems)
+        // Only restore original pasteboard contents if copy to clipboard is disabled
+        if !hexSettings.copyToClipboard {
+            try? await Task.sleep(for: .seconds(0.1))
+            pasteboard.clearContents()
+            restorePasteboardState(pasteboard: pasteboard, savedItems: originalItems)
+        }
     }
     
     func simulateTypingWithAppleScript(_ text: String) {

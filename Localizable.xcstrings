@@ -125,6 +125,9 @@
         }
       }
     },
+    "Copy transcription text to clipboard in addition to pasting it" : {
+
+    },
     "Delete All" : {
       "comment" : "Delete all transcriptions from history.",
       "localizations" : {

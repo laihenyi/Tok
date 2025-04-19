@@ -376,7 +376,7 @@ private extension TranscriptionFeature {
           $0.history.insert(transcript, at: 0)
         }
 
-        // Paste text
+        // Paste text (and copy if enabled via pasteWithClipboard)
         await pasteboard.paste(result)
         await soundEffect.play(.pasteTranscript)
       } catch {

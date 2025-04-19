@@ -164,6 +164,13 @@ struct SettingsView: View {
                 } icon: {
                     Image(systemName: "pause")
                 }
+                
+                Label {
+                    Toggle("Copy to clipboard", isOn: $store.hexSettings.copyToClipboard)
+                    Text("Copy transcription text to clipboard in addition to pasting it")
+                } icon: {
+                    Image(systemName: "doc.on.clipboard")
+                }
 			} header: {
 				Text("General")
 			}
