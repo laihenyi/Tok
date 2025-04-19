@@ -29,6 +29,9 @@
         }
       }
     },
+    "Accuracy" : {
+
+    },
     "Are you sure you want to delete all transcripts? This action cannot be undone." : {
       "comment" : "Delete transcript history confirm",
       "localizations" : {
@@ -128,6 +131,9 @@
     "Copy transcription text to clipboard in addition to pasting it" : {
 
     },
+    "Delete" : {
+
+    },
     "Delete All" : {
       "comment" : "Delete all transcriptions from history.",
       "localizations" : {
@@ -152,6 +158,7 @@
     },
     "Delete Selected Model" : {
       "comment" : "Delete the selected model in settings.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -172,6 +179,9 @@
         }
       }
     },
+    "Download" : {
+
+    },
     "Download Error: %@" : {
       "comment" : "Model download error.",
       "localizations" : {
@@ -185,6 +195,7 @@
     },
     "Download Selected Model" : {
       "comment" : "In Transcription Model section in settings.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -196,6 +207,7 @@
     },
     "Downloading %@..." : {
       "comment" : "In Transcription Model section in settings.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -204,6 +216,9 @@
           }
         }
       }
+    },
+    "Downloading model..." : {
+
     },
     "Ensure Hex can access your microphone and system accessibility features." : {
       "comment" : "Footer for permissions section in settings",
@@ -302,6 +317,9 @@
           }
         }
       }
+    },
+    "Model" : {
+
     },
     "Model prewarming..." : {
 
@@ -416,6 +434,9 @@
         }
       }
     },
+    "Selected: %@" : {
+
+    },
     "Settings" : {
       "comment" : "title for settings view.",
       "localizations" : {
@@ -438,6 +459,9 @@
         }
       }
     },
+    "Show All Models" : {
+
+    },
     "Show Changelog" : {
       "localizations" : {
         "de" : {
@@ -458,6 +482,18 @@
           }
         }
       }
+    },
+    "Show Recommended" : {
+
+    },
+    "Showing all models" : {
+
+    },
+    "Showing recommended models" : {
+
+    },
+    "Size" : {
+
     },
     "Sound" : {
       "comment" : "sound section in general settings.",
@@ -480,6 +516,9 @@
           }
         }
       }
+    },
+    "Speed" : {
+
     },
     "Stop playback" : {
       "comment" : "Help text for play button in history view.",
