@@ -1,3 +1,6 @@
+### 1.4
+- Bump version for stable release
+
 ### 0.1.33
 - Add copy to clipboard option
 - Add support for complete keyboard shortcuts
