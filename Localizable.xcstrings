@@ -412,6 +412,9 @@
         }
       }
     },
+    "Recommended for custom hotkeys to avoid interfering with normal usage" : {
+
+    },
     "Request Permission" : {
       "comment" : "Button texts for requesting permissions in settings.",
       "localizations" : {
@@ -564,6 +567,9 @@
         }
       }
     },
+    "Use double-tap only" : {
+
+    },
     "Version" : {
       "comment" : "Label for version in About section.",
       "localizations" : {
@@ -585,6 +591,9 @@
           }
         }
       }
+    },
+    "You're using a full keyboard shortcut. Double-tap is recommended." : {
+
     },
     "Your transcription history will appear here." : {
       "comment" : "Empty history subtitle.",

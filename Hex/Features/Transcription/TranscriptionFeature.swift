@@ -157,6 +157,7 @@ private extension TranscriptionFeature {
 
         // Always keep hotKeyProcessor in sync with current user hotkey preference
         hotKeyProcessor.hotkey = hexSettings.hotkey
+        hotKeyProcessor.useDoubleTapOnly = hexSettings.useDoubleTapOnly
 
         // Process the key event
         switch hotKeyProcessor.process(keyEvent: keyEvent) {
@@ -168,7 +169,8 @@ private extension TranscriptionFeature {
             Task { await send(.hotKeyPressed) }
           }
           // If the hotkey is purely modifiers, return false to keep it from interfering with normal usage
-          return keyEvent.key != nil
+          // But if useDoubleTapOnly is true, always intercept the key
+          return hexSettings.useDoubleTapOnly || keyEvent.key != nil
 
         case .stopRecording:
           Task { await send(.hotKeyReleased) }
