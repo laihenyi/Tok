@@ -1,7 +1,7 @@
 [
     {
         "displayName": "Small",
-        "internalName": "openai_whisper-tiny-v3-v20240930",
+        "internalName": "openai_whisper-tiny",
         "size": "Small",
         "accuracyStars": 2,
         "speedStars": 4,
@@ -9,7 +9,7 @@
     },
     {
         "displayName": "Medium",
-        "internalName": "openai_whisper-medium-v3-v20240930",
+        "internalName": "openai_whisper-base",
         "size": "Medium",
         "accuracyStars": 3,
         "speedStars": 3,

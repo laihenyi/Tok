@@ -144,64 +144,27 @@ public struct ModelDownloadFeature {
 				// Create our curated model list from models.json
 				var curatedList: [CuratedModelInfo] = []
 				
-				// Load models from JSON file
-				if let url = Bundle.main.url(forResource: "models", withExtension: "json", subdirectory: "Data"),
-				   let data = try? Data(contentsOf: url),
-				   let modelDefinitions = try? JSONDecoder().decode([CuratedModelInfo].self, from: data) {
-					
-					// Update download status for each model
-					for var modelDefinition in modelDefinitions {
-						// Find download status in the fetched model list
-						let isDownloaded = list.first(where: { $0.name == modelDefinition.internalName })?.isDownloaded ?? false
-						modelDefinition.isDownloaded = isDownloaded
-						curatedList.append(modelDefinition)
+				// Load models.json - check both root resources and Data subdirectory
+				let jsonURL: URL? = Bundle.main.url(forResource: "models", withExtension: "json") ?? 
+					Bundle.main.url(forResource: "models", withExtension: "json", subdirectory: "Data")
+				
+				if let url = jsonURL {
+					do {
+						let data = try Data(contentsOf: url)
+						let modelDefinitions = try JSONDecoder().decode([CuratedModelInfo].self, from: data)
+						
+						// Update download status for each model
+						for var modelDefinition in modelDefinitions {
+							// Find download status in the fetched model list
+							let isDownloaded = list.first(where: { $0.name == modelDefinition.internalName })?.isDownloaded ?? false
+							modelDefinition.isDownloaded = isDownloaded
+							curatedList.append(modelDefinition)
+						}
+					} catch {
+						print("Error loading or parsing models.json: \(error)")
 					}
 				} else {
-					// Fallback to default models if JSON loading fails
-					let smallModelName = "openai_whisper-tiny"
-					let mediumModelName = "openai_whisper-medium-v3-v20240930"
-					let largeModelName = "openai_whisper-large-v3-v20240930"
-					
-					let isSmallDownloaded = list.first(where: { $0.name == smallModelName })?.isDownloaded ?? false
-					let isMediumDownloaded = list.first(where: { $0.name == mediumModelName })?.isDownloaded ?? false
-					let isLargeDownloaded = list.first(where: { $0.name == largeModelName })?.isDownloaded ?? false
-					
-					// Create our curated model infos as fallback
-					curatedList.append(
-						CuratedModelInfo(
-							displayName: "Small",
-							internalName: smallModelName,
-							size: "Small",
-							accuracyStars: 2,
-							speedStars: 4,
-							storageSize: "100MB",
-							isDownloaded: isSmallDownloaded
-						)
-					)
-					
-					curatedList.append(
-						CuratedModelInfo(
-							displayName: "Medium",
-							internalName: mediumModelName,
-							size: "Medium",
-							accuracyStars: 3,
-							speedStars: 3,
-							storageSize: "500MB",
-							isDownloaded: isMediumDownloaded
-						)
-					)
-					
-					curatedList.append(
-						CuratedModelInfo(
-							displayName: "Large",
-							internalName: largeModelName,
-							size: "Large",
-							accuracyStars: 4,
-							speedStars: 2,
-							storageSize: "1GB",
-							isDownloaded: isLargeDownloaded
-						)
-					)
+					print("Warning: models.json not found in bundle - no models will be displayed")
 				}
 				
 				state.curatedModels = IdentifiedArrayOf(uniqueElements: curatedList)
