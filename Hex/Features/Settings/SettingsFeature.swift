@@ -98,10 +98,61 @@ struct SettingsFeature {
           await send(.checkPermissions)
           await send(.modelDownload(.fetchModels))
           await send(.loadAvailableInputDevices)
+          
+          // Set up periodic refresh of available devices (every 120 seconds)
+          // Using a longer interval to reduce resource usage
+          let deviceRefreshTask = Task {
+            for await _ in clock.timer(interval: .seconds(120)) {
+              // Only refresh when the app is active to save resources
+              if NSApplication.shared.isActive {
+                await send(.loadAvailableInputDevices)
+              }
+            }
+          }
+          
+          // Listen for device connection/disconnection notifications
+          // Using a simpler debounced approach with a single task
+          var deviceUpdateTask: Task<Void, Never>?
+          
+          // Helper function to debounce device updates
+          func debounceDeviceUpdate() {
+            deviceUpdateTask?.cancel()
+            deviceUpdateTask = Task {
+              try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+              if !Task.isCancelled {
+                await send(.loadAvailableInputDevices)
+              }
+            }
+          }
+          
+          let deviceConnectionObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name(rawValue: "AVCaptureDeviceWasConnected"),
+            object: nil,
+            queue: .main
+          ) { _ in
+            debounceDeviceUpdate()
+          }
+          
+          let deviceDisconnectionObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name(rawValue: "AVCaptureDeviceWasDisconnected"),
+            object: nil,
+            queue: .main
+          ) { _ in
+            debounceDeviceUpdate()
+          }
+          
+          // Be sure to clean up resources when the task is finished
+          defer {
+            deviceUpdateTask?.cancel()
+            NotificationCenter.default.removeObserver(deviceConnectionObserver)
+            NotificationCenter.default.removeObserver(deviceDisconnectionObserver)
+          }
 
           for try await keyEvent in await keyEventMonitor.listenForKeyPress() {
             await send(.keyEvent(keyEvent))
           }
+          
+          deviceRefreshTask.cancel()
         }
 
       case .startSettingHotKey:

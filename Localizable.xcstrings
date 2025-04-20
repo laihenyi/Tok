@@ -424,6 +424,9 @@
     "Recommended for custom hotkeys to avoid interfering with normal usage" : {
 
     },
+    "Refresh available input devices" : {
+
+    },
     "Request Permission" : {
       "comment" : "Button texts for requesting permissions in settings.",
       "localizations" : {
@@ -434,6 +437,9 @@
           }
         }
       }
+    },
+    "Selected device not connected. System default will be used." : {
+
     },
     "Selected Model" : {
       "comment" : "Label for selecting which model is active",

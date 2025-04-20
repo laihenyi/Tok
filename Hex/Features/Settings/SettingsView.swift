@@ -68,16 +68,35 @@ struct SettingsView: View {
 			if store.microphonePermission == .granted && !store.availableInputDevices.isEmpty {
 				Section {
 					// Input device picker
-					Label {
-						Picker("Input Device", selection: $store.hexSettings.selectedMicrophoneID) {
-							Text("System Default").tag(nil as String?)
-							ForEach(store.availableInputDevices) { device in
-								Text(device.name).tag(device.id as String?)
+					HStack {
+						Label {
+							Picker("Input Device", selection: $store.hexSettings.selectedMicrophoneID) {
+								Text("System Default").tag(nil as String?)
+								ForEach(store.availableInputDevices) { device in
+									Text(device.name).tag(device.id as String?)
+								}
 							}
+							.pickerStyle(.menu)
+							.id(UUID()) // Force refresh when devices change
+						} icon: {
+							Image(systemName: "mic.circle")
 						}
-						.pickerStyle(.menu)
-					} icon: {
-						Image(systemName: "mic.circle")
+						
+						Button(action: {
+							store.send(.loadAvailableInputDevices)
+						}) {
+							Image(systemName: "arrow.clockwise")
+						}
+						.buttonStyle(.borderless)
+						.help("Refresh available input devices")
+					}
+					
+					// Show fallback note for selected device not connected
+					if let selectedID = store.hexSettings.selectedMicrophoneID, 
+					   !store.availableInputDevices.contains(where: { $0.id == selectedID }) {
+						Text("Selected device not connected. System default will be used.")
+							.font(.caption)
+							.foregroundColor(.secondary)
 					}
 				} header: {
 					Text("Microphone Selection")

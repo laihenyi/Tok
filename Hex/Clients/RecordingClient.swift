@@ -58,7 +58,7 @@ class MediaRemoteController {
 
   init?() {
     // Open the private framework.
-    guard let handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_NOW) else {
+    guard let handle = dlopen("/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote", RTLD_NOW) as UnsafeMutableRawPointer? else {
       print("Unable to open MediaRemote")
       return nil
     }
@@ -284,16 +284,40 @@ actor RecordingClientLive {
   /// Tracks which specific media players were paused
   private var pausedPlayers: [String] = []
   
+  // Cache to store already-processed device information
+  private var deviceCache: [AudioDeviceID: (hasInput: Bool, name: String?)] = [:]
+  private var lastDeviceCheck = Date(timeIntervalSince1970: 0)
+  
   /// Gets all available input devices on the system
   func getAvailableInputDevices() async -> [AudioInputDevice] {
+    // Reset cache if it's been more than 5 minutes since last full refresh
+    let now = Date()
+    if now.timeIntervalSince(lastDeviceCheck) > 300 {
+      deviceCache.removeAll()
+      lastDeviceCheck = now
+    }
+    
     // Get all available audio devices
     let devices = getAllAudioDevices()
     var inputDevices: [AudioInputDevice] = []
     
     // Filter to only input devices and convert to our model
     for device in devices {
-      if deviceHasInput(deviceID: device), let name = getDeviceName(deviceID: device) {
-        inputDevices.append(AudioInputDevice(id: String(device), name: name))
+      let hasInput: Bool
+      let name: String?
+      
+      // Check cache first to avoid expensive Core Audio calls
+      if let cached = deviceCache[device] {
+        hasInput = cached.hasInput
+        name = cached.name
+      } else {
+        hasInput = deviceHasInput(deviceID: device)
+        name = hasInput ? getDeviceName(deviceID: device) : nil
+        deviceCache[device] = (hasInput, name)
+      }
+      
+      if hasInput, let deviceName = name {
+        inputDevices.append(AudioInputDevice(id: String(device), name: deviceName))
       }
     }
     
@@ -466,11 +490,18 @@ actor RecordingClientLive {
       }
     }
     
-    // If user has selected a specific microphone, set it as the default input device
+    // If user has selected a specific microphone, verify it exists and set it as the default input device
     if let selectedDeviceIDString = hexSettings.selectedMicrophoneID,
        let selectedDeviceID = AudioDeviceID(selectedDeviceIDString) {
-      print("Setting selected input device: \(selectedDeviceID)")
-      setInputDevice(deviceID: selectedDeviceID)
+      // Check if the selected device is still available
+      let devices = getAllAudioDevices()
+      if devices.contains(selectedDeviceID) && deviceHasInput(deviceID: selectedDeviceID) {
+        print("Setting selected input device: \(selectedDeviceID)")
+        setInputDevice(deviceID: selectedDeviceID)
+      } else {
+        // Device no longer available, fall back to system default
+        print("Selected device \(selectedDeviceID) is no longer available, using system default")
+      }
     } else {
       print("Using default system microphone")
     }
