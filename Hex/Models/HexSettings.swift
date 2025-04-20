@@ -16,6 +16,7 @@ struct HexSettings: Codable, Equatable {
 	var copyToClipboard: Bool = true
 	var useDoubleTapOnly: Bool = false
 	var outputLanguage: String? = nil
+	var selectedMicrophoneID: String? = nil
 
 	// Define coding keys to match struct properties
 	enum CodingKeys: String, CodingKey {
@@ -31,6 +32,7 @@ struct HexSettings: Codable, Equatable {
 		case copyToClipboard
 		case useDoubleTapOnly
 		case outputLanguage
+		case selectedMicrophoneID
 	}
 
 	init(
@@ -45,7 +47,8 @@ struct HexSettings: Codable, Equatable {
 		minimumKeyTime: Double = 0.2,
 		copyToClipboard: Bool = true,
 		useDoubleTapOnly: Bool = false,
-		on outputLanguage: String? = nil
+		on outputLanguage: String? = nil,
+		selectedMicrophoneID: String? = nil
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
@@ -59,6 +62,7 @@ struct HexSettings: Codable, Equatable {
 		self.copyToClipboard = copyToClipboard
 		self.useDoubleTapOnly = useDoubleTapOnly
 		self.outputLanguage = outputLanguage
+		self.selectedMicrophoneID = selectedMicrophoneID
 	}
 
 	// Custom decoder that handles missing fields
@@ -88,6 +92,7 @@ struct HexSettings: Codable, Equatable {
 		useDoubleTapOnly =
 			try container.decodeIfPresent(Bool.self, forKey: .useDoubleTapOnly) ?? false
 		outputLanguage = try container.decodeIfPresent(String.self, forKey: .outputLanguage)
+			selectedMicrophoneID = try container.decodeIfPresent(String.self, forKey: .selectedMicrophoneID)
 	}
 }
 

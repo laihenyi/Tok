@@ -307,6 +307,9 @@
         }
       }
     },
+    "Input Device" : {
+
+    },
     "Microphone" : {
       "comment" : "Microphone permission.",
       "localizations" : {
@@ -317,6 +320,9 @@
           }
         }
       }
+    },
+    "Microphone Selection" : {
+
     },
     "Model" : {
 
@@ -367,6 +373,9 @@
           }
         }
       }
+    },
+    "Override the system default microphone with a specific input device. This setting will persist across sessions." : {
+
     },
     "Pause Media while Recording" : {
       "comment" : "Label for general setting whether to pause media while recording.",
@@ -533,6 +542,9 @@
           }
         }
       }
+    },
+    "System Default" : {
+
     },
     "Transcription Model" : {
       "comment" : "Label for Transcription Model Section",

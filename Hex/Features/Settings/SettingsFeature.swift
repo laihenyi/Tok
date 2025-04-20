@@ -25,6 +25,9 @@ struct SettingsFeature {
 
     var languages: IdentifiedArrayOf<Language> = []
     var currentModifiers: Modifiers = .init(modifiers: [])
+    
+    // Available microphones
+    var availableInputDevices: [AudioInputDevice] = []
 
     // Permissions
     var microphonePermission: PermissionStatus = .notDetermined
@@ -50,6 +53,10 @@ struct SettingsFeature {
     case requestMicrophonePermission
     case requestAccessibilityPermission
     case accessibilityStatusDidChange
+    
+    // Microphone selection
+    case loadAvailableInputDevices
+    case availableInputDevicesLoaded([AudioInputDevice])
 
     // Model Management
     case modelDownload(ModelDownloadFeature.Action)
@@ -58,6 +65,7 @@ struct SettingsFeature {
   @Dependency(\.keyEventMonitor) var keyEventMonitor
   @Dependency(\.continuousClock) var clock
   @Dependency(\.transcription) var transcription
+  @Dependency(\.recording) var recording
 
   var body: some ReducerOf<Self> {
     BindingReducer()
@@ -85,10 +93,11 @@ struct SettingsFeature {
           print("Failed to load languages")
         }
 
-        // Listen for key events (existing)
+        // Listen for key events and load microphones (existing + new)
         return .run { send in
           await send(.checkPermissions)
           await send(.modelDownload(.fetchModels))
+          await send(.loadAvailableInputDevices)
 
           for try await keyEvent in await keyEventMonitor.listenForKeyPress() {
             await send(.keyEvent(keyEvent))
@@ -218,6 +227,17 @@ struct SettingsFeature {
         return .none
 
       case .modelDownload:
+        return .none
+      
+      // Microphone device selection
+      case .loadAvailableInputDevices:
+        return .run { send in
+          let devices = await recording.getAvailableInputDevices()
+          await send(.availableInputDevicesLoaded(devices))
+        }
+        
+      case let .availableInputDevicesLoaded(devices):
+        state.availableInputDevices = devices
         return .none
       }
     }

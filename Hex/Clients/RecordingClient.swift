@@ -8,9 +8,16 @@
 import AppKit // For NSEvent media key simulation
 import AVFoundation
 import ComposableArchitecture
+import CoreAudio
 import Dependencies
 import DependenciesMacros
 import Foundation
+
+/// Represents an audio input device
+struct AudioInputDevice: Identifiable, Equatable {
+  var id: String
+  var name: String
+}
 
 @DependencyClient
 struct RecordingClient {
@@ -18,6 +25,7 @@ struct RecordingClient {
   var stopRecording: @Sendable () async -> URL = { URL(fileURLWithPath: "") }
   var requestMicrophoneAccess: @Sendable () async -> Bool = { false }
   var observeAudioLevel: @Sendable () async -> AsyncStream<Meter> = { AsyncStream { _ in } }
+  var getAvailableInputDevices: @Sendable () async -> [AudioInputDevice] = { [] }
 }
 
 extension RecordingClient: DependencyKey {
@@ -27,7 +35,8 @@ extension RecordingClient: DependencyKey {
       startRecording: { await live.startRecording() },
       stopRecording: { await live.stopRecording() },
       requestMicrophoneAccess: { await live.requestMicrophoneAccess() },
-      observeAudioLevel: { await live.observeAudioLevel() }
+      observeAudioLevel: { await live.observeAudioLevel() },
+      getAvailableInputDevices: { await live.getAvailableInputDevices() }
     )
   }
 }
@@ -274,6 +283,164 @@ actor RecordingClientLive {
   
   /// Tracks which specific media players were paused
   private var pausedPlayers: [String] = []
+  
+  /// Gets all available input devices on the system
+  func getAvailableInputDevices() async -> [AudioInputDevice] {
+    // Get all available audio devices
+    let devices = getAllAudioDevices()
+    var inputDevices: [AudioInputDevice] = []
+    
+    // Filter to only input devices and convert to our model
+    for device in devices {
+      if deviceHasInput(deviceID: device), let name = getDeviceName(deviceID: device) {
+        inputDevices.append(AudioInputDevice(id: String(device), name: name))
+      }
+    }
+    
+    return inputDevices
+  }
+  
+  // MARK: - Core Audio Helpers
+  
+  /// Get all available audio devices
+  private func getAllAudioDevices() -> [AudioDeviceID] {
+    var propertySize: UInt32 = 0
+    var address = AudioObjectPropertyAddress(
+      mSelector: kAudioHardwarePropertyDevices,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    
+    // Get the property data size
+    var status = AudioObjectGetPropertyDataSize(
+      AudioObjectID(kAudioObjectSystemObject),
+      &address,
+      0,
+      nil,
+      &propertySize
+    )
+    
+    if status != 0 {
+      print("Error getting audio devices property size: \(status)")
+      return []
+    }
+    
+    // Calculate device count
+    let deviceCount = Int(propertySize) / MemoryLayout<AudioDeviceID>.size
+    var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
+    
+    // Get the device IDs
+    status = AudioObjectGetPropertyData(
+      AudioObjectID(kAudioObjectSystemObject),
+      &address,
+      0,
+      nil,
+      &propertySize,
+      &deviceIDs
+    )
+    
+    if status != 0 {
+      print("Error getting audio devices: \(status)")
+      return []
+    }
+    
+    return deviceIDs
+  }
+  
+  /// Get device name for the given device ID
+  private func getDeviceName(deviceID: AudioDeviceID) -> String? {
+    var address = AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyDeviceNameCFString,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    
+    var deviceName: CFString? = nil
+    var size = UInt32(MemoryLayout<CFString?>.size)
+    let status = AudioObjectGetPropertyData(
+      deviceID,
+      &address,
+      0,
+      nil,
+      &size,
+      &deviceName
+    )
+    
+    if status != 0 {
+      print("Error getting device name: \(status)")
+      return nil
+    }
+    
+    return deviceName as String?
+  }
+  
+  /// Check if device has input capabilities
+  private func deviceHasInput(deviceID: AudioDeviceID) -> Bool {
+    var address = AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyStreamConfiguration,
+      mScope: kAudioDevicePropertyScopeInput,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    
+    var propertySize: UInt32 = 0
+    let status = AudioObjectGetPropertyDataSize(
+      deviceID,
+      &address,
+      0,
+      nil,
+      &propertySize
+    )
+    
+    if status != 0 {
+      return false
+    }
+    
+    let bufferList = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: Int(propertySize))
+    defer { bufferList.deallocate() }
+    
+    let getStatus = AudioObjectGetPropertyData(
+      deviceID,
+      &address,
+      0,
+      nil,
+      &propertySize,
+      bufferList
+    )
+    
+    if getStatus != 0 {
+      return false
+    }
+    
+    // Check if we have any input channels
+    let buffersPointer = UnsafeMutableAudioBufferListPointer(bufferList)
+    return buffersPointer.reduce(0) { $0 + Int($1.mNumberChannels) } > 0
+  }
+  
+  /// Set device as the default input device
+  private func setInputDevice(deviceID: AudioDeviceID) {
+    var device = deviceID
+    let size = UInt32(MemoryLayout<AudioDeviceID>.size)
+    var address = AudioObjectPropertyAddress(
+      mSelector: kAudioHardwarePropertyDefaultInputDevice,
+      mScope: kAudioObjectPropertyScopeGlobal,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    
+    let status = AudioObjectSetPropertyData(
+      AudioObjectID(kAudioObjectSystemObject),
+      &address,
+      0,
+      nil,
+      size,
+      &device
+    )
+    
+    if status != 0 {
+      print("Error setting default input device: \(status)")
+    } else {
+      print("Successfully set input device to: \(deviceID)")
+    }
+  }
 
   func requestMicrophoneAccess() async -> Bool {
     await AVCaptureDevice.requestAccess(for: .audio)
@@ -298,7 +465,16 @@ actor RecordingClientLive {
         print("Paused media players: \(pausedPlayers.joined(separator: ", "))")
       }
     }
-
+    
+    // If user has selected a specific microphone, set it as the default input device
+    if let selectedDeviceIDString = hexSettings.selectedMicrophoneID,
+       let selectedDeviceID = AudioDeviceID(selectedDeviceIDString) {
+      print("Setting selected input device: \(selectedDeviceID)")
+      setInputDevice(deviceID: selectedDeviceID)
+    } else {
+      print("Using default system microphone")
+    }
+      
     let settings: [String: Any] = [
       AVFormatIDKey: Int(kAudioFormatLinearPCM),
       AVSampleRateKey: 16000.0,

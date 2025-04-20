@@ -63,6 +63,30 @@ struct SettingsView: View {
 					.font(.footnote)
 					.foregroundColor(.secondary)
 			}
+      
+			// --- Input Device Selection Section ---
+			if store.microphonePermission == .granted && !store.availableInputDevices.isEmpty {
+				Section {
+					// Input device picker
+					Label {
+						Picker("Input Device", selection: $store.hexSettings.selectedMicrophoneID) {
+							Text("System Default").tag(nil as String?)
+							ForEach(store.availableInputDevices) { device in
+								Text(device.name).tag(device.id as String?)
+							}
+						}
+						.pickerStyle(.menu)
+					} icon: {
+						Image(systemName: "mic.circle")
+					}
+				} header: {
+					Text("Microphone Selection")
+				} footer: {
+					Text("Override the system default microphone with a specific input device. This setting will persist across sessions.")
+						.font(.footnote)
+						.foregroundColor(.secondary)
+				}
+			}
 
 			// --- Transcription Model Section ---
 			Section("Transcription Model") {
