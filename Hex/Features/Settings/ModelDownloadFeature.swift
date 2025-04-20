@@ -48,6 +48,17 @@ public struct CuratedModelInfo: Equatable, Identifiable, Codable {
 	private enum CodingKeys: String, CodingKey {
 		case displayName, internalName, size, accuracyStars, speedStars, storageSize
 	}
+	
+	public init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		displayName = try container.decode(String.self, forKey: .displayName)
+		internalName = try container.decode(String.self, forKey: .internalName)
+		size = try container.decode(String.self, forKey: .size)
+		accuracyStars = try container.decode(Int.self, forKey: .accuracyStars)
+		speedStars = try container.decode(Int.self, forKey: .speedStars)
+		storageSize = try container.decode(String.self, forKey: .storageSize)
+		isDownloaded = false // Default value, will be set at runtime
+	}
 }
 
 @Reducer
