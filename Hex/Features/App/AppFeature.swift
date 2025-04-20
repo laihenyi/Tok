@@ -14,6 +14,7 @@ struct AppFeature {
   enum ActiveTab: Equatable {
     case settings
     case history
+    case about
   }
 
   @ObservableState
@@ -85,6 +86,13 @@ struct AppView: View {
           Label("History", systemImage: "clock")
         }.buttonStyle(.plain)
           .tag(AppFeature.ActiveTab.history)
+          
+        Button {
+          store.send(.setActiveTab(.about))
+        } label: {
+          Label("About", systemImage: "info.circle")
+        }.buttonStyle(.plain)
+          .tag(AppFeature.ActiveTab.about)
       }
     } detail: {
       switch store.state.activeTab {
@@ -94,6 +102,9 @@ struct AppView: View {
       case .history:
         HistoryView(store: store.scope(state: \.history, action: \.history))
           .navigationTitle("History")
+      case .about:
+        AboutView(store: store.scope(state: \.settings, action: \.settings))
+          .navigationTitle("About")
       }
     }
   }

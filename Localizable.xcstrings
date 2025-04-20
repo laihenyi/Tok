@@ -43,6 +43,9 @@
         }
       }
     },
+    "Become a Sponsor" : {
+
+    },
     "Cancel" : {
       "comment" : "Cancel deleting All Transcripts",
       "localizations" : {
@@ -551,6 +554,9 @@
           }
         }
       }
+    },
+    "Support the developer" : {
+
     },
     "System Default" : {
 
