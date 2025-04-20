@@ -102,6 +102,7 @@ public struct ModelDownloadFeature {
 		case downloadResponse(Result<String, Error>)
 
 		case deleteSelectedModel
+		case openModelLocation
 	}
 
 	@Dependency(\.transcription) var transcription
@@ -157,7 +158,7 @@ public struct ModelDownloadFeature {
 					}
 				} else {
 					// Fallback to default models if JSON loading fails
-					let smallModelName = "openai_whisper-tiny-v3-v20240930"
+					let smallModelName = "openai_whisper-tiny"
 					let mediumModelName = "openai_whisper-medium-v3-v20240930"
 					let largeModelName = "openai_whisper-large-v3-v20240930"
 					
@@ -279,6 +280,33 @@ public struct ModelDownloadFeature {
 				state.downloadProgress = 0
 				state.downloadingModelName = nil
 				return .none
+					
+			case .openModelLocation:
+				return .run { send in
+					// Create URL to the models folder
+					let fileManager = FileManager.default
+					let appSupportURL = try fileManager.url(
+						for: .applicationSupportDirectory,
+						in: .userDomainMask,
+						appropriateFor: nil,
+						create: false
+					)
+					let modelsBaseFolder = appSupportURL
+						.appendingPathComponent("com.kitlangton.Hex", isDirectory: true)
+						.appendingPathComponent("models", isDirectory: true)
+					
+					// Create the directory if it doesn't exist
+					if !fileManager.fileExists(atPath: modelsBaseFolder.path) {
+						try fileManager.createDirectory(at: modelsBaseFolder, withIntermediateDirectories: true)
+					}
+					
+					// Open in Finder
+					NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: modelsBaseFolder.path)
+					
+					// Refresh model status after a short delay (user might delete or add models)
+					try await Task.sleep(for: .seconds(1))
+					await send(.fetchModels)
+				}
 			}
 		}
 	}
@@ -467,11 +495,27 @@ struct ModelDownloadView: View {
 						
 						Spacer()
 						
-						// Show Delete button if model is downloaded
-						if let selectedInfo = store.availableModels
-							.first(where: { $0.name == store.hexSettings.selectedModel }),
-							selectedInfo.isDownloaded
-						{
+						// Check if any models are downloaded
+						let anyModelsDownloaded = store.availableModels.contains(where: { $0.isDownloaded })
+						
+						// Get selected model download status
+						let selectedModel = store.availableModels.first(where: { $0.name == store.hexSettings.selectedModel })
+						let isSelectedModelDownloaded = selectedModel?.isDownloaded ?? false
+						
+						// Show "Show Models Folder" button if any models are downloaded
+						if anyModelsDownloaded {
+							Button {
+								store.send(.openModelLocation)
+							} label: {
+								Text("Show Models Folder")
+									.font(.caption)
+							}
+							.buttonStyle(.borderless)
+							.padding(.trailing, 8)
+						}
+						
+						// Show Delete button if selected model is downloaded
+						if isSelectedModelDownloaded {
 							Button(role: .destructive, action: {
 								store.send(.deleteSelectedModel)
 							}) {
@@ -482,11 +526,8 @@ struct ModelDownloadView: View {
 							.padding(.trailing, 8)
 						}
 						
-						// Show Download button if not downloaded yet
-						if let selectedInfo = store.availableModels
-							.first(where: { $0.name == store.hexSettings.selectedModel }),
-							!selectedInfo.isDownloaded
-						{
+						// Show Download button if selected model is not downloaded
+						if !isSelectedModelDownloaded {
 							Button {
 								store.send(.downloadSelectedModel)
 							} label: {
@@ -502,6 +543,10 @@ struct ModelDownloadView: View {
 				if store.availableModels.isEmpty {
 					store.send(.fetchModels)
 				}
+			}
+			.onAppear {
+				// Force refresh model status when this view appears
+				store.send(.fetchModels)
 			}
 		}
 	}
