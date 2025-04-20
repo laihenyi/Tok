@@ -340,32 +340,43 @@ struct ModelDownloadView: View {
 					.pickerStyle(.menu)
 				} else {
 					// Show curated model list with detailed info
-					VStack(alignment: .leading, spacing: 16) {
+					VStack(alignment: .leading, spacing: 8) {
 						// Table header
 						HStack(alignment: .bottom) {
 							Text("Model")
 								.font(.caption.bold())
-								.frame(width: 80, alignment: .leading)
+								.frame(minWidth: 80, alignment: .leading)
+								.layoutPriority(1)
+							
+							Spacer()
 							
 							VStack(alignment: .leading, spacing: 2) {
 								Text("Accuracy")
 									.font(.caption.bold())
 								StarRatingView(rating: 0)
 							}
-							.frame(width: 80, alignment: .leading)
+							.frame(minWidth: 80, alignment: .leading)
+							.layoutPriority(1)
+							
+							Spacer()
 							
 							VStack(alignment: .leading, spacing: 2) {
 								Text("Speed")
 									.font(.caption.bold())
 								StarRatingView(rating: 0)
 							}
-							.frame(width: 80, alignment: .leading)
+							.frame(minWidth: 80, alignment: .leading)
+							.layoutPriority(1)
+							
+							Spacer()
 							
 							Text("Size")
 								.font(.caption.bold())
-								.frame(width: 80, alignment: .leading)
+								.frame(minWidth: 70, alignment: .leading)
+								.layoutPriority(1)
 						}
 						.padding(.horizontal, 8)
+						.frame(maxWidth: .infinity)
 						
 						// Model rows
 						ForEach(store.curatedModels) { model in
@@ -390,27 +401,38 @@ struct ModelDownloadView: View {
 												.font(.caption)
 										}
 									}
-									.frame(width: 80, alignment: .leading)
+									.frame(minWidth: 80, alignment: .leading)
+									.layoutPriority(1)
+									
+									Spacer()
 									
 									// Accuracy rating
 									VStack(alignment: .leading) {
 										StarRatingView(rating: model.accuracyStars)
 									}
-									.frame(width: 80, alignment: .leading)
+									.frame(minWidth: 80, alignment: .leading)
+									.layoutPriority(1)
+									
+									Spacer()
 									
 									// Speed rating
 									VStack(alignment: .leading) {
 										StarRatingView(rating: model.speedStars)
 									}
-									.frame(width: 80, alignment: .leading)
+									.frame(minWidth: 80, alignment: .leading)
+									.layoutPriority(1)
+									
+									Spacer()
 									
 									// Storage size
 									Text(model.storageSize)
 										.font(.body)
 										.foregroundColor(.secondary)
-										.frame(width: 80, alignment: .leading)
+										.frame(minWidth: 70, alignment: .leading)
+										.layoutPriority(1)
 								}
 								.padding(8)
+								.frame(maxWidth: .infinity)
 								.background(
 									RoundedRectangle(cornerRadius: 8)
 										.fill(model.internalName == store.hexSettings.selectedModel ? 
