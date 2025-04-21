@@ -29,6 +29,9 @@
         }
       }
     },
+    "Accuracy" : {
+
+    },
     "Are you sure you want to delete all transcripts? This action cannot be undone." : {
       "comment" : "Delete transcript history confirm",
       "localizations" : {
@@ -39,6 +42,9 @@
           }
         }
       }
+    },
+    "Become a Sponsor" : {
+
     },
     "Cancel" : {
       "comment" : "Cancel deleting All Transcripts",
@@ -125,6 +131,12 @@
         }
       }
     },
+    "Copy transcription text to clipboard in addition to pasting it" : {
+
+    },
+    "Delete" : {
+
+    },
     "Delete All" : {
       "comment" : "Delete all transcriptions from history.",
       "localizations" : {
@@ -149,6 +161,7 @@
     },
     "Delete Selected Model" : {
       "comment" : "Delete the selected model in settings.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -169,6 +182,9 @@
         }
       }
     },
+    "Download" : {
+
+    },
     "Download Error: %@" : {
       "comment" : "Model download error.",
       "localizations" : {
@@ -182,6 +198,7 @@
     },
     "Download Selected Model" : {
       "comment" : "In Transcription Model section in settings.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -193,6 +210,7 @@
     },
     "Downloading %@..." : {
       "comment" : "In Transcription Model section in settings.",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -201,6 +219,9 @@
           }
         }
       }
+    },
+    "Downloading model..." : {
+
     },
     "Ensure Hex can access your microphone and system accessibility features." : {
       "comment" : "Footer for permissions section in settings",
@@ -289,6 +310,9 @@
         }
       }
     },
+    "Input Device" : {
+
+    },
     "Microphone" : {
       "comment" : "Microphone permission.",
       "localizations" : {
@@ -299,6 +323,15 @@
           }
         }
       }
+    },
+    "Microphone Selection" : {
+
+    },
+    "Model" : {
+
+    },
+    "Model prewarming..." : {
+
     },
     "No models found." : {
       "comment" : "Replacement text in transcription model section when no available models are found",
@@ -344,6 +377,9 @@
         }
       }
     },
+    "Override the system default microphone with a specific input device. This setting will persist across sessions." : {
+
+    },
     "Pause Media while Recording" : {
       "comment" : "Label for general setting whether to pause media while recording.",
       "localizations" : {
@@ -388,6 +424,12 @@
         }
       }
     },
+    "Recommended for custom hotkeys to avoid interfering with normal usage" : {
+
+    },
+    "Refresh available input devices" : {
+
+    },
     "Request Permission" : {
       "comment" : "Button texts for requesting permissions in settings.",
       "localizations" : {
@@ -399,6 +441,9 @@
         }
       }
     },
+    "Selected device not connected. System default will be used." : {
+
+    },
     "Selected Model" : {
       "comment" : "Label for selecting which model is active",
       "localizations" : {
@@ -409,6 +454,9 @@
           }
         }
       }
+    },
+    "Selected: %@" : {
+
     },
     "Settings" : {
       "comment" : "title for settings view.",
@@ -432,6 +480,9 @@
         }
       }
     },
+    "Show All Models" : {
+
+    },
     "Show Changelog" : {
       "localizations" : {
         "de" : {
@@ -452,6 +503,21 @@
           }
         }
       }
+    },
+    "Show Models Folder" : {
+
+    },
+    "Show Recommended" : {
+
+    },
+    "Showing all models" : {
+
+    },
+    "Showing recommended models" : {
+
+    },
+    "Size" : {
+
     },
     "Sound" : {
       "comment" : "sound section in general settings.",
@@ -475,6 +541,9 @@
         }
       }
     },
+    "Speed" : {
+
+    },
     "Stop playback" : {
       "comment" : "Help text for play button in history view.",
       "localizations" : {
@@ -485,6 +554,12 @@
           }
         }
       }
+    },
+    "Support the developer" : {
+
+    },
+    "System Default" : {
+
     },
     "Transcription Model" : {
       "comment" : "Label for Transcription Model Section",
@@ -519,6 +594,9 @@
         }
       }
     },
+    "Use double-tap only" : {
+
+    },
     "Version" : {
       "comment" : "Label for version in About section.",
       "localizations" : {
@@ -540,6 +618,9 @@
           }
         }
       }
+    },
+    "You're using a full keyboard shortcut. Double-tap is recommended." : {
+
     },
     "Your transcription history will appear here." : {
       "comment" : "Empty history subtitle.",

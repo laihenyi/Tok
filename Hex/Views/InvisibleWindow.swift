@@ -33,7 +33,7 @@ class InvisibleWindow: NSPanel {
     hasShadow = false
     hidesOnDeactivate = false // Prevent hiding when app loses focus
     canHide = false
-    collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces]
+    collectionBehavior = [.fullScreenAuxiliary, .canJoinAllSpaces, .stationary, .ignoresCycle]
 
     // Set initial frame
     updateToScreenWithMouse()

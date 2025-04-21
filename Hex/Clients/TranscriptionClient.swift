@@ -144,8 +144,46 @@ actor TranscriptionClientLive {
   }
 
   /// Returns `true` if the model is already downloaded to the local folder.
+  /// Performs a thorough check to ensure the model files are actually present and usable.
   func isModelDownloaded(_ modelName: String) async -> Bool {
-    FileManager.default.fileExists(atPath: modelPath(for: modelName).path)
+    let modelFolderPath = modelPath(for: modelName).path
+    let fileManager = FileManager.default
+    
+    // First, check if the basic model directory exists
+    guard fileManager.fileExists(atPath: modelFolderPath) else {
+      print("[TranscriptionClientLive] Model directory doesn't exist for: \(modelName)")
+      return false
+    }
+    
+    do {
+      // Check if the directory has actual model files in it
+      let contents = try fileManager.contentsOfDirectory(atPath: modelFolderPath)
+      
+      // Model should have multiple files and certain key components
+      guard !contents.isEmpty else {
+        print("[TranscriptionClientLive] Model directory is empty for: \(modelName)")
+        return false
+      }
+      
+      // Check for specific model structure - need both tokenizer and model files
+      let hasModelFiles = contents.contains { $0.hasSuffix(".mlmodelc") || $0.contains("model") }
+      let tokenizerFolderPath = tokenizerPath(for: modelName).path
+      let hasTokenizer = fileManager.fileExists(atPath: tokenizerFolderPath)
+      
+      if !hasModelFiles {
+        print("[TranscriptionClientLive] No model files found for: \(modelName)")
+      }
+      
+      if !hasTokenizer {
+        print("[TranscriptionClientLive] No tokenizer found for: \(modelName)")
+      }
+      
+      // Both conditions must be true for a model to be considered downloaded
+      return hasModelFiles && hasTokenizer
+    } catch {
+      print("[TranscriptionClientLive] Error checking model contents for \(modelName): \(error)")
+      return false
+    }
   }
 
   /// Returns a list of recommended models based on current device hardware.

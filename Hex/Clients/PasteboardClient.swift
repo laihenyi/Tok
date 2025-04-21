@@ -14,14 +14,20 @@ import SwiftUI
 @DependencyClient
 struct PasteboardClient {
     var paste: @Sendable (String) async -> Void
+    var copy: @Sendable (String) async -> Void
 }
 
 extension PasteboardClient: DependencyKey {
     static var liveValue: Self {
         let live = PasteboardClientLive()
-        return .init { text in
-            await live.paste(text: text)
-        }
+        return .init(
+            paste: { text in
+                await live.paste(text: text)
+            },
+            copy: { text in
+                await live.copy(text: text)
+            }
+        )
     }
 }
 
@@ -42,6 +48,13 @@ struct PasteboardClientLive {
         } else {
             simulateTypingWithAppleScript(text)
         }
+    }
+    
+    @MainActor
+    func copy(text: String) async {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
     }
 
     // Function to save the current state of the NSPasteboard
@@ -127,8 +140,12 @@ struct PasteboardClientLive {
         pasteboard.setString(text, forType: .string)
 
         let source = CGEventSource(stateID: .combinedSessionState)
-
-        if !PasteboardClientLive.pasteToFrontmostApp() {
+        
+        // Track if paste operation successful
+        var pasteSucceeded = PasteboardClientLive.pasteToFrontmostApp()
+        
+        // If menu-based paste failed, try simulated keypresses
+        if !pasteSucceeded {
             print("Failed to paste to frontmost app, falling back to simulated keypresses")
             let vKeyCode = Sauce.shared.keyCode(for: .v)
             let cmdKeyCode: CGKeyCode = 55 // Command key
@@ -152,12 +169,29 @@ struct PasteboardClientLive {
             vDown?.post(tap: .cghidEventTap)
             vUp?.post(tap: .cghidEventTap)
             cmdUp?.post(tap: .cghidEventTap)
+            
+            // Assume keypress-based paste succeeded - but text will remain in clipboard as fallback
+            pasteSucceeded = true
         }
-
-        // Restore original pasteboard contents
-        try? await Task.sleep(for: .seconds(0.1))
-        pasteboard.clearContents()
-        restorePasteboardState(pasteboard: pasteboard, savedItems: originalItems)
+        
+        // Only restore original pasteboard contents if:
+        // 1. Copying to clipboard is disabled AND
+        // 2. The paste operation succeeded
+        if !hexSettings.copyToClipboard && pasteSucceeded {
+            try? await Task.sleep(for: .seconds(0.1))
+            pasteboard.clearContents()
+            restorePasteboardState(pasteboard: pasteboard, savedItems: originalItems)
+        }
+        
+        // If we failed to paste AND user doesn't want clipboard retention,
+        // show a notification that text is available in clipboard
+        if !pasteSucceeded && !hexSettings.copyToClipboard {
+            // Keep the transcribed text in clipboard regardless of setting
+            print("Paste operation failed. Text remains in clipboard as fallback.")
+            
+            // TODO: Could add a notification here to inform user
+            // that text is available in clipboard
+        }
     }
     
     func simulateTypingWithAppleScript(_ text: String) {

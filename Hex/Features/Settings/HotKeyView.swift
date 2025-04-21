@@ -16,10 +16,17 @@ struct HotKeyView: View {
 
   var body: some View {
     HStack(spacing: 6) {
-      ForEach(modifiers.sorted) { modifier in
-        KeyView(text: modifier.stringValue)
+      if modifiers.isHyperkey {
+        // Show Black Four Pointed Star for hyperkey
+        KeyView(text: "✦")
           .transition(.blurReplace)
+      } else {
+        ForEach(modifiers.sorted) { modifier in
+          KeyView(text: modifier.stringValue)
+            .transition(.blurReplace)
+        }
       }
+      
       if let key {
         KeyView(text: key.toString)
       }

@@ -18,6 +18,7 @@ struct TranscriptionFeature {
   struct State {
     var isRecording: Bool = false
     var isTranscribing: Bool = false
+    var isPrewarming: Bool = false
     var error: String?
     var recordingStartTime: Date?
     var meter: Meter = .init(averagePower: 0, peakPower: 0)
@@ -156,6 +157,7 @@ private extension TranscriptionFeature {
 
         // Always keep hotKeyProcessor in sync with current user hotkey preference
         hotKeyProcessor.hotkey = hexSettings.hotkey
+        hotKeyProcessor.useDoubleTapOnly = hexSettings.useDoubleTapOnly
 
         // Process the key event
         switch hotKeyProcessor.process(keyEvent: keyEvent) {
@@ -167,7 +169,8 @@ private extension TranscriptionFeature {
             Task { await send(.hotKeyPressed) }
           }
           // If the hotkey is purely modifiers, return false to keep it from interfering with normal usage
-          return keyEvent.key != nil
+          // But if useDoubleTapOnly is true, always intercept the key
+          return hexSettings.useDoubleTapOnly || keyEvent.key != nil
 
         case .stopRecording:
           Task { await send(.hotKeyReleased) }
@@ -267,6 +270,8 @@ private extension TranscriptionFeature {
     let model = state.hexSettings.selectedModel
     let language = state.hexSettings.outputLanguage
 
+    state.isPrewarming = true
+    
     return .run { send in
       do {
         await soundEffect.play(.stopRecording)
@@ -278,8 +283,9 @@ private extension TranscriptionFeature {
           detectLanguage: language == nil, // Only auto-detect if no language specified
           chunkingStrategy: .vad
         )
-
+        
         let result = try await transcription.transcribe(audioURL, model, decodeOptions) { _ in }
+        
         print("Transcribed audio from URL: \(audioURL) to text: \(result)")
         await send(.transcriptionResult(result))
       } catch {
@@ -299,6 +305,7 @@ private extension TranscriptionFeature {
     result: String
   ) -> Effect<Action> {
     state.isTranscribing = false
+    state.isPrewarming = false
 
     // If empty text, nothing else to do
     guard !result.isEmpty else {
@@ -321,6 +328,7 @@ private extension TranscriptionFeature {
     error: Error
   ) -> Effect<Action> {
     state.isTranscribing = false
+    state.isPrewarming = false
     state.error = error.localizedDescription
 
     return .run { _ in
@@ -370,7 +378,7 @@ private extension TranscriptionFeature {
           $0.history.insert(transcript, at: 0)
         }
 
-        // Paste text
+        // Paste text (and copy if enabled via pasteWithClipboard)
         await pasteboard.paste(result)
         await soundEffect.play(.pasteTranscript)
       } catch {
@@ -386,6 +394,7 @@ private extension TranscriptionFeature {
   func handleCancel(_ state: inout State) -> Effect<Action> {
     state.isTranscribing = false
     state.isRecording = false
+    state.isPrewarming = false
 
     return .merge(
       .cancel(id: CancelID.transcription),
@@ -435,6 +444,8 @@ struct TranscriptionView: View {
       return .transcribing
     } else if store.isRecording {
       return .recording
+    } else if store.isPrewarming {
+      return .prewarming
     } else {
       return .hidden
     }

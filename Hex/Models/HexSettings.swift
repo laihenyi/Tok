@@ -13,7 +13,10 @@ struct HexSettings: Codable, Equatable {
 	var preventSystemSleep: Bool = true
 	var pauseMediaOnRecord: Bool = true
 	var minimumKeyTime: Double = 0.2
+	var copyToClipboard: Bool = true
+	var useDoubleTapOnly: Bool = false
 	var outputLanguage: String? = nil
+	var selectedMicrophoneID: String? = nil
 
 	// Define coding keys to match struct properties
 	enum CodingKeys: String, CodingKey {
@@ -26,7 +29,10 @@ struct HexSettings: Codable, Equatable {
 		case preventSystemSleep
 		case pauseMediaOnRecord
 		case minimumKeyTime
+		case copyToClipboard
+		case useDoubleTapOnly
 		case outputLanguage
+		case selectedMicrophoneID
 	}
 
 	init(
@@ -39,7 +45,10 @@ struct HexSettings: Codable, Equatable {
 		preventSystemSleep: Bool = true,
 		pauseMediaOnRecord: Bool = true,
 		minimumKeyTime: Double = 0.2,
-		on outputLanguage: String? = nil
+		copyToClipboard: Bool = true,
+		useDoubleTapOnly: Bool = false,
+		on outputLanguage: String? = nil,
+		selectedMicrophoneID: String? = nil
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
@@ -50,7 +59,10 @@ struct HexSettings: Codable, Equatable {
 		self.preventSystemSleep = preventSystemSleep
 		self.pauseMediaOnRecord = pauseMediaOnRecord
 		self.minimumKeyTime = minimumKeyTime
+		self.copyToClipboard = copyToClipboard
+		self.useDoubleTapOnly = useDoubleTapOnly
 		self.outputLanguage = outputLanguage
+		self.selectedMicrophoneID = selectedMicrophoneID
 	}
 
 	// Custom decoder that handles missing fields
@@ -75,7 +87,12 @@ struct HexSettings: Codable, Equatable {
 			try container.decodeIfPresent(Bool.self, forKey: .pauseMediaOnRecord) ?? true
 		minimumKeyTime =
 			try container.decodeIfPresent(Double.self, forKey: .minimumKeyTime) ?? 0.2
+		copyToClipboard =
+			try container.decodeIfPresent(Bool.self, forKey: .copyToClipboard) ?? true
+		useDoubleTapOnly =
+			try container.decodeIfPresent(Bool.self, forKey: .useDoubleTapOnly) ?? false
 		outputLanguage = try container.decodeIfPresent(String.self, forKey: .outputLanguage)
+			selectedMicrophoneID = try container.decodeIfPresent(String.self, forKey: .selectedMicrophoneID)
 	}
 }
 

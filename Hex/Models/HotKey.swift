@@ -36,7 +36,19 @@ public struct Modifiers: Codable, Equatable, ExpressibleByArrayLiteral {
   var modifiers: Set<Modifier>
 
   var sorted: [Modifier] {
-    modifiers.sorted()
+    // If this is a hyperkey combination (all four modifiers), 
+    // return an empty array as we'll display a special symbol
+    if isHyperkey {
+      return []
+    }
+    return modifiers.sorted()
+  }
+  
+  public var isHyperkey: Bool {
+    return modifiers.contains(.command) && 
+           modifiers.contains(.option) && 
+           modifiers.contains(.shift) && 
+           modifiers.contains(.control)
   }
 
   public var isEmpty: Bool {

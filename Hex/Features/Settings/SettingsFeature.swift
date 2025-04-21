@@ -25,6 +25,9 @@ struct SettingsFeature {
 
     var languages: IdentifiedArrayOf<Language> = []
     var currentModifiers: Modifiers = .init(modifiers: [])
+    
+    // Available microphones
+    var availableInputDevices: [AudioInputDevice] = []
 
     // Permissions
     var microphonePermission: PermissionStatus = .notDetermined
@@ -50,6 +53,10 @@ struct SettingsFeature {
     case requestMicrophonePermission
     case requestAccessibilityPermission
     case accessibilityStatusDidChange
+    
+    // Microphone selection
+    case loadAvailableInputDevices
+    case availableInputDevicesLoaded([AudioInputDevice])
 
     // Model Management
     case modelDownload(ModelDownloadFeature.Action)
@@ -58,6 +65,7 @@ struct SettingsFeature {
   @Dependency(\.keyEventMonitor) var keyEventMonitor
   @Dependency(\.continuousClock) var clock
   @Dependency(\.transcription) var transcription
+  @Dependency(\.recording) var recording
 
   var body: some ReducerOf<Self> {
     BindingReducer()
@@ -85,14 +93,66 @@ struct SettingsFeature {
           print("Failed to load languages")
         }
 
-        // Listen for key events (existing)
+        // Listen for key events and load microphones (existing + new)
         return .run { send in
           await send(.checkPermissions)
           await send(.modelDownload(.fetchModels))
+          await send(.loadAvailableInputDevices)
+          
+          // Set up periodic refresh of available devices (every 120 seconds)
+          // Using a longer interval to reduce resource usage
+          let deviceRefreshTask = Task {
+            for await _ in clock.timer(interval: .seconds(120)) {
+              // Only refresh when the app is active to save resources
+              if NSApplication.shared.isActive {
+                await send(.loadAvailableInputDevices)
+              }
+            }
+          }
+          
+          // Listen for device connection/disconnection notifications
+          // Using a simpler debounced approach with a single task
+          var deviceUpdateTask: Task<Void, Never>?
+          
+          // Helper function to debounce device updates
+          func debounceDeviceUpdate() {
+            deviceUpdateTask?.cancel()
+            deviceUpdateTask = Task {
+              try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+              if !Task.isCancelled {
+                await send(.loadAvailableInputDevices)
+              }
+            }
+          }
+          
+          let deviceConnectionObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name(rawValue: "AVCaptureDeviceWasConnected"),
+            object: nil,
+            queue: .main
+          ) { _ in
+            debounceDeviceUpdate()
+          }
+          
+          let deviceDisconnectionObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name(rawValue: "AVCaptureDeviceWasDisconnected"),
+            object: nil,
+            queue: .main
+          ) { _ in
+            debounceDeviceUpdate()
+          }
+          
+          // Be sure to clean up resources when the task is finished
+          defer {
+            deviceUpdateTask?.cancel()
+            NotificationCenter.default.removeObserver(deviceConnectionObserver)
+            NotificationCenter.default.removeObserver(deviceDisconnectionObserver)
+          }
 
           for try await keyEvent in await keyEventMonitor.listenForKeyPress() {
             await send(.keyEvent(keyEvent))
           }
+          
+          deviceRefreshTask.cancel()
         }
 
       case .startSettingHotKey:
@@ -218,6 +278,17 @@ struct SettingsFeature {
         return .none
 
       case .modelDownload:
+        return .none
+      
+      // Microphone device selection
+      case .loadAvailableInputDevices:
+        return .run { send in
+          let devices = await recording.getAvailableInputDevices()
+          await send(.availableInputDevicesLoaded(devices))
+        }
+        
+      case let .availableInputDevicesLoaded(devices):
+        state.availableInputDevices = devices
         return .none
       }
     }
