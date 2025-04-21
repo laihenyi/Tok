@@ -84,6 +84,9 @@ public struct ModelDownloadFeature {
 		public var downloadProgress: Double = 0
 		public var downloadError: String?
 		public var downloadingModelName: String?
+        
+        // Track which model generated a progress update to handle switching models
+        public var activeDownloadID: UUID?
 
 		public init() {}
 	}
@@ -98,7 +101,7 @@ public struct ModelDownloadFeature {
 		case toggleModelDisplay
 		
 		case downloadSelectedModel
-		case downloadProgress(Double)
+		case downloadProgress(UUID, Double)
 		case downloadResponse(Result<String, Error>)
 
 		case deleteSelectedModel
@@ -184,16 +187,29 @@ public struct ModelDownloadFeature {
 				let model = state.hexSettings.selectedModel
 				guard !model.isEmpty else { return .none }
 
-				state.isDownloading = true
+                // Create a unique ID for this download operation
+                let downloadID = UUID()
+                
+				// Fully reset download state when starting a new download
+                state.isDownloading = true
 				state.downloadProgress = 0
 				state.downloadError = nil
 				state.downloadingModelName = model
+                state.activeDownloadID = downloadID
 
 				return .run { send in
 					do {
 						// Start the download & track progress
 						try await transcription.downloadModel(model) { prog in
-							Task { await send(.downloadProgress(prog.fractionCompleted)) }
+							Task { 
+                                // Include the download ID with each progress update
+                                // This allows us to filter out stale updates
+                                let progress = prog.fractionCompleted
+                                
+                                // Round progress to nearest 2% to prevent small fluctuations
+                                let roundedProgress = (Double(Int(progress * 50)) / 50)
+                                await send(.downloadProgress(downloadID, roundedProgress))
+                            }
 						}
 						await send(.downloadResponse(.success(model)))
 					} catch {
@@ -217,15 +233,25 @@ public struct ModelDownloadFeature {
 					}
 				}
 
-			case let .downloadProgress(value):
-				state.downloadProgress = value
-				return .none
+			// Filter progress updates by download ID to prevent stale updates
+            case let .downloadProgress(downloadID, value):
+                // Only process updates for the current download
+                if state.activeDownloadID == downloadID {
+                    // Always allow progress to reach 100%
+                    if value >= 0.99 {
+                        state.downloadProgress = 1.0
+                    } else {
+                        state.downloadProgress = value
+                    }
+                }
+                return .none
 
 			case let .downloadResponse(.success(modelName)):
 				state.isDownloading = false
 				state.downloadProgress = 1
 				state.downloadError = nil
 				state.downloadingModelName = nil
+                state.activeDownloadID = nil
 
 				// Mark it as downloaded in the list
 				state.availableModels[id: modelName]?.isDownloaded = true
@@ -242,6 +268,7 @@ public struct ModelDownloadFeature {
 				state.downloadError = err.localizedDescription
 				state.downloadProgress = 0
 				state.downloadingModelName = nil
+                state.activeDownloadID = nil
 				return .none
 					
 			case .openModelLocation:
@@ -461,8 +488,18 @@ struct ModelDownloadView: View {
 				   downloadingName == store.hexSettings.selectedModel
 				{
 					VStack(alignment: .leading) {
-						Text("Downloading model...")
-							.font(.caption)
+						HStack {
+							Text("Downloading model...")
+								.font(.caption)
+								
+							Spacer()
+								
+							// Format as percentage with 0 decimal places
+							Text("\(Int(store.downloadProgress * 100))%")
+								.font(.caption.bold())
+								.foregroundColor(.blue)
+						}
+						
 						ProgressView(value: store.downloadProgress, total: 1.0)
 							.tint(.blue)
 							.padding(.vertical, 4)
