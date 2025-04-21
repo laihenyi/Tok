@@ -335,6 +335,7 @@
     },
     "No models found." : {
       "comment" : "Replacement text in transcription model section when no available models are found",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
