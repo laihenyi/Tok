@@ -17,7 +17,10 @@ Once you've configured a global hotkey, there are **two recording modes**:
 
 1. **Press-and-hold** the hotkey to begin recording, say whatever you want, and then release the hotkey to start the transcription process. 
 2. **Double-tap** the hotkey to *lock recording*, say whatever you want, and then **tap** the hotkey once more to start the transcription process.
-
+ 
+> ⚠️ Note: The first time you run Hex, it will download and compile the Whisper model for your machine. During this process, you may notice high CPU usage from a background process called ANECompilerService. This is macOS optimizing the model for the Apple Neural Engine (ANE), and it's a normal one-time setup step.
+>
+> Depending on your CPU and the size of the model, this may take anywhere from a few seconds to a few minutes.
 ## Project Structure
 
 Hex is organized into several directories, each serving a specific purpose:

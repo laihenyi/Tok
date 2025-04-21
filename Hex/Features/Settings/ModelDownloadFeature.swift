@@ -1,14 +1,25 @@
+// MARK: – ModelDownloadFeature.swift
+
+// A full‐featured TCA reducer + SwiftUI view for managing on‑device ML models.
+// The file is single‑purpose but split into logical sections for clarity.
+// Dependencies: ComposableArchitecture, IdentifiedCollections, Dependencies, SwiftUI
+
 import ComposableArchitecture
 import Dependencies
 import IdentifiedCollections
 import SwiftUI
+
+// ──────────────────────────────────────────────────────────────────────────
+
+// MARK: – Data Models
+
+// ──────────────────────────────────────────────────────────────────────────
 
 public struct ModelInfo: Equatable, Identifiable {
 	public let name: String
 	public var isDownloaded: Bool
 
 	public var id: String { name }
-
 	public init(name: String, isDownloaded: Bool) {
 		self.name = name
 		self.isDownloaded = isDownloaded
@@ -23,9 +34,8 @@ public struct CuratedModelInfo: Equatable, Identifiable, Codable {
 	public let speedStars: Int
 	public let storageSize: String
 	public var isDownloaded: Bool
-	
 	public var id: String { internalName }
-	
+
 	public init(
 		displayName: String,
 		internalName: String,
@@ -43,44 +53,56 @@ public struct CuratedModelInfo: Equatable, Identifiable, Codable {
 		self.storageSize = storageSize
 		self.isDownloaded = isDownloaded
 	}
-	
-	// Codable init - doesn't include isDownloaded which gets set at runtime
-	private enum CodingKeys: String, CodingKey {
-		case displayName, internalName, size, accuracyStars, speedStars, storageSize
-	}
-	
+
+	// Codable (isDownloaded is set at runtime)
+	private enum CodingKeys: String, CodingKey { case displayName, internalName, size, accuracyStars, speedStars, storageSize }
 	public init(from decoder: Decoder) throws {
-		let container = try decoder.container(keyedBy: CodingKeys.self)
-		displayName = try container.decode(String.self, forKey: .displayName)
-		internalName = try container.decode(String.self, forKey: .internalName)
-		size = try container.decode(String.self, forKey: .size)
-		accuracyStars = try container.decode(Int.self, forKey: .accuracyStars)
-		speedStars = try container.decode(Int.self, forKey: .speedStars)
-		storageSize = try container.decode(String.self, forKey: .storageSize)
-		isDownloaded = false // Default value, will be set at runtime
+		let c = try decoder.container(keyedBy: CodingKeys.self)
+		displayName = try c.decode(String.self, forKey: .displayName)
+		internalName = try c.decode(String.self, forKey: .internalName)
+		size = try c.decode(String.self, forKey: .size)
+		accuracyStars = try c.decode(Int.self, forKey: .accuracyStars)
+		speedStars = try c.decode(Int.self, forKey: .speedStars)
+		storageSize = try c.decode(String.self, forKey: .storageSize)
+		isDownloaded = false
 	}
 }
+
+// Convenience helper for loading the bundled models.json once.
+private enum CuratedModelLoader {
+	static func load() -> [CuratedModelInfo] {
+		guard let url = Bundle.main.url(forResource: "models", withExtension: "json") ??
+			Bundle.main.url(forResource: "models", withExtension: "json", subdirectory: "Data")
+		else {
+			assertionFailure("models.json not found in bundle")
+			return []
+		}
+		do { return try JSONDecoder().decode([CuratedModelInfo].self, from: Data(contentsOf: url)) }
+		catch { assertionFailure("Failed to decode models.json – \(error)"); return [] }
+	}
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+
+// MARK: – Domain
+
+// ──────────────────────────────────────────────────────────────────────────
 
 @Reducer
 public struct ModelDownloadFeature {
 	@ObservableState
-	public struct State {
+	public struct State: Equatable {
+		// Shared user settings
 		@Shared(.hexSettings) var hexSettings: HexSettings
 
-		// List of all known models from getAvailableModels()
+		// Remote data
 		public var availableModels: IdentifiedArrayOf<ModelInfo> = []
-		
-		// Curated list of models with user-friendly information
 		public var curatedModels: IdentifiedArrayOf<CuratedModelInfo> = []
-
-		// The recommended "default" from whisperKit
 		public var recommendedModel: String = ""
-		
-		// Whether to show all models or just curated ones
-		public var showAllModels: Bool = false
 
-		// Current download / progress states
-		public var isDownloading: Bool = false
+		// UI state
+		public var showAllModels = false
+		public var isDownloading = false
 		public var downloadProgress: Double = 0
 		public var downloadError: String?
 		public var downloadingModelName: String?
@@ -88,487 +110,416 @@ public struct ModelDownloadFeature {
         // Track which model generated a progress update to handle switching models
         public var activeDownloadID: UUID?
 
-		public init() {}
+		// Convenience computed vars
+		var selectedModel: String { hexSettings.selectedModel }
+		var selectedModelIsDownloaded: Bool {
+			availableModels[id: selectedModel]?.isDownloaded ?? false
+		}
+
+		var anyModelDownloaded: Bool {
+			availableModels.contains(where: { $0.isDownloaded })
+		}
 	}
+
+	// MARK: Actions
 
 	public enum Action: BindableAction {
 		case binding(BindingAction<State>)
-
+		// Requests
 		case fetchModels
-		case fetchModelsResponse(String, [ModelInfo])
-
 		case selectModel(String)
 		case toggleModelDisplay
-		
 		case downloadSelectedModel
-		case downloadProgress(UUID, Double)
-		case downloadResponse(Result<String, Error>)
+		// Effects
+		case modelsLoaded(recommended: String, available: [ModelInfo])
+		case downloadProgress(Double)
+		case downloadCompleted(Result<String, Error>)
 
 		case deleteSelectedModel
 		case openModelLocation
 	}
 
+	// MARK: Dependencies
+
 	@Dependency(\.transcription) var transcription
+	@Dependency(\.continuousClock) var clock
 
 	public init() {}
 
+	// MARK: Reducer
+
 	public var body: some ReducerOf<Self> {
 		BindingReducer()
+		Reduce(reduce)
+	}
 
-		Reduce { state, action in
-			switch action {
-			case .binding:
-				return .none
 
-			// 1) Load the recommended model + the list of all available model names
-			case .fetchModels:
-				return .run { send in
-					do {
-						let recommended = try await transcription.getRecommendedModels().default
-						let names = try await transcription.getAvailableModels()
+	private func reduce(state: inout State, action: Action) -> Effect<Action> {
+		switch action {
+		// MARK: – UI bindings
 
-						// Mark each model as downloaded or not
-						var list = [ModelInfo]()
-						for modelName in names {
-							let downloaded = await transcription.isModelDownloaded(modelName)
-							list.append(ModelInfo(name: modelName, isDownloaded: downloaded))
+		case .binding:
+			return .none
+
+		case .toggleModelDisplay:
+			state.showAllModels.toggle()
+			return .none
+
+		case let .selectModel(model):
+			state.$hexSettings.withLock { $0.selectedModel = model }
+			return .none
+
+		// MARK: – Fetch Models
+
+		case .fetchModels:
+			return .run { send in
+				do {
+					let recommended = try await transcription.getRecommendedModels().default
+					let names = try await transcription.getAvailableModels()
+					let infos = try await withThrowingTaskGroup(of: ModelInfo.self) { group -> [ModelInfo] in
+						for name in names {
+							group.addTask {
+								ModelInfo(
+									name: name,
+									isDownloaded: await transcription.isModelDownloaded(name)
+								)
+							}
 						}
-
-						await send(.fetchModelsResponse(recommended, list))
-					} catch {
-						await send(.fetchModelsResponse("", []))
+						return try await group.reduce(into: []) { $0.append($1) }
 					}
-				}
-
-			case let .fetchModelsResponse(recommended, list):
-				state.recommendedModel = recommended
-				state.availableModels = IdentifiedArrayOf(uniqueElements: list)
-				
-				// Create our curated model list from models.json
-				var curatedList: [CuratedModelInfo] = []
-				
-				// Load models.json - check both root resources and Data subdirectory
-				let jsonURL: URL? = Bundle.main.url(forResource: "models", withExtension: "json") ?? 
-					Bundle.main.url(forResource: "models", withExtension: "json", subdirectory: "Data")
-				
-				if let url = jsonURL {
-					do {
-						let data = try Data(contentsOf: url)
-						let modelDefinitions = try JSONDecoder().decode([CuratedModelInfo].self, from: data)
-						
-						// Update download status for each model
-						for var modelDefinition in modelDefinitions {
-							// Find download status in the fetched model list
-							let isDownloaded = list.first(where: { $0.name == modelDefinition.internalName })?.isDownloaded ?? false
-							modelDefinition.isDownloaded = isDownloaded
-							curatedList.append(modelDefinition)
-						}
-					} catch {
-						print("Error loading or parsing models.json: \(error)")
-					}
-				} else {
-					print("Warning: models.json not found in bundle - no models will be displayed")
-				}
-				
-				state.curatedModels = IdentifiedArrayOf(uniqueElements: curatedList)
-				return .none
-
-			// 2) The user picks a new model => update & check if downloaded
-			case let .selectModel(newModel):
-				state.$hexSettings.withLock { $0.selectedModel = newModel }
-				return .none
-				
-			case .toggleModelDisplay:
-				state.showAllModels.toggle()
-				return .none
-
-			// 3) Download the currently selected model
-			case .downloadSelectedModel:
-				let model = state.hexSettings.selectedModel
-				guard !model.isEmpty else { return .none }
-
-                // Create a unique ID for this download operation
-                let downloadID = UUID()
-                
-				// Fully reset download state when starting a new download
-                state.isDownloading = true
-				state.downloadProgress = 0
-				state.downloadError = nil
-				state.downloadingModelName = model
-                state.activeDownloadID = downloadID
-
-				return .run { send in
-					do {
-						// Start the download & track progress
-						try await transcription.downloadModel(model) { prog in
-							Task { 
-                                // Include the download ID with each progress update
-                                // This allows us to filter out stale updates
-                                let progress = prog.fractionCompleted
-                                
-                                // Round progress to nearest 2% to prevent small fluctuations
-                                let roundedProgress = (Double(Int(progress * 50)) / 50)
-                                await send(.downloadProgress(downloadID, roundedProgress))
-                            }
-						}
-						await send(.downloadResponse(.success(model)))
-					} catch {
-						await send(.downloadResponse(.failure(error)))
-					}
-				}
-
-			// 4) Delete the currently selected model
-			case .deleteSelectedModel:
-				let model = state.hexSettings.selectedModel
-				guard !model.isEmpty else { return .none }
-				
-				return .run { send in
-					do {
-						try await transcription.deleteModel(model)
-						
-						// Simply reload all models to refresh status
-						await send(.fetchModels)
-					} catch {
-						await send(.downloadResponse(.failure(error)))
-					}
-				}
-
-			// Filter progress updates by download ID to prevent stale updates
-            case let .downloadProgress(downloadID, value):
-                // Only process updates for the current download
-                if state.activeDownloadID == downloadID {
-                    // Always allow progress to reach 100%
-                    if value >= 0.99 {
-                        state.downloadProgress = 1.0
-                    } else {
-                        state.downloadProgress = value
-                    }
-                }
-                return .none
-
-			case let .downloadResponse(.success(modelName)):
-				state.isDownloading = false
-				state.downloadProgress = 1
-				state.downloadError = nil
-				state.downloadingModelName = nil
-                state.activeDownloadID = nil
-
-				// Mark it as downloaded in the list
-				state.availableModels[id: modelName]?.isDownloaded = true
-				
-				// Also update the curated model list if it's one of our curated models
-				if let curatedIndex = state.curatedModels.firstIndex(where: { $0.internalName == modelName }) {
-					state.curatedModels[curatedIndex].isDownloaded = true
-				}
-				
-				return .none
-
-			case let .downloadResponse(.failure(err)):
-				state.isDownloading = false
-				state.downloadError = err.localizedDescription
-				state.downloadProgress = 0
-				state.downloadingModelName = nil
-                state.activeDownloadID = nil
-				return .none
-					
-			case .openModelLocation:
-				return .run { send in
-					// Create URL to the models folder
-					let fileManager = FileManager.default
-					let appSupportURL = try fileManager.url(
-						for: .applicationSupportDirectory,
-						in: .userDomainMask,
-						appropriateFor: nil,
-						create: false
-					)
-					let modelsBaseFolder = appSupportURL
-						.appendingPathComponent("com.kitlangton.Hex", isDirectory: true)
-						.appendingPathComponent("models", isDirectory: true)
-					
-					// Create the directory if it doesn't exist
-					if !fileManager.fileExists(atPath: modelsBaseFolder.path) {
-						try fileManager.createDirectory(at: modelsBaseFolder, withIntermediateDirectories: true)
-					}
-					
-					// Open in Finder
-					NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: modelsBaseFolder.path)
-					
-					// Refresh model status after a short delay (user might delete or add models)
-					try await Task.sleep(for: .seconds(1))
-					await send(.fetchModels)
+					await send(.modelsLoaded(recommended: recommended, available: infos))
+				} catch {
+					await send(.modelsLoaded(recommended: "", available: []))
 				}
 			}
+
+		case let .modelsLoaded(recommended, available):
+			state.recommendedModel = recommended
+			state.availableModels = IdentifiedArrayOf(uniqueElements: available)
+			// Merge curated + download status
+			var curated = CuratedModelLoader.load()
+			for idx in curated.indices {
+				curated[idx].isDownloaded = available.first(where: { $0.name == curated[idx].internalName })?.isDownloaded ?? false
+			}
+			state.curatedModels = IdentifiedArrayOf(uniqueElements: curated)
+			return .none
+
+		// MARK: – Download
+
+		case .downloadSelectedModel:
+			guard !state.selectedModel.isEmpty else { return .none }
+			state.downloadError = nil
+			state.isDownloading = true
+			state.downloadingModelName = state.selectedModel
+			return .run { [state] send in
+				do {
+					// Assume downloadModel returns AsyncThrowingStream<Double, Error>
+					try await transcription.downloadModel(state.selectedModel) { progress in
+						Task { await send(.downloadProgress(progress.fractionCompleted)) }
+					}
+					await send(.downloadCompleted(.success(state.selectedModel)))
+				} catch {
+					await send(.downloadCompleted(.failure(error)))
+				}
+			}
+
+		case let .downloadProgress(progress):
+			state.downloadProgress = progress
+			return .none
+
+		case let .downloadCompleted(result):
+			state.isDownloading = false
+			state.downloadingModelName = nil
+			switch result {
+			case let .success(name):
+				state.availableModels[id: name]?.isDownloaded = true
+				if let idx = state.curatedModels.firstIndex(where: { $0.internalName == name }) {
+					state.curatedModels[idx].isDownloaded = true
+				}
+			case let .failure(err):
+				state.downloadError = err.localizedDescription
+			}
+			return .none
+
+		case .deleteSelectedModel:
+			guard !state.selectedModel.isEmpty else { return .none }
+			return .run { [state] send in
+				do {
+					try await transcription.deleteModel(state.selectedModel)
+					await send(.fetchModels)
+				} catch {
+					await send(.downloadCompleted(.failure(error)))
+				}
+			}
+
+		case .openModelLocation:
+			return openModelLocationEffect()
+		}
+	}
+
+	// MARK: Helpers
+
+	private func openModelLocationEffect() -> Effect<Action> {
+		.run { _ in
+			let fm = FileManager.default
+			let base = try fm.url(
+				for: .applicationSupportDirectory,
+				in: .userDomainMask,
+				appropriateFor: nil,
+				create: true
+			)
+			.appendingPathComponent("com.kitlangton.Hex/models", isDirectory: true)
+
+			if !fm.fileExists(atPath: base.path) {
+				try fm.createDirectory(at: base, withIntermediateDirectories: true)
+			}
+			NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: base.path)
 		}
 	}
 }
 
-struct StarRatingView: View {
-	let filledStars: Int
-	let maxStars: Int
-	
-	init(rating: Int, maxRating: Int = 5) {
-		self.filledStars = rating
-		self.maxStars = maxRating
+// ──────────────────────────────────────────────────────────────────────────
+
+// MARK: – SwiftUI Views
+
+// ──────────────────────────────────────────────────────────────────────────
+
+private struct StarRatingView: View {
+	let filled: Int
+	let max: Int
+
+	init(_ filled: Int, max: Int = 5) {
+		self.filled = filled
+		self.max = max
 	}
-	
+
 	var body: some View {
 		HStack(spacing: 3) {
-			ForEach(0..<maxStars, id: \.self) { dot in
-				Image(systemName: dot < filledStars ? "circle.fill" : "circle")
-					.foregroundColor(dot < filledStars ? .blue : .gray.opacity(0.5))
+			ForEach(0 ..< max, id: \.self) { i in
+				Image(systemName: i < filled ? "circle.fill" : "circle")
 					.font(.system(size: 7))
+					.foregroundColor(i < filled ? .blue : .gray.opacity(0.5))
 			}
 		}
 	}
 }
 
-struct ModelDownloadView: View {
+public struct ModelDownloadView: View {
+	@Bindable var store: StoreOf<ModelDownloadFeature>
+
+	public init(store: StoreOf<ModelDownloadFeature>) {
+		self.store = store
+	}
+
+	public var body: some View {
+		VStack(alignment: .leading, spacing: 12) {
+			HeaderView(store: store)
+			Group {
+				if store.showAllModels {
+					AllModelsPicker(store: store)
+				} else {
+					CuratedList(store: store)
+				}
+			}
+			if let err = store.downloadError {
+				Text("Download Error: \(err)")
+					.foregroundColor(.red)
+					.font(.caption)
+			}
+			FooterView(store: store)
+		}
+		.task {
+			if store.availableModels.isEmpty {
+				store.send(.fetchModels)
+			}
+		}
+		.onAppear {
+			store.send(.fetchModels)
+		}
+	}
+}
+
+// MARK: – Subviews
+
+private struct HeaderView: View {
 	@Bindable var store: StoreOf<ModelDownloadFeature>
 
 	var body: some View {
-		if store.availableModels.isEmpty {
-			Text("No models found.").foregroundColor(.secondary)
-		} else {
-			VStack(alignment: .leading, spacing: 12) {
-				// Toggle between curated and all models
+		HStack {
+			Text(store.showAllModels ? "Showing all models" : "Showing recommended models")
+				.font(.caption)
+				.foregroundColor(.secondary)
+			Spacer()
+			Button(
+				store.showAllModels ? "Show Recommended" : "Show All Models"
+			) {
+				store.send(.toggleModelDisplay)
+			}
+			.font(.caption)
+		}
+	}
+}
+
+private struct AllModelsPicker: View {
+	@Bindable var store: StoreOf<ModelDownloadFeature>
+
+	var body: some View {
+		Picker(
+			"Selected Model",
+			selection: Binding(
+				get: { store.hexSettings.selectedModel },
+				set: { store.send(.selectModel($0)) }
+			)
+		) {
+			ForEach(store.availableModels) { info in
 				HStack {
-					Text(store.showAllModels ? "Showing all models" : "Showing recommended models")
-						.font(.caption)
-						.foregroundColor(.secondary)
-					
+					Text(
+						info.name == store.recommendedModel
+							? "\(info.name) (Recommended)"
+							: info.name
+					)
 					Spacer()
-					
-					Button(store.showAllModels ? "Show Recommended" : "Show All Models") {
-						store.send(.toggleModelDisplay)
+					if info.isDownloaded {
+						Image(systemName: "checkmark.circle.fill")
+							.foregroundColor(.green)
+					}
+				}
+				.tag(info.name)
+			}
+		}
+		.pickerStyle(.menu)
+	}
+}
+
+private struct CuratedList: View {
+	@Bindable var store: StoreOf<ModelDownloadFeature>
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 8) {
+			// Header
+			HStack(alignment: .bottom) {
+				Text("Model")
+					.frame(minWidth: 80, alignment: .leading)
+					.font(.caption.bold())
+				Spacer()
+				Text("Accuracy")
+					.frame(minWidth: 80, alignment: .leading)
+					.font(.caption.bold())
+				Spacer()
+				Text("Speed")
+					.frame(minWidth: 80, alignment: .leading)
+					.font(.caption.bold())
+				Spacer()
+				Text("Size")
+					.frame(minWidth: 70, alignment: .leading)
+					.font(.caption.bold())
+			}
+			.padding(.horizontal, 8)
+
+			ForEach(store.curatedModels) { model in
+				CuratedRow(store: store, model: model)
+			}
+		}
+	}
+}
+
+private struct CuratedRow: View {
+	@Bindable var store: StoreOf<ModelDownloadFeature>
+	let model: CuratedModelInfo
+
+	var isSelected: Bool {
+		model.internalName == store.hexSettings.selectedModel
+	}
+
+	var body: some View {
+		Button(
+			action: { store.send(.selectModel(model.internalName)) }
+		) {
+			HStack {
+				HStack {
+					Text(model.displayName)
+						.font(.headline)
+					if model.isDownloaded {
+						Image(systemName: "checkmark.circle.fill")
+							.foregroundColor(.green)
+					}
+					if isSelected {
+						Image(systemName: "checkmark")
+							.foregroundColor(.blue)
+					}
+				}
+				.frame(minWidth: 80, alignment: .leading)
+				Spacer()
+				StarRatingView(model.accuracyStars)
+					.frame(minWidth: 80, alignment: .leading)
+				Spacer()
+				StarRatingView(model.speedStars)
+					.frame(minWidth: 80, alignment: .leading)
+				Spacer()
+				Text(model.storageSize)
+					.foregroundColor(.secondary)
+					.frame(minWidth: 70, alignment: .leading)
+			}
+			.padding(8)
+			.background(
+				RoundedRectangle(cornerRadius: 8)
+					.fill(isSelected ? Color.blue.opacity(0.1) : Color.clear)
+			)
+			.overlay(
+				RoundedRectangle(cornerRadius: 8)
+					.stroke(
+						isSelected
+							? Color.blue.opacity(0.3)
+							: Color.gray.opacity(0.2)
+					)
+			)
+			.contentShape(.rect)
+		}
+		.buttonStyle(.plain)
+	}
+}
+
+private struct FooterView: View {
+	@Bindable var store: StoreOf<ModelDownloadFeature>
+
+	var body: some View {
+		if store.isDownloading, store.downloadingModelName == store.hexSettings.selectedModel {
+			VStack(alignment: .leading) {
+				Text("Downloading model...")
+					.font(.caption)
+				ProgressView(value: store.downloadProgress)
+					.tint(.blue)
+			}
+		} else {
+			HStack {
+				if let selected = store.curatedModels.first(where: { $0.internalName == store.hexSettings.selectedModel }) {
+					Text("Selected: \(selected.displayName)")
+						.font(.caption)
+				}
+				Spacer()
+				if store.anyModelDownloaded {
+					Button("Show Models Folder") {
+						store.send(.openModelLocation)
 					}
 					.font(.caption)
+					.buttonStyle(.plain)
+					.foregroundStyle(.secondary)
 				}
-				
-				if store.showAllModels {
-					// Show all models in a picker
-					Picker("Selected Model", selection: Binding(
-						get: { store.hexSettings.selectedModel },
-						set: { store.send(.selectModel($0)) }
-					)) {
-						ForEach(store.availableModels) { info in
-							let isRecommended = info.name == store.recommendedModel
-							let name = isRecommended ? "\(info.name) (Recommended)" : info.name
-							HStack {
-								Text(name)
-								if info.isDownloaded {
-									Spacer()
-									Image(systemName: "checkmark.circle.fill")
-										.foregroundColor(.green)
-								}
-							}
-							.tag(info.name)
-						}
+				if store.selectedModelIsDownloaded {
+					Button("Delete", role: .destructive) {
+						store.send(.deleteSelectedModel)
 					}
-					.pickerStyle(.menu)
-				} else {
-					// Show curated model list with detailed info
-					VStack(alignment: .leading, spacing: 8) {
-						// Table header
-						HStack(alignment: .bottom) {
-							Text("Model")
-								.font(.caption.bold())
-								.frame(minWidth: 80, alignment: .leading)
-								.layoutPriority(1)
-							
-							Spacer()
-							
-							VStack(alignment: .leading, spacing: 2) {
-								Text("Accuracy")
-									.font(.caption.bold())
-								StarRatingView(rating: 0)
-							}
-							.frame(minWidth: 80, alignment: .leading)
-							.layoutPriority(1)
-							
-							Spacer()
-							
-							VStack(alignment: .leading, spacing: 2) {
-								Text("Speed")
-									.font(.caption.bold())
-								StarRatingView(rating: 0)
-							}
-							.frame(minWidth: 80, alignment: .leading)
-							.layoutPriority(1)
-							
-							Spacer()
-							
-							Text("Size")
-								.font(.caption.bold())
-								.frame(minWidth: 70, alignment: .leading)
-								.layoutPriority(1)
-						}
-						.padding(.horizontal, 8)
-						.frame(maxWidth: .infinity)
-						
-						// Model rows
-						ForEach(store.curatedModels) { model in
-							Button {
-								store.send(.selectModel(model.internalName))
-							} label: {
-								HStack(alignment: .center) {
-									// Model name
-									HStack {
-										Text(model.displayName)
-											.font(.headline)
-										
-										if model.isDownloaded {
-											Image(systemName: "checkmark.circle.fill")
-												.foregroundColor(.green)
-												.font(.caption)
-										}
-										
-										if model.internalName == store.hexSettings.selectedModel {
-											Image(systemName: "checkmark")
-												.foregroundColor(.blue)
-												.font(.caption)
-										}
-									}
-									.frame(minWidth: 80, alignment: .leading)
-									.layoutPriority(1)
-									
-									Spacer()
-									
-									// Accuracy rating
-									VStack(alignment: .leading) {
-										StarRatingView(rating: model.accuracyStars)
-									}
-									.frame(minWidth: 80, alignment: .leading)
-									.layoutPriority(1)
-									
-									Spacer()
-									
-									// Speed rating
-									VStack(alignment: .leading) {
-										StarRatingView(rating: model.speedStars)
-									}
-									.frame(minWidth: 80, alignment: .leading)
-									.layoutPriority(1)
-									
-									Spacer()
-									
-									// Storage size
-									Text(model.storageSize)
-										.font(.body)
-										.foregroundColor(.secondary)
-										.frame(minWidth: 70, alignment: .leading)
-										.layoutPriority(1)
-								}
-								.padding(8)
-								.frame(maxWidth: .infinity)
-								.background(
-									RoundedRectangle(cornerRadius: 8)
-										.fill(model.internalName == store.hexSettings.selectedModel ? 
-											  Color.blue.opacity(0.1) : Color.clear)
-								)
-								.overlay(
-									RoundedRectangle(cornerRadius: 8)
-										.stroke(model.internalName == store.hexSettings.selectedModel ? 
-												Color.blue.opacity(0.3) : Color.gray.opacity(0.2), lineWidth: 1)
-								)
-							}
-							.buttonStyle(.plain)
-						}
+					.font(.caption)
+					.buttonStyle(.plain)
+					.foregroundStyle(.secondary)
+				} else if !store.selectedModel.isEmpty {
+					Button("Download") {
+						store.send(.downloadSelectedModel)
 					}
+					.font(.caption)
+					.buttonStyle(.plain)
+					.foregroundStyle(.secondary)
 				}
-				
-				if let error = store.downloadError {
-					Text("Download Error: \(error)")
-						.foregroundColor(.red)
-						.font(.caption)
-				}
-				
-				// Download progress or download/delete buttons
-				if store.isDownloading,
-				   let downloadingName = store.downloadingModelName,
-				   downloadingName == store.hexSettings.selectedModel
-				{
-					VStack(alignment: .leading) {
-						HStack {
-							Text("Downloading model...")
-								.font(.caption)
-								
-							Spacer()
-								
-							// Format as percentage with 0 decimal places
-							Text("\(Int(store.downloadProgress * 100))%")
-								.font(.caption.bold())
-								.foregroundColor(.blue)
-						}
-						
-						ProgressView(value: store.downloadProgress, total: 1.0)
-							.tint(.blue)
-							.padding(.vertical, 4)
-					}
-				} else {
-					HStack {
-						// Selected model display
-						if let selectedModel = store.curatedModels.first(where: { $0.internalName == store.hexSettings.selectedModel }) {
-							Text("Selected: \(selectedModel.displayName)")
-								.font(.caption)
-						} else if let selectedName = store.availableModels.first(where: { $0.name == store.hexSettings.selectedModel })?.name {
-							Text("Selected: \(selectedName)")
-								.font(.caption)
-						}
-						
-						Spacer()
-						
-						// Check if any models are downloaded
-						let anyModelsDownloaded = store.availableModels.contains(where: { $0.isDownloaded })
-						
-						// Get selected model download status
-						let selectedModel = store.availableModels.first(where: { $0.name == store.hexSettings.selectedModel })
-						let isSelectedModelDownloaded = selectedModel?.isDownloaded ?? false
-						
-						// Show "Show Models Folder" button if any models are downloaded
-						if anyModelsDownloaded {
-							Button {
-								store.send(.openModelLocation)
-							} label: {
-								Text("Show Models Folder")
-									.font(.caption)
-							}
-							.buttonStyle(.borderless)
-							.padding(.trailing, 8)
-						}
-						
-						// Show Delete button if selected model is downloaded
-						if isSelectedModelDownloaded {
-							Button(role: .destructive, action: {
-								store.send(.deleteSelectedModel)
-							}) {
-								Text("Delete")
-									.font(.caption)
-							}
-							.buttonStyle(.borderless)
-							.padding(.trailing, 8)
-						}
-						
-						// Show Download button if selected model is not downloaded
-						if !isSelectedModelDownloaded {
-							Button {
-								store.send(.downloadSelectedModel)
-							} label: {
-								Text("Download")
-									.font(.caption)
-							}
-							.buttonStyle(.borderless)
-						}
-					}
-				}
-			}
-			.task {
-				if store.availableModels.isEmpty {
-					store.send(.fetchModels)
-				}
-			}
-			.onAppear {
-				// Force refresh model status when this view appears
-				store.send(.fetchModels)
 			}
 		}
 	}
