@@ -106,6 +106,9 @@ public struct ModelDownloadFeature {
 		public var downloadProgress: Double = 0
 		public var downloadError: String?
 		public var downloadingModelName: String?
+        
+        // Track which model generated a progress update to handle switching models
+        public var activeDownloadID: UUID?
 
 		// Convenience computed vars
 		var selectedModel: String { hexSettings.selectedModel }
@@ -131,6 +134,7 @@ public struct ModelDownloadFeature {
 		case modelsLoaded(recommended: String, available: [ModelInfo])
 		case downloadProgress(Double)
 		case downloadCompleted(Result<String, Error>)
+
 		case deleteSelectedModel
 		case openModelLocation
 	}
@@ -148,6 +152,7 @@ public struct ModelDownloadFeature {
 		BindingReducer()
 		Reduce(reduce)
 	}
+
 
 	private func reduce(state: inout State, action: Action) -> Effect<Action> {
 		switch action {

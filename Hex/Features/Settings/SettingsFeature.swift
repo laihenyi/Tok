@@ -101,7 +101,7 @@ struct SettingsFeature {
           
           // Set up periodic refresh of available devices (every 120 seconds)
           // Using a longer interval to reduce resource usage
-          let deviceRefreshTask = Task {
+          let deviceRefreshTask = Task { @MainActor in
             for await _ in clock.timer(interval: .seconds(120)) {
               // Only refresh when the app is active to save resources
               if await NSApplication.shared.isActive {

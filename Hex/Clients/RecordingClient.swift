@@ -381,14 +381,21 @@ actor RecordingClientLive {
     
     var deviceName: CFString? = nil
     var size = UInt32(MemoryLayout<CFString?>.size)
+    var deviceNamePtr: UnsafeMutableRawPointer = .allocate(byteCount: Int(size), alignment: MemoryLayout<CFString?>.alignment)
+    defer { deviceNamePtr.deallocate() }
+    
     let status = AudioObjectGetPropertyData(
       deviceID,
       &address,
       0,
       nil,
       &size,
-      &deviceName
+      deviceNamePtr
     )
+    
+    if status == 0 {
+        deviceName = deviceNamePtr.load(as: CFString?.self)
+    }
     
     if status != 0 {
       print("Error getting device name: \(status)")

@@ -28,7 +28,7 @@ struct TranscriptionClient {
   /// Checks if a named model is already downloaded on this system.
   var isModelDownloaded: @Sendable (String) async -> Bool = { _ in false }
 
-  /// Fetches a recommended set of models for the user’s hardware from Hugging Face’s `argmaxinc/whisperkit-coreml`.
+  /// Fetches a recommended set of models for the user's hardware from Hugging Face's `argmaxinc/whisperkit-coreml`.
   var getRecommendedModels: @Sendable () async throws -> ModelSupport
 
   /// Lists all model variants found in `argmaxinc/whisperkit-coreml`.
@@ -93,33 +93,46 @@ actor TranscriptionClientLive {
   /// Ensures the given `variant` model is downloaded and loaded, reporting
   /// overall progress (0%–50% for downloading, 50%–100% for loading).
   func downloadAndLoadModel(variant: String, progressCallback: @escaping (Progress) -> Void) async throws {
+    // Special handling for corrupted or malformed variant names
+    if variant.isEmpty {
+      throw NSError(
+        domain: "TranscriptionClient",
+        code: -3,
+        userInfo: [
+          NSLocalizedDescriptionKey: "Cannot download model: Empty model name"
+        ]
+      )
+    }
+    
     let overallProgress = Progress(totalUnitCount: 100)
     overallProgress.completedUnitCount = 0
     progressCallback(overallProgress)
+    
+    print("[TranscriptionClientLive] Processing model: \(variant)")
 
-    let modelFolder = modelPath(for: variant)
-
-    // 1) If already on disk, jump to 50%.
-    if FileManager.default.fileExists(atPath: modelFolder.path) {
-      overallProgress.completedUnitCount = 50
-      progressCallback(overallProgress)
-    } else {
-      // Otherwise, download and move it into place
+    // 1) Model download phase (0-50% progress)
+    if !(await isModelDownloaded(variant)) {
       try await downloadModelIfNeeded(variant: variant) { downloadProgress in
         let fraction = downloadProgress.fractionCompleted * 0.5
         overallProgress.completedUnitCount = Int64(fraction * 100)
         progressCallback(overallProgress)
       }
+    } else {
+      // Skip download phase if already downloaded
       overallProgress.completedUnitCount = 50
       progressCallback(overallProgress)
     }
 
-    // 2) Load the model from disk into memory
+    // 2) Model loading phase (50-100% progress)
     try await loadWhisperKitModel(variant) { loadingProgress in
       let fraction = 0.5 + (loadingProgress.fractionCompleted * 0.5)
       overallProgress.completedUnitCount = Int64(fraction * 100)
       progressCallback(overallProgress)
     }
+    
+    // Final progress update
+    overallProgress.completedUnitCount = 100
+    progressCallback(overallProgress)
   }
 
   /// Deletes a model from disk if it exists
@@ -151,7 +164,7 @@ actor TranscriptionClientLive {
     
     // First, check if the basic model directory exists
     guard fileManager.fileExists(atPath: modelFolderPath) else {
-      print("[TranscriptionClientLive] Model directory doesn't exist for: \(modelName)")
+      // Don't print logs that would spam the console
       return false
     }
     
@@ -161,7 +174,6 @@ actor TranscriptionClientLive {
       
       // Model should have multiple files and certain key components
       guard !contents.isEmpty else {
-        print("[TranscriptionClientLive] Model directory is empty for: \(modelName)")
         return false
       }
       
@@ -170,18 +182,9 @@ actor TranscriptionClientLive {
       let tokenizerFolderPath = tokenizerPath(for: modelName).path
       let hasTokenizer = fileManager.fileExists(atPath: tokenizerFolderPath)
       
-      if !hasModelFiles {
-        print("[TranscriptionClientLive] No model files found for: \(modelName)")
-      }
-      
-      if !hasTokenizer {
-        print("[TranscriptionClientLive] No tokenizer found for: \(modelName)")
-      }
-      
       // Both conditions must be true for a model to be considered downloaded
       return hasModelFiles && hasTokenizer
     } catch {
-      print("[TranscriptionClientLive] Error checking model contents for \(modelName): \(error)")
       return false
     }
   }
@@ -236,10 +239,13 @@ actor TranscriptionClientLive {
 
   /// Creates or returns the local folder (on disk) for a given `variant` model.
   private func modelPath(for variant: String) -> URL {
-    modelsBaseFolder
+    // Remove any possible path traversal or invalid characters from variant name
+    let sanitizedVariant = variant.components(separatedBy: CharacterSet(charactersIn: "./\\")).joined(separator: "_")
+    
+    return modelsBaseFolder
       .appendingPathComponent("argmaxinc")
       .appendingPathComponent("whisperkit-coreml")
-      .appendingPathComponent(variant, isDirectory: true)
+      .appendingPathComponent(sanitizedVariant, isDirectory: true)
   }
 
   /// Creates or returns the local folder for the tokenizer files of a given `variant`.
@@ -253,37 +259,61 @@ actor TranscriptionClientLive {
     currentModelName = nil
   }
 
-  /// Downloads the model to a temporary folder (if it isn’t already on disk),
+  /// Downloads the model to a temporary folder (if it isn't already on disk),
   /// then moves it into its final folder in `modelsBaseFolder`.
   private func downloadModelIfNeeded(
     variant: String,
     progressCallback: @escaping (Progress) -> Void
   ) async throws {
     let modelFolder = modelPath(for: variant)
-    guard !FileManager.default.fileExists(atPath: modelFolder.path) else {
-      // Already downloaded
+    
+    // If the model folder exists but isn't a complete model, clean it up
+    let isDownloaded = await isModelDownloaded(variant)
+    if FileManager.default.fileExists(atPath: modelFolder.path) && !isDownloaded {
+      try FileManager.default.removeItem(at: modelFolder)
+    }
+    
+    // If model is already fully downloaded, we're done
+    if isDownloaded {
       return
     }
 
     print("[TranscriptionClientLive] Downloading model: \(variant)")
 
-    let tempFolder = try await WhisperKit.download(
-      variant: variant,
-      downloadBase: nil,
-      useBackgroundSession: false,
-      from: "argmaxinc/whisperkit-coreml",
-      token: nil,
-      progressCallback: { progress in
-        progressCallback(progress)
+    // Create parent directories
+    let parentDir = modelFolder.deletingLastPathComponent()
+    try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+    
+    do {
+      // Download directly using the exact variant name provided
+      let tempFolder = try await WhisperKit.download(
+        variant: variant,
+        downloadBase: nil,
+        useBackgroundSession: false,
+        from: "argmaxinc/whisperkit-coreml",
+        token: nil,
+        progressCallback: { progress in
+          progressCallback(progress)
+        }
+      )
+      
+      // Ensure target folder exists
+      try FileManager.default.createDirectory(at: modelFolder, withIntermediateDirectories: true)
+      
+      // Move the downloaded snapshot to the final location
+      try moveContents(of: tempFolder, to: modelFolder)
+      
+      print("[TranscriptionClientLive] Downloaded model to: \(modelFolder.path)")
+    } catch {
+      // Clean up any partial download if an error occurred
+      if FileManager.default.fileExists(atPath: modelFolder.path) {
+        try? FileManager.default.removeItem(at: modelFolder)
       }
-    )
-
-    // Ensure final folder exists.
-    try FileManager.default.createDirectory(at: modelFolder, withIntermediateDirectories: true)
-
-    // Move the downloaded snapshot to the final location.
-    try moveContents(of: tempFolder, to: modelFolder)
-    print("[TranscriptionClientLive] Moved model to: \(modelFolder.path)")
+      
+      // Rethrow the original error
+      print("[TranscriptionClientLive] Error downloading model: \(error.localizedDescription)")
+      throw error
+    }
   }
 
   /// Loads a local model folder via `WhisperKitConfig`, optionally reporting load progress.
@@ -298,7 +328,7 @@ actor TranscriptionClientLive {
     let modelFolder = modelPath(for: modelName)
     let tokenizerFolder = tokenizerPath(for: modelName)
 
-    // Use WhisperKit’s config to load the model
+    // Use WhisperKit's config to load the model
     let config = WhisperKitConfig(
       model: modelName,
       modelFolder: modelFolder.path,
