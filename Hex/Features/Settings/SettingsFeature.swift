@@ -35,6 +35,9 @@ struct SettingsFeature {
 
     // Model Management
     var modelDownload = ModelDownloadFeature.State()
+    
+    // AI Enhancement
+    var aiEnhancement = AIEnhancementFeature.State()
   }
 
   enum Action: BindableAction {
@@ -60,6 +63,9 @@ struct SettingsFeature {
 
     // Model Management
     case modelDownload(ModelDownloadFeature.Action)
+    
+    // AI Enhancement
+    case aiEnhancement(AIEnhancementFeature.Action)
   }
 
   @Dependency(\.keyEventMonitor) var keyEventMonitor
@@ -72,6 +78,10 @@ struct SettingsFeature {
 
     Scope(state: \.modelDownload, action: \.modelDownload) {
       ModelDownloadFeature()
+    }
+    
+    Scope(state: \.aiEnhancement, action: \.aiEnhancement) {
+      AIEnhancementFeature()
     }
 
     Reduce { state, action in
@@ -104,7 +114,10 @@ struct SettingsFeature {
           let deviceRefreshTask = Task { @MainActor in
             for await _ in clock.timer(interval: .seconds(120)) {
               // Only refresh when the app is active to save resources
-              if await NSApplication.shared.isActive {
+              let isActive = NSApplication.shared.isActive
+              
+              if isActive {
+                try? await Task.sleep(for: .nanoseconds(1))
                 await send(.loadAvailableInputDevices)
               }
             }
@@ -278,6 +291,10 @@ struct SettingsFeature {
         return .none
 
       case .modelDownload:
+        return .none
+        
+      // AI Enhancement
+      case .aiEnhancement:
         return .none
       
       // Microphone device selection

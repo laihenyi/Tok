@@ -45,12 +45,17 @@ struct TranscriptionFeature {
     // Transcription result flow
     case transcriptionResult(String)
     case transcriptionError(Error)
+    
+    // AI Enhancement flow
+    case aiEnhancementResult(String)
+    case aiEnhancementError(Error)
   }
 
   enum CancelID {
     case delayedRecord
     case metering
     case transcription
+    case aiEnhancement
   }
 
   @Dependency(\.transcription) var transcription
@@ -58,6 +63,7 @@ struct TranscriptionFeature {
   @Dependency(\.pasteboard) var pasteboard
   @Dependency(\.keyEventMonitor) var keyEventMonitor
   @Dependency(\.soundEffects) var soundEffect
+  @Dependency(\.aiEnhancement) var aiEnhancement
 
   var body: some ReducerOf<Self> {
     Reduce { state, action in
@@ -106,6 +112,17 @@ struct TranscriptionFeature {
 
       case let .transcriptionError(error):
         return handleTranscriptionError(&state, error: error)
+        
+      // MARK: - AI Enhancement Results
+      
+      case let .aiEnhancementResult(result):
+        return handleAIEnhancement(&state, result: result)
+        
+      case let .aiEnhancementError(error):
+        // On AI enhancement error, we'll just use the original transcription
+        // so we don't need specific error handling here
+        print("AI Enhancement error: \(error)")
+        return .none
 
       // MARK: - Cancel Entire Flow
 
@@ -304,6 +321,64 @@ private extension TranscriptionFeature {
     _ state: inout State,
     result: String
   ) -> Effect<Action> {
+    // First check if we should use AI enhancement
+    if state.hexSettings.useAIEnhancement {
+      // Keep state.isTranscribing = true since we're still processing
+      return enhanceWithAI(result: result, state: state)
+    } else {
+      state.isTranscribing = false
+      state.isPrewarming = false
+
+      // If empty text, nothing else to do
+      guard !result.isEmpty else {
+        return .none
+      }
+
+      // Compute how long we recorded
+      let duration = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
+
+      // Continue with storing the final result in the background
+      return finalizeRecordingAndStoreTranscript(
+        result: result,
+        duration: duration,
+        transcriptionHistory: state.$transcriptionHistory
+      )
+    }
+  }
+  
+  // MARK: - AI Enhancement Handlers
+  
+  // Use AI to enhance the transcription result
+  private func enhanceWithAI(result: String, state: State) -> Effect<Action> {
+    // If empty text, nothing else to do
+    guard !result.isEmpty else {
+      return .send(.aiEnhancementResult(result)) // Just pass through empty text
+    }
+    
+    let model = state.hexSettings.selectedAIModel
+    let options = EnhancementOptions(
+      prompt: state.hexSettings.aiEnhancementPrompt,
+      temperature: state.hexSettings.aiEnhancementTemperature
+    )
+    
+    return .run { send in
+      do {
+        let enhancedText = try await aiEnhancement.enhance(result, model, options) { _ in }
+        await send(.aiEnhancementResult(enhancedText))
+      } catch {
+        print("Error enhancing text with AI: \(error)")
+        // On error, fall back to the original transcription
+        await send(.aiEnhancementResult(result))
+      }
+    }
+    .cancellable(id: CancelID.aiEnhancement)
+  }
+  
+  // Handle the AI enhancement result
+  private func handleAIEnhancement(
+    _ state: inout State,
+    result: String
+  ) -> Effect<Action> {
     state.isTranscribing = false
     state.isPrewarming = false
 
@@ -399,6 +474,7 @@ private extension TranscriptionFeature {
     return .merge(
       .cancel(id: CancelID.transcription),
       .cancel(id: CancelID.delayedRecord),
+      .cancel(id: CancelID.aiEnhancement),
       .run { _ in
         await soundEffect.play(.cancel)
       }
@@ -440,7 +516,9 @@ struct TranscriptionView: View {
   @Bindable var store: StoreOf<TranscriptionFeature>
 
   var status: TranscriptionIndicatorView.Status {
-    if store.isTranscribing {
+    if store.isTranscribing && store.hexSettings.useAIEnhancement {
+      return .enhancing 
+    } else if store.isTranscribing {
       return .transcribing
     } else if store.isRecording {
       return .recording

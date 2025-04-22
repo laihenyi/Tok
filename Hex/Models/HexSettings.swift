@@ -17,6 +17,11 @@ struct HexSettings: Codable, Equatable {
 	var useDoubleTapOnly: Bool = false
 	var outputLanguage: String? = nil
 	var selectedMicrophoneID: String? = nil
+    // AI Enhancement options
+    var useAIEnhancement: Bool = false
+    var selectedAIModel: String = "llama3:8b"
+    var aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt
+    var aiEnhancementTemperature: Double = 0.3
 
 	// Define coding keys to match struct properties
 	enum CodingKeys: String, CodingKey {
@@ -33,6 +38,10 @@ struct HexSettings: Codable, Equatable {
 		case useDoubleTapOnly
 		case outputLanguage
 		case selectedMicrophoneID
+        case useAIEnhancement
+        case selectedAIModel
+        case aiEnhancementPrompt
+        case aiEnhancementTemperature
 	}
 
 	init(
@@ -48,7 +57,11 @@ struct HexSettings: Codable, Equatable {
 		copyToClipboard: Bool = true,
 		useDoubleTapOnly: Bool = false,
 		on outputLanguage: String? = nil,
-		selectedMicrophoneID: String? = nil
+		selectedMicrophoneID: String? = nil,
+        useAIEnhancement: Bool = false,
+        selectedAIModel: String = "llama3:8b",
+        aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt,
+        aiEnhancementTemperature: Double = 0.3
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
@@ -63,6 +76,10 @@ struct HexSettings: Codable, Equatable {
 		self.useDoubleTapOnly = useDoubleTapOnly
 		self.outputLanguage = outputLanguage
 		self.selectedMicrophoneID = selectedMicrophoneID
+        self.useAIEnhancement = useAIEnhancement
+        self.selectedAIModel = selectedAIModel
+        self.aiEnhancementPrompt = aiEnhancementPrompt
+        self.aiEnhancementTemperature = aiEnhancementTemperature
 	}
 
 	// Custom decoder that handles missing fields
@@ -92,7 +109,12 @@ struct HexSettings: Codable, Equatable {
 		useDoubleTapOnly =
 			try container.decodeIfPresent(Bool.self, forKey: .useDoubleTapOnly) ?? false
 		outputLanguage = try container.decodeIfPresent(String.self, forKey: .outputLanguage)
-			selectedMicrophoneID = try container.decodeIfPresent(String.self, forKey: .selectedMicrophoneID)
+        selectedMicrophoneID = try container.decodeIfPresent(String.self, forKey: .selectedMicrophoneID)
+        // AI Enhancement settings
+        useAIEnhancement = try container.decodeIfPresent(Bool.self, forKey: .useAIEnhancement) ?? false
+        selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? "llama3:8b"
+        aiEnhancementPrompt = try container.decodeIfPresent(String.self, forKey: .aiEnhancementPrompt) ?? EnhancementOptions.defaultPrompt
+        aiEnhancementTemperature = try container.decodeIfPresent(Double.self, forKey: .aiEnhancementTemperature) ?? 0.3
 	}
 }
 
