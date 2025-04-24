@@ -123,12 +123,43 @@ struct HexSettings: Codable, Equatable {
 	}
 }
 
+// Cache for HexSettings to reduce disk I/O
+private var cachedSettings: HexSettings? = nil
+private var lastSettingsLoadTime: Date = .distantPast
+
 extension SharedReaderKey
 	where Self == FileStorageKey<HexSettings>.Default
 {
 	static var hexSettings: Self {
 		Self[
-			.fileStorage(URL.documentsDirectory.appending(component: "hex_settings.json")),
+			.fileStorage(
+                URL.documentsDirectory.appending(component: "hex_settings.json"),
+                read: { url in
+                    // Use cached settings if they exist and are recent (within last 5 seconds)
+                    if let cached = cachedSettings, 
+                       Date().timeIntervalSince(lastSettingsLoadTime) < 5.0 {
+                        return cached
+                    }
+                    
+                    // Otherwise read from disk
+                    do {
+                        let data = try Data(contentsOf: url)
+                        let settings = try JSONDecoder().decode(HexSettings.self, from: data)
+                        
+                        // Update cache
+                        cachedSettings = settings
+                        lastSettingsLoadTime = Date()
+                        
+                        return settings
+                    } catch {
+                        // On error, return default settings
+                        let defaultSettings = HexSettings()
+                        cachedSettings = defaultSettings
+                        lastSettingsLoadTime = Date()
+                        return defaultSettings
+                    }
+                }
+            ),
 			default: .init()
 		]
 	}
