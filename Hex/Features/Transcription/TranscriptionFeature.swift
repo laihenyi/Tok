@@ -19,6 +19,7 @@ struct TranscriptionFeature {
     var isRecording: Bool = false
     var isTranscribing: Bool = false
     var isPrewarming: Bool = false
+    var isEnhancing: Bool = false // Add this to track when AI enhancement is active
     var error: String?
     var recordingStartTime: Date?
     var meter: Meter = .init(averagePower: 0, peakPower: 0)
@@ -47,6 +48,7 @@ struct TranscriptionFeature {
     case transcriptionError(Error)
     
     // AI Enhancement flow
+    case setEnhancingState(Bool)
     case aiEnhancementResult(String)
     case aiEnhancementError(Error)
   }
@@ -115,6 +117,10 @@ struct TranscriptionFeature {
         
       // MARK: - AI Enhancement Results
       
+      case let .setEnhancingState(isEnhancing):
+        state.isEnhancing = isEnhancing
+        return .none
+        
       case let .aiEnhancementResult(result):
         return handleAIEnhancement(&state, result: result)
         
@@ -361,17 +367,29 @@ private extension TranscriptionFeature {
       temperature: state.hexSettings.aiEnhancementTemperature
     )
     
-    return .run { send in
-      do {
-        let enhancedText = try await aiEnhancement.enhance(result, model, options) { _ in }
-        await send(.aiEnhancementResult(enhancedText))
-      } catch {
-        print("Error enhancing text with AI: \(error)")
-        // On error, fall back to the original transcription
-        await send(.aiEnhancementResult(result))
+    print("[TranscriptionFeature] Starting AI enhancement with model: \(model)")
+    
+    // We need to use .send to set the enhancing state through the proper action
+    return .merge(
+      // First update the state to indicate enhancement is starting
+      .send(.setEnhancingState(true)),
+      
+      // Then run the enhancement
+      .run { send in
+        do {
+          print("[TranscriptionFeature] Calling aiEnhancement.enhance()")
+          let enhancedText = try await aiEnhancement.enhance(result, model, options) { _ in }
+          print("[TranscriptionFeature] AI enhancement succeeded")
+          await send(.aiEnhancementResult(enhancedText))
+        } catch {
+          print("[TranscriptionFeature] Error enhancing text with AI: \(error)")
+          // On error, fall back to the original transcription
+          await send(.aiEnhancementResult(result))
+        }
       }
-    }
-    .cancellable(id: CancelID.aiEnhancement)
+    )
+    // Don't make this cancellable to avoid premature cancellation
+    // This may have been causing the issue with the enhancement being cancelled
   }
   
   // Handle the AI enhancement result
@@ -381,6 +399,7 @@ private extension TranscriptionFeature {
   ) -> Effect<Action> {
     state.isTranscribing = false
     state.isPrewarming = false
+    state.isEnhancing = false  // Reset the enhancing state
 
     // If empty text, nothing else to do
     guard !result.isEmpty else {
@@ -470,11 +489,13 @@ private extension TranscriptionFeature {
     state.isTranscribing = false
     state.isRecording = false
     state.isPrewarming = false
+    state.isEnhancing = false
 
     return .merge(
       .cancel(id: CancelID.transcription),
       .cancel(id: CancelID.delayedRecord),
-      .cancel(id: CancelID.aiEnhancement),
+      // Don't cancel AI enhancement as it might cause issues
+      // .cancel(id: CancelID.aiEnhancement),
       .run { _ in
         await soundEffect.play(.cancel)
       }
@@ -516,7 +537,7 @@ struct TranscriptionView: View {
   @Bindable var store: StoreOf<TranscriptionFeature>
 
   var status: TranscriptionIndicatorView.Status {
-    if store.isTranscribing && store.hexSettings.useAIEnhancement {
+    if store.isEnhancing {
       return .enhancing 
     } else if store.isTranscribing {
       return .transcribing

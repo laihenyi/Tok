@@ -17,9 +17,10 @@ struct HexSettings: Codable, Equatable {
 	var useDoubleTapOnly: Bool = false
 	var outputLanguage: String? = nil
 	var selectedMicrophoneID: String? = nil
+    var disableAutoCapitalization: Bool = false // New setting for disabling auto-capitalization
     // AI Enhancement options
     var useAIEnhancement: Bool = false
-    var selectedAIModel: String = "llama3:8b"
+    var selectedAIModel: String = "gemma3"
     var aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt
     var aiEnhancementTemperature: Double = 0.3
 
@@ -38,6 +39,7 @@ struct HexSettings: Codable, Equatable {
 		case useDoubleTapOnly
 		case outputLanguage
 		case selectedMicrophoneID
+        case disableAutoCapitalization
         case useAIEnhancement
         case selectedAIModel
         case aiEnhancementPrompt
@@ -58,8 +60,9 @@ struct HexSettings: Codable, Equatable {
 		useDoubleTapOnly: Bool = false,
 		on outputLanguage: String? = nil,
 		selectedMicrophoneID: String? = nil,
+        disableAutoCapitalization: Bool = false,
         useAIEnhancement: Bool = false,
-        selectedAIModel: String = "llama3:8b",
+        selectedAIModel: String = "gemma3",
         aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt,
         aiEnhancementTemperature: Double = 0.3
 	) {
@@ -76,6 +79,7 @@ struct HexSettings: Codable, Equatable {
 		self.useDoubleTapOnly = useDoubleTapOnly
 		self.outputLanguage = outputLanguage
 		self.selectedMicrophoneID = selectedMicrophoneID
+        self.disableAutoCapitalization = disableAutoCapitalization
         self.useAIEnhancement = useAIEnhancement
         self.selectedAIModel = selectedAIModel
         self.aiEnhancementPrompt = aiEnhancementPrompt
@@ -110,9 +114,10 @@ struct HexSettings: Codable, Equatable {
 			try container.decodeIfPresent(Bool.self, forKey: .useDoubleTapOnly) ?? false
 		outputLanguage = try container.decodeIfPresent(String.self, forKey: .outputLanguage)
         selectedMicrophoneID = try container.decodeIfPresent(String.self, forKey: .selectedMicrophoneID)
+        disableAutoCapitalization = try container.decodeIfPresent(Bool.self, forKey: .disableAutoCapitalization) ?? false
         // AI Enhancement settings
         useAIEnhancement = try container.decodeIfPresent(Bool.self, forKey: .useAIEnhancement) ?? false
-        selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? "llama3:8b"
+        selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? "gemma3"
         aiEnhancementPrompt = try container.decodeIfPresent(String.self, forKey: .aiEnhancementPrompt) ?? EnhancementOptions.defaultPrompt
         aiEnhancementTemperature = try container.decodeIfPresent(Double.self, forKey: .aiEnhancementTemperature) ?? 0.3
 	}

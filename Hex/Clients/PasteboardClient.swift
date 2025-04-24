@@ -61,14 +61,31 @@ struct PasteboardClientLive {
     func savePasteboardState(pasteboard: NSPasteboard) -> [[String: Any]] {
         var savedItems: [[String: Any]] = []
         
-        for item in pasteboard.pasteboardItems ?? [] {
+        // Limit how many pasteboard items we save to avoid excessive memory use
+        let itemsToSave = pasteboard.pasteboardItems?.prefix(5) ?? []
+        
+        for item in itemsToSave {
             var itemDict: [String: Any] = [:]
-            for type in item.types {
+            // Prioritize string content which is typically smaller
+            if item.types.contains(.string), let string = item.string(forType: .string) {
+                itemDict[NSPasteboard.PasteboardType.string.rawValue] = string.data(using: .utf8)
+                savedItems.append(itemDict)
+                continue
+            }
+            
+            // For non-string content, limit the types we save
+            let typesToSave = item.types.prefix(2) // Only save up to 2 types per item
+            for type in typesToSave {
                 if let data = item.data(forType: type) {
-                    itemDict[type.rawValue] = data
+                    // Only save data up to 1MB to prevent large memory usage
+                    if data.count <= 1024 * 1024 {
+                        itemDict[type.rawValue] = data
+                    }
                 }
             }
-            savedItems.append(itemDict)
+            if !itemDict.isEmpty {
+                savedItems.append(itemDict)
+            }
         }
         
         return savedItems
@@ -135,18 +152,25 @@ struct PasteboardClientLive {
 
     func pasteWithClipboard(_ text: String) async {
         let pasteboard = NSPasteboard.general
-        let originalItems = savePasteboardState(pasteboard: pasteboard)
+        
+        // Only save pasteboard state if we need to restore it later
+        let originalItems = hexSettings.copyToClipboard ? [] : savePasteboardState(pasteboard: pasteboard)
+        
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
         let source = CGEventSource(stateID: .combinedSessionState)
         
-        // Track if paste operation successful
+        // First try the AppleScript approach - it's more reliable in most apps
         var pasteSucceeded = PasteboardClientLive.pasteToFrontmostApp()
         
         // If menu-based paste failed, try simulated keypresses
         if !pasteSucceeded {
             print("Failed to paste to frontmost app, falling back to simulated keypresses")
+            
+            // Add a small delay to allow system to process
+            try? await Task.sleep(for: .milliseconds(100))
+            
             let vKeyCode = Sauce.shared.keyCode(for: .v)
             let cmdKeyCode: CGKeyCode = 55 // Command key
 
@@ -164,33 +188,37 @@ struct PasteboardClientLive {
             // Create cmd up event
             let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: false)
 
-            // Post the events
+            // Post the events with small delays between them
             cmdDown?.post(tap: .cghidEventTap)
+            try? await Task.sleep(for: .milliseconds(10))
             vDown?.post(tap: .cghidEventTap)
+            try? await Task.sleep(for: .milliseconds(10))
             vUp?.post(tap: .cghidEventTap)
+            try? await Task.sleep(for: .milliseconds(10))
             cmdUp?.post(tap: .cghidEventTap)
             
-            // Assume keypress-based paste succeeded - but text will remain in clipboard as fallback
+            // Assume keypress-based paste succeeded - text will remain in clipboard as fallback
             pasteSucceeded = true
         }
         
         // Only restore original pasteboard contents if:
         // 1. Copying to clipboard is disabled AND
-        // 2. The paste operation succeeded
-        if !hexSettings.copyToClipboard && pasteSucceeded {
-            try? await Task.sleep(for: .seconds(0.1))
-            pasteboard.clearContents()
-            restorePasteboardState(pasteboard: pasteboard, savedItems: originalItems)
+        // 2. The paste operation succeeded AND
+        // 3. We have original items to restore
+        if !hexSettings.copyToClipboard && pasteSucceeded && !originalItems.isEmpty {
+            try? await Task.sleep(for: .milliseconds(200))  // Give paste operation time to complete
+            
+            // Use autoreleasepool to help manage memory during pasteboard operations
+            autoreleasepool {
+                pasteboard.clearContents()
+                restorePasteboardState(pasteboard: pasteboard, savedItems: originalItems)
+            }
         }
         
         // If we failed to paste AND user doesn't want clipboard retention,
-        // show a notification that text is available in clipboard
+        // log the issue but leave text in clipboard as fallback
         if !pasteSucceeded && !hexSettings.copyToClipboard {
-            // Keep the transcribed text in clipboard regardless of setting
             print("Paste operation failed. Text remains in clipboard as fallback.")
-            
-            // TODO: Could add a notification here to inform user
-            // that text is available in clipboard
         }
     }
     

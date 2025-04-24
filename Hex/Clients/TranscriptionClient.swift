@@ -231,7 +231,25 @@ actor TranscriptionClientLive {
     let results = try await whisperKit.transcribe(audioPath: url.path, decodeOptions: options)
 
     // Concatenate results from all segments.
-    let text = results.map(\.text).joined(separator: " ")
+    var text = results.map(\.text).joined(separator: " ")
+    
+    // Get the hex settings to check if auto-capitalization should be disabled
+    let useAutoCapitalization: Bool
+    do {
+      let fileURL = URL.documentsDirectory.appending(component: "hex_settings.json")
+      let data = try Data(contentsOf: fileURL)
+      let settings = try JSONDecoder().decode(HexSettings.self, from: data)
+      useAutoCapitalization = !settings.disableAutoCapitalization
+    } catch {
+      // If settings can't be read, default to using auto-capitalization
+      useAutoCapitalization = true
+    }
+    
+    // Convert to lowercase if auto-capitalization is disabled
+    if !useAutoCapitalization {
+      text = text.lowercased()
+    }
+    
     return text
   }
 
