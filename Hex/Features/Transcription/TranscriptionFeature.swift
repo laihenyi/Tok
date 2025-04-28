@@ -318,7 +318,7 @@ private extension TranscriptionFeature {
     let model = state.hexSettings.selectedModel
     let language = state.hexSettings.outputLanguage
     let settings = state.hexSettings
-    let recordingStartTime = state.recordingStartTime
+    // recordingStartTime captured in handleTranscriptionResult
     
     state.isPrewarming = true
     
@@ -420,7 +420,9 @@ private extension TranscriptionFeature {
       .run { send in
         do {
           print("[TranscriptionFeature] Calling aiEnhancement.enhance()")
-          let enhancedText = try await aiEnhancement.enhance(result, model, options) { _ in }
+          let enhancedText = try await aiEnhancement.enhance(result, model, options) { progress in
+            // Optional: Could update UI with progress information here if needed
+          }
           print("[TranscriptionFeature] AI enhancement succeeded")
           await send(.aiEnhancementResult(enhancedText))
         } catch {
