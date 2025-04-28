@@ -120,7 +120,7 @@ struct SettingsFeature {
               }
               
               if isActive && areSettingsVisible {
-                await send(.loadAvailableInputDevices)
+                send(.loadAvailableInputDevices)
               }
             }
           }

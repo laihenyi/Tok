@@ -51,6 +51,8 @@ struct TranscriptionFeature {
     case setEnhancingState(Bool)
     case aiEnhancementResult(String)
     case aiEnhancementError(Error)
+    case ollamaBecameUnavailable
+    case recheckOllamaAvailability
   }
 
   enum CancelID {
@@ -125,10 +127,31 @@ struct TranscriptionFeature {
         return handleAIEnhancement(&state, result: result)
         
       case let .aiEnhancementError(error):
-        // On AI enhancement error, we'll just use the original transcription
-        // so we don't need specific error handling here
-        print("AI Enhancement error: \(error)")
-        return .none
+        // Check if this is an Ollama connectivity error
+        let nsError = error as NSError
+        if nsError.domain == "AIEnhancementClient" && (nsError.code == -1001 || nsError.localizedDescription.contains("Ollama")) {
+          print("AI Enhancement error due to Ollama connectivity: \(error)")
+          return .send(.ollamaBecameUnavailable)
+        } else {
+          // For other errors, just use the original transcription
+          print("AI Enhancement error: \(error)")
+          return .none
+        }
+        
+      case .ollamaBecameUnavailable:
+        // When Ollama becomes unavailable, recheck availability and handle UI updates
+        return .send(.recheckOllamaAvailability)
+        
+      case .recheckOllamaAvailability:
+        // Recheck if Ollama is available and update UI accordingly
+        return .run { send in
+          let isAvailable = await aiEnhancement.isOllamaAvailable()
+          if !isAvailable {
+            // Could dispatch to a UI state to show an alert or notification
+            print("[TranscriptionFeature] Ollama is not available. AI enhancement is disabled.")
+            // Here you would typically update UI state to show an alert
+          }
+        }
 
       // MARK: - Cancel Entire Flow
 
@@ -290,9 +313,13 @@ private extension TranscriptionFeature {
     // Otherwise, proceed to transcription
     state.isTranscribing = true
     state.error = nil
+    
+    // Extract all required state values to local variables to avoid capturing inout parameter
     let model = state.hexSettings.selectedModel
     let language = state.hexSettings.outputLanguage
-
+    let settings = state.hexSettings
+    let recordingStartTime = state.recordingStartTime
+    
     state.isPrewarming = true
     
     return .run { send in
@@ -307,7 +334,7 @@ private extension TranscriptionFeature {
           chunkingStrategy: .vad
         )
         
-        let result = try await transcription.transcribe(audioURL, model, decodeOptions) { _ in }
+        let result = try await transcription.transcribe(audioURL, model, decodeOptions, settings) { _ in }
         
         print("Transcribed audio from URL: \(audioURL) to text: \(result)")
         await send(.transcriptionResult(result))
@@ -330,7 +357,18 @@ private extension TranscriptionFeature {
     // First check if we should use AI enhancement
     if state.hexSettings.useAIEnhancement {
       // Keep state.isTranscribing = true since we're still processing
-      return enhanceWithAI(result: result, state: state)
+      
+      // Extract values to avoid capturing inout parameter
+      let selectedAIModel = state.hexSettings.selectedAIModel
+      let promptText = state.hexSettings.aiEnhancementPrompt
+      let temperature = state.hexSettings.aiEnhancementTemperature
+      
+      return enhanceWithAI(
+        result: result,
+        model: selectedAIModel,
+        promptText: promptText,
+        temperature: temperature
+      )
     } else {
       state.isTranscribing = false
       state.isPrewarming = false
@@ -355,16 +393,20 @@ private extension TranscriptionFeature {
   // MARK: - AI Enhancement Handlers
   
   // Use AI to enhance the transcription result
-  private func enhanceWithAI(result: String, state: State) -> Effect<Action> {
+  private func enhanceWithAI(
+    result: String,
+    model: String,
+    promptText: String,
+    temperature: Double
+  ) -> Effect<Action> {
     // If empty text, nothing else to do
     guard !result.isEmpty else {
       return .send(.aiEnhancementResult(result)) // Just pass through empty text
     }
     
-    let model = state.hexSettings.selectedAIModel
     let options = EnhancementOptions(
-      prompt: state.hexSettings.aiEnhancementPrompt,
-      temperature: state.hexSettings.aiEnhancementTemperature
+      prompt: promptText,
+      temperature: temperature
     )
     
     print("[TranscriptionFeature] Starting AI enhancement with model: \(model)")
@@ -383,8 +425,8 @@ private extension TranscriptionFeature {
           await send(.aiEnhancementResult(enhancedText))
         } catch {
           print("[TranscriptionFeature] Error enhancing text with AI: \(error)")
-          // On error, fall back to the original transcription
-          await send(.aiEnhancementResult(result))
+          // Properly handle the error through the action system
+          await send(.aiEnhancementError(error))
         }
       }
     )
