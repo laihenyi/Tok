@@ -24,6 +24,7 @@ struct TranscriptionFeature {
     var recordingStartTime: Date?
     var meter: Meter = .init(averagePower: 0, peakPower: 0)
     var assertionID: IOPMAssertionID?
+    var pendingTranscription: String? // Store original transcription for fallback
     @Shared(.hexSettings) var hexSettings: HexSettings
     @Shared(.transcriptionHistory) var transcriptionHistory: TranscriptionHistory
   }
@@ -141,9 +142,20 @@ struct TranscriptionFeature {
           print("AI Enhancement error due to Ollama connectivity: \(error)")
           return .send(.ollamaBecameUnavailable)
         } else {
-          // For other errors, just use the original transcription
+          // For other errors, we need to:
+          // 1. Log the error
+          // 2. Disable AI enhancement status 
+          // 3. Fall back to the original transcription that produced this action
           print("AI Enhancement error: \(error)")
-          return .none
+          
+          // In the enhance method, there's a parameter to capture the original transcription
+          // We'll modify enhanceWithAI() to store the original transcription for error case
+          
+          // For now, use the bare minimum error message to inform the user
+          state.error = "AI enhancement failed: \(error.localizedDescription). Using original transcription instead."
+          
+          // Continue with original transcription processing
+          return .send(.transcriptionResult(state.pendingTranscription ?? ""))
         }
         
       case .ollamaBecameUnavailable:
@@ -155,9 +167,13 @@ struct TranscriptionFeature {
         return .run { send in
           let isAvailable = await aiEnhancement.isOllamaAvailable()
           if !isAvailable {
-            // Could dispatch to a UI state to show an alert or notification
             print("[TranscriptionFeature] Ollama is not available. AI enhancement is disabled.")
-            // Here you would typically update UI state to show an alert
+            // Update state to show error to the user
+            await send(.transcriptionError(NSError(
+              domain: "TranscriptionFeature",
+              code: -1002,
+              userInfo: [NSLocalizedDescriptionKey: "Ollama is not available. AI enhancement is disabled."]
+            )))
           }
         }
 
@@ -179,38 +195,51 @@ struct TranscriptionFeature {
 private extension TranscriptionFeature {
   /// Effect to begin observing the audio meter.
   func startMeteringEffect() -> Effect<Action> {
-    .run { send in
-      // Use a rate limiter to prevent too many updates
-      var lastUpdateTime = Date()
-      var lastMeter: Meter? = nil
-
-      for await meter in await recording.observeAudioLevel() {
-        // Apply main-thread protection
-        await MainActor.run {
-          // Rate limit updates based on time and significant changes
-          let now = Date()
-          let timeSinceLastUpdate = now.timeIntervalSince(lastUpdateTime)
-
-          // Determine if we should process this update
-          var shouldUpdate = false
-
-          // Always update if enough time has passed (ensures UI responsiveness)
-          if timeSinceLastUpdate >= 0.05 { // Max 20 updates per second
-            shouldUpdate = true
-          }
-          // Or if there's a significant change from the last meter we actually sent
-          else if let last = lastMeter {
-            let averageDiff = abs(meter.averagePower - last.averagePower)
-            let peakDiff = abs(meter.peakPower - last.peakPower)
-            // More responsive threshold for significant changes
-            shouldUpdate = averageDiff > 0.02 || peakDiff > 0.04
-          }
-
+    // Create a separate actor to handle rate limiting safely in Swift 6
+    actor MeterRateLimiter {
+      private var lastUpdateTime = Date()
+      private var lastMeter: Meter? = nil
+      
+      func shouldUpdate(meter: Meter) -> Bool {
+        let now = Date()
+        let timeSinceLastUpdate = now.timeIntervalSince(lastUpdateTime)
+        
+        // Always update if enough time has passed (ensures UI responsiveness)
+        if timeSinceLastUpdate >= 0.05 { // Max 20 updates per second
+          self.lastUpdateTime = now
+          self.lastMeter = meter
+          return true
+        }
+        // Or if there's a significant change from the last meter we actually sent
+        else if let last = lastMeter {
+          let averageDiff = abs(meter.averagePower - last.averagePower)
+          let peakDiff = abs(meter.peakPower - last.peakPower)
+          // More responsive threshold for significant changes
+          let shouldUpdate = averageDiff > 0.02 || peakDiff > 0.04
+          
           if shouldUpdate {
-            send(.audioLevelUpdated(meter))
-            lastUpdateTime = now
-            lastMeter = meter
+            self.lastUpdateTime = now
+            self.lastMeter = meter
           }
+          
+          return shouldUpdate
+        }
+        
+        self.lastUpdateTime = now
+        self.lastMeter = meter
+        return true // First update always passes through
+      }
+    }
+    
+    return .run { send in
+      let rateLimiter = MeterRateLimiter()
+      
+      for await meter in await recording.observeAudioLevel() {
+        // Check if we should send this update
+        if await rateLimiter.shouldUpdate(meter: meter) {
+          // The Effect.run captures its function as @Sendable, so we're already on an appropriate context
+          // for sending actions. ComposableArchitecture handles dispatching to the main thread as needed.
+            await send(.audioLevelUpdated(meter))
         }
       }
     }
@@ -396,6 +425,9 @@ private extension TranscriptionFeature {
     if state.hexSettings.useAIEnhancement {
       // Keep state.isTranscribing = true since we're still processing
       
+      // Store the original transcription for error handling/fallback
+      state.pendingTranscription = result
+      
       // Extract values to avoid capturing inout parameter
       let selectedAIModel = state.hexSettings.selectedAIModel
       let promptText = state.hexSettings.aiEnhancementPrompt
@@ -458,7 +490,9 @@ private extension TranscriptionFeature {
       .run { send in
         do {
           print("[TranscriptionFeature] Calling aiEnhancement.enhance()")
-          let enhancedText = try await aiEnhancement.enhance(result, model, options) { progress in
+          // Access the raw value directly to avoid argument label issues
+          let enhanceMethod = aiEnhancement.enhance
+          let enhancedText = try await enhanceMethod(result, model, options) { progress in
             // Optional: Could update UI with progress information here if needed
           }
           print("[TranscriptionFeature] AI enhancement succeeded")
@@ -482,6 +516,7 @@ private extension TranscriptionFeature {
     state.isTranscribing = false
     state.isPrewarming = false
     state.isEnhancing = false  // Reset the enhancing state
+    state.pendingTranscription = nil  // Clear the pending transcription since enhancement succeeded
 
     // If empty text, nothing else to do
     guard !result.isEmpty else {
@@ -576,7 +611,12 @@ private extension TranscriptionFeature {
     return .merge(
       .cancel(id: CancelID.transcription),
       .cancel(id: CancelID.delayedRecord),
-      // Don't cancel AI enhancement as it might cause issues
+      // Don't cancel AI enhancement as it might cause issues with Ollama
+      // This creates a UI inconsistency where the UI shows cancellation
+      // but enhancement continues in background. We intentionally allow this
+      // to prevent issues with Ollama's streaming API and ensure stability.
+      // TODO: Consider implementing a safer cancellation approach or state tracking
+      // to properly ignore late results after cancellation.
       // .cancel(id: CancelID.aiEnhancement),
       .run { _ in
         await soundEffect.play(.cancel)
