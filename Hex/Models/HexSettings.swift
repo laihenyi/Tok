@@ -23,6 +23,10 @@ struct HexSettings: Codable, Equatable {
     var selectedAIModel: String = "gemma3"
     var aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt
     var aiEnhancementTemperature: Double = 0.3
+    // Remote AI provider settings
+    var aiProviderType: AIProviderType = .ollama
+    var groqAPIKey: String = ""
+    var selectedRemoteModel: String = "compound-beta-mini"
 
 	// Define coding keys to match struct properties
 	enum CodingKeys: String, CodingKey {
@@ -44,6 +48,9 @@ struct HexSettings: Codable, Equatable {
         case selectedAIModel
         case aiEnhancementPrompt
         case aiEnhancementTemperature
+        case aiProviderType
+        case groqAPIKey
+        case selectedRemoteModel
 	}
 
 	init(
@@ -64,7 +71,10 @@ struct HexSettings: Codable, Equatable {
         useAIEnhancement: Bool = false,
         selectedAIModel: String = "gemma3",
         aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt,
-        aiEnhancementTemperature: Double = 0.3
+        aiEnhancementTemperature: Double = 0.3,
+        aiProviderType: AIProviderType = .ollama,
+        groqAPIKey: String = "",
+        selectedRemoteModel: String = "compound-beta-mini"
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
@@ -84,6 +94,9 @@ struct HexSettings: Codable, Equatable {
         self.selectedAIModel = selectedAIModel
         self.aiEnhancementPrompt = aiEnhancementPrompt
         self.aiEnhancementTemperature = aiEnhancementTemperature
+        self.aiProviderType = aiProviderType
+        self.groqAPIKey = groqAPIKey
+        self.selectedRemoteModel = selectedRemoteModel
 	}
 
 	// Custom decoder that handles missing fields
@@ -120,7 +133,35 @@ struct HexSettings: Codable, Equatable {
         selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? "gemma3"
         aiEnhancementPrompt = try container.decodeIfPresent(String.self, forKey: .aiEnhancementPrompt) ?? EnhancementOptions.defaultPrompt
         aiEnhancementTemperature = try container.decodeIfPresent(Double.self, forKey: .aiEnhancementTemperature) ?? 0.3
+        // Remote AI provider settings
+        aiProviderType = try container.decodeIfPresent(AIProviderType.self, forKey: .aiProviderType) ?? .ollama
+        groqAPIKey = try container.decodeIfPresent(String.self, forKey: .groqAPIKey) ?? ""
+        selectedRemoteModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteModel) ?? "compound-beta-mini"
 	}
+}
+
+/// AI Provider types supported by the app
+enum AIProviderType: String, Codable, CaseIterable, Equatable {
+    case ollama = "ollama"
+    case groq = "groq"
+    
+    var displayName: String {
+        switch self {
+        case .ollama:
+            return "Ollama (Local)"
+        case .groq:
+            return "Groq (Remote)"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .ollama:
+            return "Run AI models locally using Ollama"
+        case .groq:
+            return "Use Groq's fast inference API"
+        }
+    }
 }
 
 // Cache for HexSettings to reduce disk I/O

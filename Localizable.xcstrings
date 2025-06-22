@@ -7,6 +7,9 @@
     "%.2f" : {
 
     },
+    "%@ API Key" : {
+
+    },
     "•" : {
       "shouldTranslate" : false
     },
@@ -41,6 +44,9 @@
     "AI enhancement requires Ollama to be installed and running locally." : {
 
     },
+    "AI Provider" : {
+
+    },
     "Are you sure you want to delete all transcripts? This action cannot be undone." : {
       "comment" : "Delete transcript history confirm",
       "localizations" : {
@@ -57,6 +63,16 @@
     },
     "Browse Models" : {
 
+    },
+    "by %@ • %lldK context" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "by %1$@ • %2$lldK context"
+          }
+        }
+      }
     },
     "Cancel" : {
       "comment" : "Cancel deleting All Transcripts",
@@ -123,6 +139,9 @@
           }
         }
       }
+    },
+    "Connection Status" : {
+
     },
     "Copied" : {
       "comment" : "Transcription from history copied.",
@@ -284,6 +303,9 @@
         }
       }
     },
+    "Enter API Key" : {
+
+    },
     "Error: %@" : {
 
     },
@@ -393,9 +415,6 @@
     "Model Selection" : {
 
     },
-    "No models found in Ollama" : {
-
-    },
     "No models found." : {
       "comment" : "Replacement text in transcription model section when no available models are found",
       "extractionState" : "stale",
@@ -422,13 +441,7 @@
     "Ollama Connected" : {
 
     },
-    "Ollama connection required to view models" : {
-
-    },
     "Ollama Not Connected" : {
-
-    },
-    "Ollama Status" : {
 
     },
     "Open on Login" : {
@@ -607,9 +620,6 @@
     "Size" : {
 
     },
-    "Smaller models are faster but less capable. Llama3 offers a good balance of speed and quality." : {
-
-    },
     "Sound" : {
       "comment" : "sound section in general settings.",
       "localizations" : {
@@ -650,6 +660,9 @@
 
     },
     "System Default" : {
+
+    },
+    "Test Connection" : {
 
     },
     "These instructions tell the AI how to improve your transcribed text." : {

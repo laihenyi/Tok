@@ -429,15 +429,21 @@ private extension TranscriptionFeature {
       state.pendingTranscription = result
       
       // Extract values to avoid capturing inout parameter
+      let providerType = state.hexSettings.aiProviderType
       let selectedAIModel = state.hexSettings.selectedAIModel
+      let selectedRemoteModel = state.hexSettings.selectedRemoteModel
       let promptText = state.hexSettings.aiEnhancementPrompt
       let temperature = state.hexSettings.aiEnhancementTemperature
+      let groqAPIKey = state.hexSettings.groqAPIKey
       
       return enhanceWithAI(
         result: result,
-        model: selectedAIModel,
+        providerType: providerType,
+        selectedAIModel: selectedAIModel,
+        selectedRemoteModel: selectedRemoteModel,
         promptText: promptText,
-        temperature: temperature
+        temperature: temperature,
+        groqAPIKey: groqAPIKey
       )
     } else {
       state.isTranscribing = false
@@ -465,9 +471,12 @@ private extension TranscriptionFeature {
   // Use AI to enhance the transcription result
   private func enhanceWithAI(
     result: String,
-    model: String,
+    providerType: AIProviderType,
+    selectedAIModel: String,
+    selectedRemoteModel: String,
     promptText: String,
-    temperature: Double
+    temperature: Double,
+    groqAPIKey: String
   ) -> Effect<Action> {
     // If empty text, nothing else to do
     guard !result.isEmpty else {
@@ -479,7 +488,11 @@ private extension TranscriptionFeature {
       temperature: temperature
     )
     
-    print("[TranscriptionFeature] Starting AI enhancement with model: \(model)")
+    // Determine the actual model to use based on provider
+    let model = providerType == .ollama ? selectedAIModel : selectedRemoteModel
+    let apiKey = providerType == .groq ? groqAPIKey : nil
+    
+    print("[TranscriptionFeature] Starting AI enhancement with \(providerType.displayName), model: \(model)")
     
     // We need to use .send to set the enhancing state through the proper action
     return .merge(
@@ -492,7 +505,7 @@ private extension TranscriptionFeature {
           print("[TranscriptionFeature] Calling aiEnhancement.enhance()")
           // Access the raw value directly to avoid argument label issues
           let enhanceMethod = aiEnhancement.enhance
-          let enhancedText = try await enhanceMethod(result, model, options) { progress in
+          let enhancedText = try await enhanceMethod(result, model, options, providerType, apiKey) { progress in
             // Optional: Could update UI with progress information here if needed
           }
           print("[TranscriptionFeature] AI enhancement succeeded")

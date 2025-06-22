@@ -17,13 +17,19 @@ import Foundation
 @DependencyClient
 struct AIEnhancementClient {
     /// Enhances the given text using the specified model.
-    var enhance: @Sendable (String, String, EnhancementOptions, @escaping (Progress) -> Void) async throws -> String = { text, _, _, _ in text }
+    var enhance: @Sendable (String, String, EnhancementOptions, AIProviderType, String?, @escaping (Progress) -> Void) async throws -> String = { text, _, _, _, _, _ in text }
     
     /// Checks if Ollama is installed and running on the system
     var isOllamaAvailable: @Sendable () async -> Bool = { false }
     
     /// Gets a list of available models from Ollama
     var getAvailableModels: @Sendable () async throws -> [String] = { [] }
+    
+    /// Gets a list of available models from a remote provider
+    var getRemoteModels: @Sendable (AIProviderType, String) async throws -> [RemoteAIModel] = { _, _ in [] }
+    
+    /// Tests connection to a remote AI provider
+    var testRemoteConnection: @Sendable (AIProviderType, String) async -> Bool = { _, _ in false }
 }
 
 /// Enhancement options for AI processing
@@ -69,14 +75,34 @@ struct EnhancementOptions {
     }
 }
 
+/// Remote AI Model information
+struct RemoteAIModel: Codable, Equatable, Identifiable {
+    let id: String
+    let name: String
+    let ownedBy: String
+    let contextWindow: Int
+    let maxCompletionTokens: Int
+    let active: Bool
+    
+    var displayName: String {
+        // Clean up model names for better display
+        if name.contains("/") {
+            return String(name.split(separator: "/").last ?? "")
+        }
+        return name
+    }
+}
+
 /// Dependency Key for AIEnhancementClient
 extension AIEnhancementClient: DependencyKey {
     static var liveValue: Self {
         let live = AIEnhancementClientLive()
         return Self(
-            enhance: { try await live.enhance(text: $0, model: $1, options: $2, progressCallback: $3) },
+            enhance: { try await live.enhance(text: $0, model: $1, options: $2, provider: $3, apiKey: $4, progressCallback: $5) },
             isOllamaAvailable: { await live.isOllamaAvailable() },
-            getAvailableModels: { try await live.getAvailableModels() }
+            getAvailableModels: { try await live.getAvailableModels() },
+            getRemoteModels: { try await live.getRemoteModels(provider: $0, apiKey: $1) },
+            testRemoteConnection: { await live.testRemoteConnection(provider: $0, apiKey: $1) }
         )
     }
 }
@@ -92,8 +118,8 @@ extension DependencyValues {
 class AIEnhancementClientLive {
     // MARK: - Public Methods
     
-    /// Enhances text using a local AI model
-    func enhance(text: String, model: String, options: EnhancementOptions, progressCallback: @escaping (Progress) -> Void) async throws -> String {
+    /// Enhances text using either local or remote AI models
+    func enhance(text: String, model: String, options: EnhancementOptions, provider: AIProviderType, apiKey: String?, progressCallback: @escaping (Progress) -> Void) async throws -> String {
         // Skip if the text is empty or too short
         guard !text.isEmpty, text.count > 5 else {
             print("[AIEnhancementClientLive] Text too short for enhancement, returning original")
@@ -103,22 +129,37 @@ class AIEnhancementClientLive {
         let progress = Progress(totalUnitCount: 100)
         progressCallback(progress)
         
-        print("[AIEnhancementClientLive] Starting text enhancement with model: \(model)")
+        print("[AIEnhancementClientLive] Starting text enhancement with \(provider.displayName), model: \(model)")
         print("[AIEnhancementClientLive] Text to enhance (\(text.count) chars): \"\(text.prefix(50))...\"")
         
-        // For now, we support Ollama only
         do {
-            // First verify Ollama is available
-            let isAvailable = await isOllamaAvailable()
-            if !isAvailable {
-                print("[AIEnhancementClientLive] Ollama not available, cannot enhance text")
-                throw NSError(domain: "AIEnhancementClient", code: -5, 
-                              userInfo: [NSLocalizedDescriptionKey: "Ollama is not available. Please ensure it's running."])
-            }
+            let enhancedText: String
             
-            let enhancedText = try await enhanceWithOllama(text: text, model: model, options: options) { fraction in
-                progress.completedUnitCount = Int64(fraction * 100)
-                progressCallback(progress)
+            switch provider {
+            case .ollama:
+                // First verify Ollama is available
+                let isAvailable = await isOllamaAvailable()
+                if !isAvailable {
+                    print("[AIEnhancementClientLive] Ollama not available, cannot enhance text")
+                    throw NSError(domain: "AIEnhancementClient", code: -5, 
+                                  userInfo: [NSLocalizedDescriptionKey: "Ollama is not available. Please ensure it's running."])
+                }
+                
+                enhancedText = try await enhanceWithOllama(text: text, model: model, options: options) { fraction in
+                    progress.completedUnitCount = Int64(fraction * 100)
+                    progressCallback(progress)
+                }
+                
+            case .groq:
+                guard let apiKey = apiKey, !apiKey.isEmpty else {
+                    throw NSError(domain: "AIEnhancementClient", code: -6,
+                                  userInfo: [NSLocalizedDescriptionKey: "Groq API key is required"])
+                }
+                
+                enhancedText = try await enhanceWithGroq(text: text, model: model, options: options, apiKey: apiKey) { fraction in
+                    progress.completedUnitCount = Int64(fraction * 100)
+                    progressCallback(progress)
+                }
             }
             
             progress.completedUnitCount = 100
@@ -207,8 +248,6 @@ class AIEnhancementClientLive {
                          userInfo: [NSLocalizedDescriptionKey: "Failed to connect to Ollama. Ensure it's running."])
         }
     }
-    
-    // MARK: - Private Helpers
     
     /// Enhances text using Ollama's API
     private func enhanceWithOllama(text: String, model: String, options: EnhancementOptions, progressCallback: @escaping (Double) -> Void) async throws -> String {
@@ -334,6 +373,255 @@ class AIEnhancementClientLive {
             print("[AIEnhancementClientLive] Unexpected error: \(error)")
             throw NSError(domain: "AIEnhancementClient", code: -3, 
                           userInfo: [NSLocalizedDescriptionKey: "Error communicating with Ollama: \(error.localizedDescription)"])
+        }
+    }
+    
+    /// Gets a list of available models from a remote provider
+    func getRemoteModels(provider: AIProviderType, apiKey: String) async throws -> [RemoteAIModel] {
+        switch provider {
+        case .ollama:
+            // For Ollama, convert local models to RemoteAIModel format
+            let localModels = try await getAvailableModels()
+            return localModels.map { modelName in
+                RemoteAIModel(
+                    id: modelName,
+                    name: modelName,
+                    ownedBy: "Local",
+                    contextWindow: 8192, // Default context window
+                    maxCompletionTokens: 4096, // Default max tokens
+                    active: true
+                )
+            }
+        case .groq:
+            return try await getGroqModels(apiKey: apiKey)
+        }
+    }
+    
+    /// Tests connection to a remote AI provider
+    func testRemoteConnection(provider: AIProviderType, apiKey: String) async -> Bool {
+        switch provider {
+        case .ollama:
+            return await isOllamaAvailable()
+        case .groq:
+            return await testGroqConnection(apiKey: apiKey)
+        }
+    }
+    
+    // MARK: - Groq Implementation
+    
+    /// Gets available models from Groq API
+    private func getGroqModels(apiKey: String) async throws -> [RemoteAIModel] {
+        guard !apiKey.isEmpty else {
+            throw NSError(domain: "AIEnhancementClient", code: -6,
+                          userInfo: [NSLocalizedDescriptionKey: "Groq API key is required"])
+        }
+        
+        var request = URLRequest(url: URL(string: "https://api.groq.com/openai/v1/models")!)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 10.0
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NSError(domain: "AIEnhancementClient", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "Invalid response from Groq API"])
+            }
+            
+            if httpResponse.statusCode != 200 {
+                throw NSError(domain: "AIEnhancementClient", code: httpResponse.statusCode,
+                              userInfo: [NSLocalizedDescriptionKey: "Groq API returned status code \(httpResponse.statusCode)"])
+            }
+            
+            struct GroqModelsResponse: Codable {
+                let data: [GroqModel]
+                
+                struct GroqModel: Codable {
+                    let id: String
+                    let object: String
+                    let created: Int
+                    let ownedBy: String
+                    let active: Bool
+                    let contextWindow: Int
+                    let maxCompletionTokens: Int
+                    
+                    enum CodingKeys: String, CodingKey {
+                        case id, object, created, active
+                        case ownedBy = "owned_by"
+                        case contextWindow = "context_window"
+                        case maxCompletionTokens = "max_completion_tokens"
+                    }
+                }
+            }
+            
+            let modelsResponse = try JSONDecoder().decode(GroqModelsResponse.self, from: data)
+            
+            // Filter to only include chat completion models and exclude system models
+            let chatModels = modelsResponse.data.filter { model in
+                model.active && 
+                !model.id.contains("whisper") && 
+                !model.id.contains("tts") &&
+                !model.id.contains("guard") &&
+                !model.id.contains("prompt-guard")
+            }
+            
+            return chatModels.map { groqModel in
+                RemoteAIModel(
+                    id: groqModel.id,
+                    name: groqModel.id,
+                    ownedBy: groqModel.ownedBy,
+                    contextWindow: groqModel.contextWindow,
+                    maxCompletionTokens: groqModel.maxCompletionTokens,
+                    active: groqModel.active
+                )
+            }.sorted { $0.displayName < $1.displayName }
+            
+        } catch let decodingError as DecodingError {
+            print("[AIEnhancementClientLive] Failed to decode Groq models: \(decodingError)")
+            throw NSError(domain: "AIEnhancementClient", code: -2,
+                          userInfo: [NSLocalizedDescriptionKey: "Failed to parse models from Groq API"])
+        } catch {
+            print("[AIEnhancementClientLive] Error getting Groq models: \(error.localizedDescription)")
+            throw error
+        }
+    }
+    
+    /// Tests connection to Groq API
+    private func testGroqConnection(apiKey: String) async -> Bool {
+        guard !apiKey.isEmpty else { return false }
+        
+        do {
+            _ = try await getGroqModels(apiKey: apiKey)
+            return true
+        } catch {
+            print("[AIEnhancementClientLive] Groq connection test failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    /// Enhances text using Groq's API
+    private func enhanceWithGroq(text: String, model: String, options: EnhancementOptions, apiKey: String, progressCallback: @escaping (Double) -> Void) async throws -> String {
+        // Initial progress update
+        progressCallback(0.1)
+        
+        guard !model.isEmpty else {
+            throw NSError(domain: "AIEnhancementClient", code: -4,
+                          userInfo: [NSLocalizedDescriptionKey: "No model selected for enhancement"])
+        }
+        
+        guard !apiKey.isEmpty else {
+            throw NSError(domain: "AIEnhancementClient", code: -6,
+                          userInfo: [NSLocalizedDescriptionKey: "Groq API key is required"])
+        }
+        
+        let url = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30.0
+        
+        // Build the messages array for chat completion
+        let messages = [
+            [
+                "role": "system",
+                "content": options.prompt
+            ],
+            [
+                "role": "user",
+                "content": text
+            ]
+        ]
+        
+        // Build request parameters
+        let temperature = max(0.1, min(1.0, options.temperature))
+        let maxTokens = max(100, min(8192, options.maxTokens))
+        
+        let requestDict: [String: Any] = [
+            "messages": messages,
+            "model": model,
+            "temperature": temperature,
+            "max_completion_tokens": maxTokens,
+            "stream": false
+        ]
+        
+        print("[AIEnhancementClientLive] Preparing request to Groq with model: \(model), temp: \(temperature), max_tokens: \(maxTokens)")
+        
+        do {
+            // Progress update - request prepared
+            progressCallback(0.2)
+            
+            let requestData = try JSONSerialization.data(withJSONObject: requestDict)
+            request.httpBody = requestData
+            
+            print("[AIEnhancementClientLive] Sending request to Groq API...")
+            
+            let (responseData, urlResponse) = try await URLSession.shared.data(for: request)
+            
+            // Progress update - response received
+            progressCallback(0.8)
+            
+            guard let httpResponse = urlResponse as? HTTPURLResponse else {
+                throw NSError(domain: "AIEnhancementClient", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "Invalid response from Groq API"])
+            }
+            
+            print("[AIEnhancementClientLive] Groq response status: \(httpResponse.statusCode)")
+            
+            if httpResponse.statusCode != 200 {
+                // Try to extract error message
+                if let errorDict = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+                   let error = errorDict["error"] as? [String: Any],
+                   let errorMessage = error["message"] as? String {
+                    print("[AIEnhancementClientLive] Groq API error: \(errorMessage)")
+                    throw NSError(domain: "AIEnhancementClient", code: httpResponse.statusCode,
+                                  userInfo: [NSLocalizedDescriptionKey: "Groq error: \(errorMessage)"])
+                } else {
+                    throw NSError(domain: "AIEnhancementClient", code: httpResponse.statusCode,
+                                  userInfo: [NSLocalizedDescriptionKey: "Groq API returned status code \(httpResponse.statusCode)"])
+                }
+            }
+            
+            // Parse the chat completion response
+            struct GroqResponse: Codable {
+                let choices: [Choice]
+                
+                struct Choice: Codable {
+                    let message: Message
+                    
+                    struct Message: Codable {
+                        let content: String
+                    }
+                }
+            }
+            
+            let groqResponse = try JSONDecoder().decode(GroqResponse.self, from: responseData)
+            
+            guard let firstChoice = groqResponse.choices.first else {
+                throw NSError(domain: "AIEnhancementClient", code: -2,
+                              userInfo: [NSLocalizedDescriptionKey: "No response from Groq API"])
+            }
+            
+            // Progress update - processing complete
+            progressCallback(1.0)
+            
+            let enhancedText = firstChoice.message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            print("[AIEnhancementClientLive] Successfully enhanced text with Groq")
+            
+            return enhancedText.isEmpty ? text : enhancedText
+            
+        } catch let decodingError as DecodingError {
+            print("[AIEnhancementClientLive] Failed to decode Groq response: \(decodingError)")
+            throw NSError(domain: "AIEnhancementClient", code: -2,
+                          userInfo: [NSLocalizedDescriptionKey: "Failed to parse response from Groq API"])
+        } catch let error as NSError {
+            print("[AIEnhancementClientLive] Error enhancing text with Groq: \(error.localizedDescription)")
+            throw error
+        } catch {
+            print("[AIEnhancementClientLive] Unexpected error with Groq: \(error)")
+            throw NSError(domain: "AIEnhancementClient", code: -3,
+                          userInfo: [NSLocalizedDescriptionKey: "Error communicating with Groq API: \(error.localizedDescription)"])
         }
     }
 }

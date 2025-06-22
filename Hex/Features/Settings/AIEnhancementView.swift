@@ -28,13 +28,17 @@ struct AIEnhancementView: View {
             
             // Only show other settings if AI enhancement is enabled
             if store.hexSettings.useAIEnhancement {
-                // Connection Status Section (only if AI enhancement is enabled)
-                if !store.isOllamaAvailable {
-                    Section {
-                        connectionStatusView
-                    } header: {
-                        Text("Ollama Status")
-                    }
+                // Provider Selection Section
+                providerSelectionSection
+                
+                // API Key Section (for remote providers)
+                if store.currentProvider != .ollama {
+                    apiKeySection
+                }
+                
+                // Connection Status Section (only show if there are issues or testing)
+                if shouldShowConnectionStatus {
+                    connectionStatusSection
                 }
                 
                 // Model Selection Section
@@ -54,6 +58,162 @@ struct AIEnhancementView: View {
     }
     
     // MARK: - Component Views
+    
+    // Provider Selection Section
+    private var providerSelectionSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                // Provider picker
+                Picker("AI Provider", selection: Binding(
+                    get: { store.currentProvider },
+                    set: { store.send(.setProviderType($0)) }
+                )) {
+                    ForEach(AIProviderType.allCases, id: \.self) { provider in
+                        VStack(alignment: .leading) {
+                            Text(provider.displayName)
+                                .font(.body)
+                            Text(provider.description)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .tag(provider)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+            }
+        } header: {
+            Text("AI Provider")
+        } footer: {
+            Text(providerFooterText)
+                .foregroundColor(.secondary.opacity(0.7))
+                .font(.caption)
+        }
+    }
+    
+    // API Key Section
+    private var apiKeySection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                SecureField("Enter API Key", text: Binding(
+                    get: { store.currentAPIKey },
+                    set: { store.send(.setAPIKey($0)) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                
+                // Test connection button
+                HStack {
+                    Button("Test Connection") {
+                        store.send(.testConnection)
+                    }
+                    .disabled(store.currentAPIKey.isEmpty || store.isTestingConnection)
+                    
+                    if store.isTestingConnection {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                            .padding(.leading, 8)
+                    }
+                    
+                    Spacer()
+                    
+                    if let status = store.connectionStatus {
+                        Text(status)
+                            .font(.caption)
+                            .foregroundColor(status.contains("successful") ? .green : .red)
+                    }
+                }
+            }
+        } header: {
+            Text("\(store.currentProvider.displayName) API Key")
+        } footer: {
+            Text(apiKeyFooterText)
+                .foregroundColor(.secondary.opacity(0.7))
+                .font(.caption)
+        }
+    }
+    
+    // Connection Status Section
+    private var connectionStatusSection: some View {
+        Section {
+            connectionStatusView
+        } header: {
+            Text("Connection Status")
+        }
+    }
+    
+    // Computed properties for dynamic content
+    private var shouldShowConnectionStatus: Bool {
+        switch store.currentProvider {
+        case .ollama:
+            return !store.isOllamaAvailable
+        case .groq:
+            return store.currentAPIKey.isEmpty || (store.connectionStatus?.contains("failed") == true)
+        }
+    }
+    
+    private var providerFooterText: String {
+        switch store.currentProvider {
+        case .ollama:
+            return "Run AI models locally using Ollama. Requires Ollama to be installed and running."
+        case .groq:
+            return "Use Groq's fast inference API. Requires a Groq API key."
+        }
+    }
+    
+    private var apiKeyFooterText: String {
+        switch store.currentProvider {
+        case .ollama:
+            return ""
+        case .groq:
+            return "Get your free API key from console.groq.com. Your key is stored securely on your device."
+        }
+    }
+    
+    // Model selection helper properties
+    private var canLoadModels: Bool {
+        switch store.currentProvider {
+        case .ollama:
+            return store.isOllamaAvailable
+        case .groq:
+            return !store.currentAPIKey.isEmpty
+        }
+    }
+    
+    private var hasAvailableModels: Bool {
+        switch store.currentProvider {
+        case .ollama:
+            return !store.availableModels.isEmpty
+        case .groq:
+            return !store.availableRemoteModels.isEmpty
+        }
+    }
+    
+    private var unavailableMessage: String {
+        switch store.currentProvider {
+        case .ollama:
+            return "Ollama connection required to view models"
+        case .groq:
+            return "API key required to load models"
+        }
+    }
+    
+    private var noModelsMessage: String {
+        switch store.currentProvider {
+        case .ollama:
+            return "No models found in Ollama"
+        case .groq:
+            return "No models available from Groq"
+        }
+    }
+    
+    private var modelSelectionFooterText: String {
+        switch store.currentProvider {
+        case .ollama:
+            return "Smaller models are faster but less capable. Llama3 offers a good balance of speed and quality."
+        case .groq:
+            return "Different models offer various capabilities and speeds. Compound-beta models are optimized for quality."
+        }
+    }
     
     // Connection Status View
     private var connectionStatusView: some View {
@@ -172,13 +332,18 @@ struct AIEnhancementView: View {
                     
                     // Refresh button for models
                     Button {
-                        store.send(.loadAvailableModels)
+                        switch store.currentProvider {
+                        case .ollama:
+                            store.send(.loadAvailableModels)
+                        case .groq:
+                            store.send(.loadRemoteModels)
+                        }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                             .font(.body)
                     }
                     .buttonStyle(DefaultButtonStyle())
-                    .disabled(store.isLoadingModels)
+                    .disabled(store.isLoadingModels || !canLoadModels)
                     .opacity(store.isLoadingModels ? 0.5 : 0.7)
                 }
                 
@@ -193,9 +358,9 @@ struct AIEnhancementView: View {
                         Spacer()
                     }
                     .padding(.vertical, 4)
-                } else if !store.isOllamaAvailable {
-                    // Ollama not available message
-                    Text("Ollama connection required to view models")
+                } else if !canLoadModels {
+                    // Provider not available message
+                    Text(unavailableMessage)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .padding(.vertical, 4)
@@ -210,18 +375,20 @@ struct AIEnhancementView: View {
                             .lineLimit(2)
                     }
                     .padding(.vertical, 4)
-                } else if store.availableModels.isEmpty {
+                } else if !hasAvailableModels {
                     // No models available
                     HStack(alignment: .center) {
-                        Text("No models found in Ollama")
+                        Text(noModelsMessage)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         
                         Spacer()
                         
-                        Link("Browse Models", destination: URL(string: "https://ollama.com/library")!)
-                            .font(.subheadline)
-                            .foregroundColor(.blue)
+                        if store.currentProvider == .ollama {
+                            Link("Browse Models", destination: URL(string: "https://ollama.com/library")!)
+                                .font(.subheadline)
+                                .foregroundColor(.blue)
+                        }
                     }
                     .padding(.vertical, 8)
                 } else {
@@ -231,26 +398,50 @@ struct AIEnhancementView: View {
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         
-                        Picker("", selection: Binding(
-                            get: { store.hexSettings.selectedAIModel },
-                            set: { store.send(.setSelectedModel($0)) }
-                        )) {
-                            ForEach(store.availableModels, id: \.self) { model in
-                                Text(model).tag(model)
+                        switch store.currentProvider {
+                        case .ollama:
+                            Picker("", selection: Binding(
+                                get: { store.hexSettings.selectedAIModel },
+                                set: { store.send(.setSelectedModel($0)) }
+                            )) {
+                                ForEach(store.availableModels, id: \.self) { model in
+                                    Text(model).tag(model)
+                                }
                             }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
+                            
+                        case .groq:
+                            Picker("", selection: Binding(
+                                get: { store.hexSettings.selectedRemoteModel },
+                                set: { store.send(.setSelectedRemoteModel($0)) }
+                            )) {
+                                ForEach(store.availableRemoteModels) { model in
+                                    VStack(alignment: .leading) {
+                                        Text(model.displayName)
+                                            .font(.body)
+                                        Text("by \(model.ownedBy) • \(model.contextWindow/1024)K context")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .tag(model.id)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
                         }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 2)
                     }
                 }
             }
         } header: {
             Text("Model Selection")
         } footer: {
-            if !store.availableModels.isEmpty {
-                Text("Smaller models are faster but less capable. Llama3 offers a good balance of speed and quality.")
+            if hasAvailableModels {
+                Text(modelSelectionFooterText)
                     .foregroundColor(.secondary.opacity(0.7))
                     .font(.caption)
             }
