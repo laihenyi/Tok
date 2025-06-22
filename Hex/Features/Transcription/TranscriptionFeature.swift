@@ -12,6 +12,130 @@ import WhisperKit
 import IOKit
 import IOKit.pwr_mgt
 
+// MARK: - Progress Tracking Structures
+
+struct RecordingProgress: Equatable {
+  var duration: TimeInterval = 0
+  var averageLevel: Double = 0
+  var peakLevel: Double = 0
+  var shouldPlayAudioFeedback: Bool = false
+  var recordingQuality: RecordingQuality = .unknown
+  
+  enum RecordingQuality: Equatable {
+    case unknown
+    case poor
+    case good
+    case excellent
+  }
+  
+  mutating func update(meter: Meter, startTime: Date?) {
+    if let startTime = startTime {
+      duration = Date().timeIntervalSince(startTime)
+    }
+    
+    averageLevel = meter.averagePower
+    peakLevel = meter.peakPower
+    
+    // Determine recording quality based on audio levels
+    if averageLevel > 0.7 {
+      recordingQuality = .excellent
+    } else if averageLevel > 0.4 {
+      recordingQuality = .good
+    } else if averageLevel > 0.1 {
+      recordingQuality = .poor
+    } else {
+      recordingQuality = .unknown
+    }
+  }
+}
+
+struct EnhancementProgress: Equatable {
+  var stage: Stage = .idle
+  var message: String = ""
+  var startTime: Date?
+  var estimatedTimeRemaining: TimeInterval?
+  
+  enum Stage: Equatable {
+    case idle
+    case connecting
+    case processing
+    case finalizing
+    case completed
+    case error(String)
+  }
+  
+  mutating func updateStage(_ newStage: Stage) {
+    stage = newStage
+    
+    switch newStage {
+    case .idle:
+      message = ""
+      startTime = nil
+      estimatedTimeRemaining = nil
+    case .connecting:
+      message = "Connecting to AI service..."
+      startTime = Date()
+      estimatedTimeRemaining = 2.0
+    case .processing:
+      message = "Enhancing transcription..."
+      estimatedTimeRemaining = 5.0
+    case .finalizing:
+      message = "Finalizing results..."
+      estimatedTimeRemaining = 1.0
+    case .completed:
+      message = "Enhancement complete"
+      estimatedTimeRemaining = nil
+    case .error(let errorMessage):
+      message = "Error: \(errorMessage)"
+      estimatedTimeRemaining = nil
+    }
+  }
+}
+
+// MARK: - Streaming Transcription Types
+
+struct StreamingTranscription: Equatable {
+  var confirmedSegments: [TranscriptionSegment] = []
+  var unconfirmedSegments: [TranscriptionSegment] = []
+  var currentText: String = ""
+  var isActive: Bool = false
+  var startTime: Date?
+  
+  mutating func reset() {
+    confirmedSegments = []
+    unconfirmedSegments = []
+    currentText = ""
+    isActive = false
+    startTime = nil
+  }
+  
+  mutating func updateFromStream(_ update: StreamTranscriptionUpdate) {
+    print("[StreamingTranscription] updateFromStream called")
+    print("[StreamingTranscription] Before update - currentText: '\(currentText)'")
+    print("[StreamingTranscription] Update currentText: '\(update.currentText)'")
+    
+    confirmedSegments = update.confirmedSegments
+    unconfirmedSegments = update.unconfirmedSegments
+    
+    // Only update currentText if the new text is not empty, 
+    // to prevent empty updates from overwriting previous transcription
+    if !update.currentText.isEmpty {
+      currentText = update.currentText
+      print("[StreamingTranscription] Updated currentText to: '\(currentText)'")
+    } else {
+      print("[StreamingTranscription] Skipping empty currentText update")
+    }
+    
+    if !isActive && !currentText.isEmpty {
+      isActive = true
+      startTime = Date()
+      print("[StreamingTranscription] Activated streaming transcription")
+    }
+    
+    print("[StreamingTranscription] After update - currentText: '\(currentText)', isActive: \(isActive)")
+  }
+}
+
 @Reducer
 struct TranscriptionFeature {
   @ObservableState
@@ -25,6 +149,17 @@ struct TranscriptionFeature {
     var meter: Meter = .init(averagePower: 0, peakPower: 0)
     var assertionID: IOPMAssertionID?
     var pendingTranscription: String? // Store original transcription for fallback
+    
+    // Real-time feedback properties
+    var recordingProgress: RecordingProgress = RecordingProgress()
+    var enhancementProgress: EnhancementProgress = EnhancementProgress()
+    var lastAudioFeedbackTime: Date = Date()
+    var shouldShowRecordingPulse: Bool = false
+    
+    // Streaming transcription properties
+    var streamingTranscription: StreamingTranscription = StreamingTranscription()
+    var isStreamingTranscription: Bool = false
+    
     @Shared(.hexSettings) var hexSettings: HexSettings
     @Shared(.transcriptionHistory) var transcriptionHistory: TranscriptionHistory
   }
@@ -54,6 +189,16 @@ struct TranscriptionFeature {
     case aiEnhancementError(Error)
     case ollamaBecameUnavailable
     case recheckOllamaAvailability
+    
+    // Real-time feedback actions
+    case updateRecordingProgress
+    case updateEnhancementProgress(EnhancementProgress.Stage)
+    case playAudioFeedback
+    case startRecordingPulse
+    case stopRecordingPulse
+    
+    // Streaming transcription actions
+    case streamTranscriptionUpdate(StreamTranscriptionUpdate)
   }
 
   enum CancelID {
@@ -61,6 +206,10 @@ struct TranscriptionFeature {
     case metering
     case transcription
     case aiEnhancement
+    case recordingFeedback
+    case recordingPulse
+    case enhancementFeedback
+    case streamTranscription
   }
 
   @Dependency(\.transcription) var transcription
@@ -106,8 +255,8 @@ struct TranscriptionFeature {
         return handleHotKeyPressed(isTranscribing: state.isTranscribing)
 
       case .hotKeyReleased:
-        // If we’re currently recording, then stop. Otherwise, just cancel
-        // the delayed “startRecording” effect if we never actually started.
+        // If we're currently recording, then stop. Otherwise, just cancel
+        // the delayed "startRecording" effect if we never actually started.
         return handleHotKeyReleased(isRecording: state.isRecording)
 
       // MARK: - Recording Flow
@@ -177,10 +326,86 @@ struct TranscriptionFeature {
           }
         }
 
+      // MARK: - Real-time Feedback Actions
+      
+      case .updateRecordingProgress:
+        state.recordingProgress.update(meter: state.meter, startTime: state.recordingStartTime)
+        
+        // Check if we should play audio feedback (every 2 seconds during recording)
+        let now = Date()
+        if now.timeIntervalSince(state.lastAudioFeedbackTime) >= 2.0 {
+          state.lastAudioFeedbackTime = now
+          return .send(.playAudioFeedback)
+        }
+        return .none
+        
+      case let .updateEnhancementProgress(stage):
+        state.enhancementProgress.updateStage(stage)
+        return .none
+        
+      case .playAudioFeedback:
+        // Play gentle audio feedback during recording based on quality
+        return .run { [quality = state.recordingProgress.recordingQuality] _ in
+          // Play a gentle beep if recording quality is good
+          if quality == .good || quality == .excellent {
+            await soundEffect.play(.recordingFeedback)
+          }
+        }
+        
+      case .startRecordingPulse:
+        state.shouldShowRecordingPulse = true
+        return .run { send in
+          // Create a pulsing effect during recording
+          while !Task.isCancelled {
+            try await Task.sleep(for: .milliseconds(1000))
+            await send(.updateRecordingProgress)
+            try await Task.sleep(for: .milliseconds(500))
+          }
+        }
+        .cancellable(id: CancelID.recordingPulse)
+        
+      case .stopRecordingPulse:
+        state.shouldShowRecordingPulse = false
+        return .cancel(id: CancelID.recordingPulse)
+        
+      // MARK: - Streaming Transcription Actions
+      
+      case let .streamTranscriptionUpdate(update):
+        // Only process streaming updates if we're currently streaming
+        guard state.isStreamingTranscription else {
+          print("[TranscriptionFeature] Ignoring stream update - streaming is not active")
+          return .none
+        }
+        
+        print("[TranscriptionFeature] Received stream update: '\(update.currentText)'")
+        print("[TranscriptionFeature] Before update - state.streamingTranscription.currentText: '\(state.streamingTranscription.currentText)'")
+        
+        // Manually update the streaming transcription state
+        state.streamingTranscription.confirmedSegments = update.confirmedSegments
+        state.streamingTranscription.unconfirmedSegments = update.unconfirmedSegments
+        
+        // Only update currentText if the new text is not empty
+        if !update.currentText.isEmpty {
+          state.streamingTranscription.currentText = update.currentText
+          print("[TranscriptionFeature] Updated currentText to: '\(state.streamingTranscription.currentText)'")
+        } else {
+          print("[TranscriptionFeature] Skipping empty currentText update")
+        }
+        
+        // Update active state
+        if !state.streamingTranscription.isActive && !state.streamingTranscription.currentText.isEmpty {
+          state.streamingTranscription.isActive = true
+          state.streamingTranscription.startTime = Date()
+          print("[TranscriptionFeature] Activated streaming transcription")
+        }
+        
+        print("[TranscriptionFeature] After update - state.streamingTranscription.currentText: '\(state.streamingTranscription.currentText)'")
+        return .none
+
       // MARK: - Cancel Entire Flow
 
       case .cancel:
-        // Only cancel if we’re in the middle of recording or transcribing
+        // Only cancel if we're in the middle of recording or transcribing
         guard state.isRecording || state.isTranscribing else {
           return .none
         }
@@ -260,7 +485,7 @@ private extension TranscriptionFeature {
           return false
         }
 
-        // If Escape is pressed with no modifiers while idle, let’s treat that as `cancel`.
+        // If Escape is pressed with no modifiers while idle, let's treat that as `cancel`.
         if keyEvent.key == .escape, keyEvent.modifiers.isEmpty,
            hotKeyProcessor.state == .idle
         {
@@ -328,7 +553,7 @@ private extension TranscriptionFeature {
 
   func handleHotKeyReleased(isRecording: Bool) -> Effect<Action> {
     if isRecording {
-      // We actually stop if we’re currently recording
+      // We actually stop if we're currently recording
       return .send(.stopRecording)
     } else {
       // If not recording yet, just cancel the delayed start
@@ -343,23 +568,80 @@ private extension TranscriptionFeature {
   func handleStartRecording(_ state: inout State) -> Effect<Action> {
     state.isRecording = true
     state.recordingStartTime = Date()
+    state.lastAudioFeedbackTime = Date()
+    state.isStreamingTranscription = true
+    
+    // Reset recording progress and streaming state
+    state.recordingProgress = RecordingProgress()
+    state.streamingTranscription.reset()
 
     // Prevent system sleep during recording
     if state.hexSettings.preventSystemSleep {
       preventSystemSleep(&state)
     }
 
-    return .run { _ in
-      await recording.startRecording()
-      await soundEffect.play(.startRecording)
-    }
+    // Extract values for streaming transcription
+    let model = state.hexSettings.selectedModel
+    let language = state.hexSettings.outputLanguage
+    let settings = state.hexSettings
+
+    return .merge(
+      .run { _ in
+        await recording.startRecording()
+        await soundEffect.play(.startRecording)
+      },
+      .send(.startRecordingPulse),
+      // Start streaming transcription for real-time feedback during recording
+      .run { send in
+        do {
+          let decodeOptions = DecodingOptions(
+            language: language,
+            detectLanguage: language == nil,
+            chunkingStrategy: .vad
+          )
+
+          print("Starting streaming transcription for real-time feedback…")
+
+          // Start microphone streaming. This returns immediately after the
+          // underlying AudioStreamTranscriber is booted.
+          try await transcription.startStreamTranscription(model, decodeOptions, settings) { update in
+            print("[TranscriptionFeature] Stream callback received update: '\(update.currentText)'")
+            // Forward every update to the reducer. We stay on this task's
+            // lifetime, so the `send` closure stays valid.
+            Task { await send(.streamTranscriptionUpdate(update)) }
+          }
+
+          // -----------------------------------------------------------------
+          // Keep this effect alive for the entire lifetime of the microphone
+          // stream.  It will be cancelled via the `.streamTranscription` id
+          // when recording stops or is discarded.
+          // -----------------------------------------------------------------
+          try await Task.never()
+        } catch is CancellationError {
+          // Normal tear-down, nothing to log – `stopStreamTranscription()` is
+          // executed elsewhere.
+        } catch {
+          print("Error starting streaming transcription for feedback: \(error)")
+          // Don't fail the recording if streaming fails, just continue without live feedback
+          // Reset the streaming state so UI doesn't get stuck
+          await send(.streamTranscriptionUpdate(StreamTranscriptionUpdate(
+            confirmedSegments: [],
+            unconfirmedSegments: [],
+            currentText: "",
+            isComplete: false
+          )))
+        }
+      }
+      .cancellable(id: CancelID.streamTranscription)
+    )
   }
 
   func handleStopRecording(_ state: inout State) -> Effect<Action> {
     state.isRecording = false
+    state.isStreamingTranscription = false // Stop streaming immediately
 
     // Allow system to sleep again by releasing the power management assertion
-    // Always call this, even if the setting is off, to ensure we don’t leak assertions
+    // Always call this, even if the setting is off, to ensure we don't leak assertions
     //  (e.g. if the setting was toggled off mid-recording)
     reallowSystemSleep(&state)
 
@@ -368,16 +650,20 @@ private extension TranscriptionFeature {
       return Date().timeIntervalSince(startTime) > state.hexSettings.minimumKeyTime
     }()
 
-      guard (durationIsLongEnough && state.hexSettings.hotkey.key == nil) else {
+    guard (durationIsLongEnough || state.hexSettings.hotkey.key != nil) else {
       // If the user recorded for less than minimumKeyTime, just discard
       // unless the hotkey includes a regular key, in which case, we can assume it was intentional
       print("Recording was too short, discarding")
-      return .run { _ in
-        _ = await recording.stopRecording()
-      }
+      return .merge(
+        .cancel(id: CancelID.streamTranscription),
+        .run { _ in
+          await transcription.stopStreamTranscription()
+          _ = await recording.stopRecording()
+        }
+      )
     }
 
-    // Otherwise, proceed to transcription
+    // Otherwise, proceed to traditional transcription for final result
     state.isTranscribing = true
     state.error = nil
     
@@ -389,28 +675,39 @@ private extension TranscriptionFeature {
     
     state.isPrewarming = true
     
-    return .run { send in
-      do {
-        await soundEffect.play(.stopRecording)
-        let audioURL = await recording.stopRecording()
+    return .merge(
+      .send(.stopRecordingPulse),
+      // Cancel streaming transcription effect first
+      .cancel(id: CancelID.streamTranscription),
+      // Then stop streaming transcription since recording ended
+      .run { _ in
+        await transcription.stopStreamTranscription()
+      },
+      .run { send in
+        do {
+          await soundEffect.play(.stopRecording)
+          let audioURL = await recording.stopRecording()
 
-        // Create transcription options with the selected language
-        let decodeOptions = DecodingOptions(
-          language: language,
-          detectLanguage: language == nil, // Only auto-detect if no language specified
-          chunkingStrategy: .vad
-        )
-        
-        let result = try await transcription.transcribe(audioURL, model, decodeOptions, settings) { _ in }
-        
-        print("Transcribed audio from URL: \(audioURL) to text: \(result)")
-        await send(.transcriptionResult(result))
-      } catch {
-        print("Error transcribing audio: \(error)")
-        await send(.transcriptionError(error))
+          // Create transcription options with the selected language
+          let decodeOptions = DecodingOptions(
+            language: language,
+            detectLanguage: language == nil, // Only auto-detect if no language specified
+            chunkingStrategy: .vad
+          )
+          
+          // Use traditional file-based transcription for accurate final result
+          print("Transcribing recorded audio file for final result...")
+          let result = try await transcription.transcribe(audioURL, model, decodeOptions, settings) { _ in }
+          
+          print("Transcribed audio from URL: \(audioURL) to text: \(result)")
+          await send(.transcriptionResult(result))
+        } catch {
+          print("Error transcribing audio: \(error)")
+          await send(.transcriptionError(error))
+        }
       }
-    }
-    .cancellable(id: CancelID.transcription)
+      .cancellable(id: CancelID.transcription)
+    )
   }
 }
 
@@ -498,20 +795,36 @@ private extension TranscriptionFeature {
     return .merge(
       // First update the state to indicate enhancement is starting
       .send(.setEnhancingState(true)),
+      .send(.updateEnhancementProgress(.connecting)),
+      
+      // Play enhancement start sound
+      .run { _ in
+        await soundEffect.play(.enhancementStart)
+      },
       
       // Then run the enhancement
       .run { send in
         do {
           print("[TranscriptionFeature] Calling aiEnhancement.enhance()")
+          
+          // Update progress to processing
+          await send(.updateEnhancementProgress(.processing))
+          
           // Access the raw value directly to avoid argument label issues
           let enhanceMethod = aiEnhancement.enhance
           let enhancedText = try await enhanceMethod(result, model, options, providerType, apiKey) { progress in
             // Optional: Could update UI with progress information here if needed
           }
+          
+          // Update progress to finalizing
+          await send(.updateEnhancementProgress(.finalizing))
+          
           print("[TranscriptionFeature] AI enhancement succeeded")
           await send(.aiEnhancementResult(enhancedText))
         } catch {
           print("[TranscriptionFeature] Error enhancing text with AI: \(error)")
+          // Update progress to error state
+          await send(.updateEnhancementProgress(.error(error.localizedDescription)))
           // Properly handle the error through the action system
           await send(.aiEnhancementError(error))
         }
@@ -533,17 +846,34 @@ private extension TranscriptionFeature {
 
     // If empty text, nothing else to do
     guard !result.isEmpty else {
-      return .none
+      return .merge(
+        .send(.updateEnhancementProgress(.completed)),
+        .send(.updateEnhancementProgress(.idle))
+      )
     }
 
     // Compute how long we recorded
     let duration = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
 
     // Continue with storing the final result in the background
-    return finalizeRecordingAndStoreTranscript(
-      result: result,
-      duration: duration,
-      transcriptionHistory: state.$transcriptionHistory
+    return .merge(
+      .send(.updateEnhancementProgress(.completed)),
+      
+      // Play enhancement complete sound
+      .run { _ in
+        await soundEffect.play(.enhancementComplete)
+      },
+      
+      finalizeRecordingAndStoreTranscript(
+        result: result,
+        duration: duration,
+        transcriptionHistory: state.$transcriptionHistory
+      ),
+      .run { send in
+        // Clear progress after a short delay
+        try await Task.sleep(for: .milliseconds(1000))
+        await send(.updateEnhancementProgress(.idle))
+      }
     )
   }
 
@@ -620,10 +950,25 @@ private extension TranscriptionFeature {
     state.isRecording = false
     state.isPrewarming = false
     state.isEnhancing = false
+    state.shouldShowRecordingPulse = false
+    state.isStreamingTranscription = false
+    
+    // Reset progress states
+    state.recordingProgress = RecordingProgress()
+    state.enhancementProgress.updateStage(.idle)
+    state.streamingTranscription.reset()
 
     return .merge(
       .cancel(id: CancelID.transcription),
       .cancel(id: CancelID.delayedRecord),
+      .cancel(id: CancelID.recordingPulse),
+      .cancel(id: CancelID.recordingFeedback),
+      .cancel(id: CancelID.enhancementFeedback),
+      .cancel(id: CancelID.streamTranscription),
+      // Stop streaming transcription after cancelling the effect
+      .run { _ in
+        await transcription.stopStreamTranscription()
+      },
       // Don't cancel AI enhancement as it might cause issues with Ollama
       // This creates a UI inconsistency where the UI shows cancellation
       // but enhancement continues in background. We intentionally allow this
@@ -672,23 +1017,40 @@ struct TranscriptionView: View {
   @Bindable var store: StoreOf<TranscriptionFeature>
 
   var status: TranscriptionIndicatorView.Status {
+    let computedStatus: TranscriptionIndicatorView.Status
+    
     if store.isEnhancing {
-      return .enhancing 
+      computedStatus = .enhancing 
     } else if store.isTranscribing {
-      return .transcribing
+      computedStatus = .transcribing
     } else if store.isRecording {
-      return .recording
+      // Show streaming transcription status during recording if streaming is active
+      // We don't require currentText to be non-empty since we want to show the streaming UI
+      // even during temporary empty states between transcription updates
+      computedStatus = store.isStreamingTranscription ? .streamingTranscription : .recording
     } else if store.isPrewarming {
-      return .prewarming
+      computedStatus = .prewarming
     } else {
-      return .hidden
+      computedStatus = .hidden
     }
+    
+    // Debug logging to understand status and data flow
+    print("[TranscriptionView] Status: \(computedStatus)")
+    print("[TranscriptionView] isRecording: \(store.isRecording), isStreamingTranscription: \(store.isStreamingTranscription)")
+    print("[TranscriptionView] streamingTranscription.currentText: '\(store.streamingTranscription.currentText)'")
+    print("[TranscriptionView] streamingTranscription.isActive: \(store.streamingTranscription.isActive)")
+    
+    return computedStatus
   }
 
   var body: some View {
     TranscriptionIndicatorView(
       status: status,
-      meter: store.meter
+      meter: store.meter,
+      recordingProgress: store.isRecording ? store.recordingProgress : nil,
+      enhancementProgress: store.isEnhancing ? store.enhancementProgress : nil,
+      showRecordingPulse: store.shouldShowRecordingPulse,
+      streamingTranscription: store.isStreamingTranscription ? store.streamingTranscription : nil
     )
     .task {
       await store.send(.task).finish()

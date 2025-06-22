@@ -11,6 +11,21 @@ import DependenciesMacros
 import Foundation
 import WhisperKit
 
+// MARK: - Stream Transcription Types
+
+struct StreamTranscriptionUpdate: Equatable {
+  let confirmedSegments: [TranscriptionSegment]
+  let unconfirmedSegments: [TranscriptionSegment]
+  let currentText: String
+  let isComplete: Bool
+}
+
+struct TranscriptionSegment: Equatable {
+  let text: String
+  let start: TimeInterval
+  let end: TimeInterval
+}
+
 /// A client that downloads and loads WhisperKit models, then transcribes audio files using the loaded model.
 /// Exposes progress callbacks to report overall download-and-load percentage and transcription progress.
 @DependencyClient
@@ -34,6 +49,13 @@ struct TranscriptionClient {
 
   /// Lists all model variants found in `argmaxinc/whisperkit-coreml`.
   var getAvailableModels: @Sendable () async throws -> [String]
+  
+  /// Starts streaming transcription from microphone using AudioStreamTranscriber
+  /// Returns updates via the callback with real-time transcription progress
+  var startStreamTranscription: @Sendable (String, DecodingOptions, HexSettings?, @escaping (StreamTranscriptionUpdate) -> Void) async throws -> Void
+  
+  /// Stops the current streaming transcription
+  var stopStreamTranscription: @Sendable () async -> Void
 }
 
 extension TranscriptionClient: DependencyKey {
@@ -45,7 +67,9 @@ extension TranscriptionClient: DependencyKey {
       deleteModel: { try await live.deleteModel(variant: $0) },
       isModelDownloaded: { await live.isModelDownloaded($0) },
       getRecommendedModels: { await live.getRecommendedModels() },
-      getAvailableModels: { try await live.getAvailableModels() }
+      getAvailableModels: { try await live.getAvailableModels() },
+      startStreamTranscription: { try await live.startStreamTranscription(model: $0, options: $1, settings: $2, updateCallback: $3) },
+      stopStreamTranscription: { await live.stopStreamTranscription() }
     )
   }
 }
@@ -68,6 +92,12 @@ actor TranscriptionClientLive {
 
   /// The name of the currently loaded model, if any.
   private var currentModelName: String?
+  
+  /// The current AudioStreamTranscriber instance for streaming transcription
+  private var audioStreamTranscriber: AudioStreamTranscriber?
+  
+  /// Task managing the streaming transcription
+  private var streamTask: Task<Void, Error>?
 
   /// The base folder under which we store model data (e.g., ~/Library/Application Support/...).
   private lazy var modelsBaseFolder: URL = {
@@ -370,5 +400,180 @@ actor TranscriptionClientLive {
       let dst = destFolder.appendingPathComponent(item)
       try fileManager.moveItem(at: src, to: dst)
     }
+  }
+  
+  /// Cleans up raw Whisper tokens from streaming transcription text
+  private func cleanWhisperTokens(from text: String) -> String {
+    var cleaned = text
+    
+    // Remove Whisper special tokens
+    let whisperTokenPatterns = [
+      "<\\|startoftranscript\\|>",
+      "<\\|endoftranscript\\|>",
+      "<\\|\\w{2}\\|>", // Language tokens like <|en|>, <|es|>, etc.
+      "<\\|transcribe\\|>",
+      "<\\|translate\\|>",
+      "<\\|nospeech\\|>",
+      "<\\|notimestamps\\|>",
+      "<\\|\\d+\\.\\d+\\|>", // Timestamp tokens like <|0.00|>, <|1.20|>
+      "^\\s*", // Leading whitespace
+      "\\s*$"  // Trailing whitespace
+    ]
+    
+    for pattern in whisperTokenPatterns {
+      cleaned = cleaned.replacingOccurrences(
+        of: pattern,
+        with: "",
+        options: .regularExpression
+      )
+    }
+    
+    // Clean up multiple spaces and trim
+    cleaned = cleaned.replacingOccurrences(
+      of: "\\s+",
+      with: " ",
+      options: .regularExpression
+    ).trimmingCharacters(in: .whitespacesAndNewlines)
+    
+    return cleaned
+  }
+  
+  // MARK: - Streaming Transcription
+  
+  /// Starts streaming transcription from microphone using AudioStreamTranscriber
+  func startStreamTranscription(
+    model: String,
+    options: DecodingOptions,
+    settings: HexSettings? = nil,
+    updateCallback: @escaping (StreamTranscriptionUpdate) -> Void
+  ) async throws {
+    // Stop any existing stream
+    await stopStreamTranscription()
+    
+    // Load or switch to the required model if needed
+    if whisperKit == nil || model != currentModelName {
+      unloadCurrentModel()
+      try await downloadAndLoadModel(variant: model) { _ in }
+    }
+
+    guard let whisperKit = whisperKit else {
+      throw NSError(
+        domain: "TranscriptionClient",
+        code: -1,
+        userInfo: [
+          NSLocalizedDescriptionKey: "Failed to initialize WhisperKit for model: \(model)",
+        ]
+      )
+    }
+    
+    guard let tokenizer = whisperKit.tokenizer else {
+      throw NSError(
+        domain: "TranscriptionClient",
+        code: -2,
+        userInfo: [
+          NSLocalizedDescriptionKey: "Tokenizer unavailable for model: \(model)",
+        ]
+      )
+    }
+
+    print("[TranscriptionClientLive] Starting stream transcription with model: \(model)")
+    print("[TranscriptionClientLive] WhisperKit components available:")
+    print("  - audioEncoder: \(whisperKit.audioEncoder != nil)")
+    print("  - featureExtractor: \(whisperKit.featureExtractor != nil)")
+    print("  - segmentSeeker: \(whisperKit.segmentSeeker != nil)")
+    print("  - textDecoder: \(whisperKit.textDecoder != nil)")
+    print("  - audioProcessor: \(whisperKit.audioProcessor != nil)")
+
+    // Create AudioStreamTranscriber
+    let streamTranscriber = AudioStreamTranscriber(
+      audioEncoder: whisperKit.audioEncoder,
+      featureExtractor: whisperKit.featureExtractor,
+      segmentSeeker: whisperKit.segmentSeeker,
+      textDecoder: whisperKit.textDecoder,
+      tokenizer: tokenizer,
+      audioProcessor: whisperKit.audioProcessor,
+      decodingOptions: options
+    ) { oldState, newState in
+      // Clean up raw Whisper tokens from the text
+      let cleanedText = self.cleanWhisperTokens(from: newState.currentText)
+      
+      // Skip empty/waiting updates to reduce noise, but allow real transcription through
+      if cleanedText.isEmpty || cleanedText == "Waiting for speech..." {
+        // Skip these updates silently to avoid log spam
+        return
+      }
+      
+      print("[TranscriptionClientLive] Stream callback triggered - Raw text: '\(newState.currentText)'")
+      print("[TranscriptionClientLive] Confirmed segments count: \(newState.confirmedSegments.count)")
+      print("[TranscriptionClientLive] Unconfirmed segments count: \(newState.unconfirmedSegments.count)")
+      print("[TranscriptionClientLive] Cleaned text: '\(cleanedText)'")
+      
+      // Convert WhisperKit segments to our custom format, also cleaning their text
+      let confirmedSegments = newState.confirmedSegments.map { segment in
+        TranscriptionSegment(
+            text: self.cleanWhisperTokens(from: segment.text),
+          start: TimeInterval(segment.start),
+          end: TimeInterval(segment.end)
+        )
+      }
+      
+      let unconfirmedSegments = newState.unconfirmedSegments.map { segment in
+        TranscriptionSegment(
+            text: self.cleanWhisperTokens(from: segment.text),
+          start: TimeInterval(segment.start),
+          end: TimeInterval(segment.end)
+        )
+      }
+      
+      let update = StreamTranscriptionUpdate(
+        confirmedSegments: confirmedSegments,
+        unconfirmedSegments: unconfirmedSegments,
+        currentText: cleanedText,
+        isComplete: false
+      )
+      
+      print("[TranscriptionClientLive] Sending update with cleaned text: '\(update.currentText)'")
+      updateCallback(update)
+    }
+    
+    self.audioStreamTranscriber = streamTranscriber
+    print("[TranscriptionClientLive] AudioStreamTranscriber created successfully")
+    
+    // Start the streaming transcription in a task
+    streamTask = Task {
+      do {
+        print("[TranscriptionClientLive] Starting AudioStreamTranscriber...")
+        try await streamTranscriber.startStreamTranscription()
+        print("[TranscriptionClientLive] Stream transcription completed normally")
+      } catch is CancellationError {
+        print("[TranscriptionClientLive] Stream transcription was cancelled")
+      } catch {
+        print("[TranscriptionClientLive] Stream transcription error: \(error)")
+        // Send a final update to indicate completion with error
+        let finalUpdate = StreamTranscriptionUpdate(
+          confirmedSegments: [],
+          unconfirmedSegments: [],
+          currentText: "",
+          isComplete: true
+        )
+        updateCallback(finalUpdate)
+        throw error
+      }
+    }
+  }
+  
+  /// Stops the current streaming transcription
+  func stopStreamTranscription() async {
+    // Cancel the stream task
+    streamTask?.cancel()
+    streamTask = nil
+    
+    // Stop the audio stream transcriber
+    if let streamTranscriber = audioStreamTranscriber {
+      await streamTranscriber.stopStreamTranscription()
+      audioStreamTranscriber = nil
+    }
+    
+    print("[TranscriptionClientLive] Stopped stream transcription")
   }
 }

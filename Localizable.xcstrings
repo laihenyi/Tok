@@ -13,6 +13,9 @@
     "•" : {
       "shouldTranslate" : false
     },
+    "~%llds" : {
+
+    },
     "About" : {
       "comment" : "Settings -> About Section headline",
       "localizations" : {
@@ -381,6 +384,9 @@
 
     },
     "Language Model" : {
+
+    },
+    "Live Transcription" : {
 
     },
     "Loading available models..." : {

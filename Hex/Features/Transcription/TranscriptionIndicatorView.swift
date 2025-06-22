@@ -14,15 +14,21 @@ struct TranscriptionIndicatorView: View {
     case optionKeyPressed
     case recording
     case transcribing
+    case streamingTranscription
     case prewarming
     case enhancing
   }
 
   var status: Status
   var meter: Meter
+  var recordingProgress: RecordingProgress?
+  var enhancementProgress: EnhancementProgress?
+  var showRecordingPulse: Bool
+  var streamingTranscription: StreamingTranscription?
 
   let transcribeBaseColor: Color = .blue
   let enhanceBaseColor: Color = .green
+  let streamingBaseColor: Color = .orange
 
   private var backgroundColor: Color {
     switch status {
@@ -30,6 +36,7 @@ struct TranscriptionIndicatorView: View {
     case .optionKeyPressed: return Color.black
     case .recording: return .red.mix(with: .black, by: 0.5).mix(with: .red, by: meter.averagePower * 3)
     case .transcribing: return transcribeBaseColor.mix(with: .black, by: 0.5)
+    case .streamingTranscription: return streamingBaseColor.mix(with: .black, by: 0.5)
     case .prewarming: return transcribeBaseColor.mix(with: .black, by: 0.5)
     case .enhancing: return enhanceBaseColor.mix(with: .black, by: 0.5)
     }
@@ -41,6 +48,7 @@ struct TranscriptionIndicatorView: View {
     case .optionKeyPressed: return Color.black
     case .recording: return Color.red.mix(with: .white, by: 0.1).opacity(0.6)
     case .transcribing: return transcribeBaseColor.mix(with: .white, by: 0.1).opacity(0.6)
+    case .streamingTranscription: return streamingBaseColor.mix(with: .white, by: 0.1).opacity(0.6)
     case .prewarming: return transcribeBaseColor.mix(with: .white, by: 0.1).opacity(0.6)
     case .enhancing: return enhanceBaseColor.mix(with: .white, by: 0.1).opacity(0.6)
     }
@@ -52,6 +60,7 @@ struct TranscriptionIndicatorView: View {
     case .optionKeyPressed: return Color.clear
     case .recording: return Color.red
     case .transcribing: return transcribeBaseColor
+    case .streamingTranscription: return streamingBaseColor
     case .prewarming: return transcribeBaseColor
     case .enhancing: return enhanceBaseColor
     }
@@ -82,6 +91,10 @@ struct TranscriptionIndicatorView: View {
       EmptyView()
         .shadow(color: .red.opacity(averagePower), radius: 4)
         .shadow(color: .red.opacity(averagePower * 0.5), radius: 8)
+    case .streamingTranscription:
+      EmptyView()
+        .shadow(color: streamingBaseColor.opacity(0.7), radius: 4)
+        .shadow(color: streamingBaseColor.opacity(0.4), radius: 8)
     case .enhancing:
       EmptyView()
         .shadow(color: enhanceBaseColor.opacity(0.7), radius: 4)
@@ -130,6 +143,9 @@ struct TranscriptionIndicatorView: View {
         .apply(needsShine: status == .transcribing || status == .enhancing, 
                transcribeEffect: transcribeEffect, 
                enhanceEffect: enhanceEffect)
+        // Add recording pulse effect
+        .scaleEffect(showRecordingPulse && status == .recording ? 1.1 : 1.0)
+        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: showRecordingPulse)
         .compositingGroup()
         // Efficient animation task
         .task(id: status) {
@@ -151,8 +167,18 @@ struct TranscriptionIndicatorView: View {
             try? await Task.sleep(for: .milliseconds(250))
           }
         }
+        
+        // Recording progress overlay
+        if status == .recording, let progress = recordingProgress {
+          RecordingProgressOverlay(progress: progress)
+        }
+        
+        // Enhancement progress overlay
+        if status == .enhancing, let progress = enhancementProgress {
+          EnhancementProgressOverlay(progress: progress)
+        }
       
-        // Show tooltip only for prewarming, not for enhancing
+        // Show tooltip for prewarming
         if status == .prewarming {
           VStack(spacing: 4) {
             Text("Model prewarming...")
@@ -168,6 +194,30 @@ struct TranscriptionIndicatorView: View {
           .offset(y: -24)
           .transition(.opacity)
           .zIndex(2)
+        }
+        
+        // Show tooltip for recording progress
+        if status == .recording, let progress = recordingProgress {
+          RecordingStatusTooltip(progress: progress)
+            .offset(y: -32)
+            .transition(.opacity)
+            .zIndex(2)
+        }
+        
+        // Show tooltip for enhancement progress
+        if status == .enhancing, let progress = enhancementProgress {
+          EnhancementStatusTooltip(progress: progress)
+            .offset(y: -32)
+            .transition(.opacity)
+            .zIndex(2)
+        }
+        
+        // Show tooltip for streaming transcription
+        if status == .streamingTranscription, let streaming = streamingTranscription {
+          StreamingTranscriptionTooltip(streaming: streaming)
+            .offset(y: -40)
+            .transition(.opacity)
+            .zIndex(2)
         }
       }
       .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.7), value: status)
@@ -305,14 +355,230 @@ extension View {
   }
 }
 
+// MARK: - Real-time Feedback Overlays
+
+struct RecordingProgressOverlay: View {
+  let progress: RecordingProgress
+  
+  var body: some View {
+    // Simple progress indicator based on recording quality
+    Circle()
+      .fill(qualityColor.opacity(0.3))
+      .frame(width: 4, height: 4)
+      .scaleEffect(progress.recordingQuality == .excellent ? 1.5 : 1.0)
+      .animation(.easeInOut(duration: 0.5), value: progress.recordingQuality)
+  }
+  
+  private var qualityColor: Color {
+    switch progress.recordingQuality {
+    case .excellent: return .green
+    case .good: return .yellow
+    case .poor: return .red
+    case .unknown: return .gray
+    }
+  }
+}
+
+struct EnhancementProgressOverlay: View {
+  let progress: EnhancementProgress
+  
+  var body: some View {
+    // Animated dots to show AI processing
+    HStack(spacing: 2) {
+      ForEach(0..<3, id: \.self) { index in
+        Circle()
+          .fill(Color.white.opacity(0.8))
+          .frame(width: 3, height: 3)
+          .scaleEffect(animationIndex == index ? 1.3 : 0.8)
+          .animation(.easeInOut(duration: 0.6).repeatForever(), value: animationIndex)
+      }
+    }
+    .onAppear {
+      withAnimation {
+        animationIndex = 0
+      }
+    }
+    .task {
+      while !Task.isCancelled {
+        for i in 0..<3 {
+          animationIndex = i
+          try? await Task.sleep(for: .milliseconds(200))
+        }
+      }
+    }
+  }
+  
+  @State private var animationIndex = 0
+}
+
+struct RecordingStatusTooltip: View {
+  let progress: RecordingProgress
+  
+  var body: some View {
+    VStack(spacing: 2) {
+      Text(statusText)
+        .font(.system(size: 10, weight: .medium))
+        .foregroundColor(.white)
+      
+      if progress.duration > 0 {
+        Text(String(format: "%.1fs", progress.duration))
+          .font(.system(size: 9, weight: .regular))
+          .foregroundColor(.white.opacity(0.8))
+      }
+    }
+    .padding(.horizontal, 6)
+    .padding(.vertical, 3)
+    .background(
+      RoundedRectangle(cornerRadius: 4)
+        .fill(Color.black.opacity(0.8))
+    )
+  }
+  
+  private var statusText: String {
+    switch progress.recordingQuality {
+    case .excellent: return "Excellent"
+    case .good: return "Good"
+    case .poor: return "Speak up"
+    case .unknown: return "Recording..."
+    }
+  }
+}
+
+struct EnhancementStatusTooltip: View {
+  let progress: EnhancementProgress
+  
+  var body: some View {
+    VStack(spacing: 2) {
+      Text(progress.message)
+        .font(.system(size: 10, weight: .medium))
+        .foregroundColor(.white)
+      
+      if let estimatedTime = progress.estimatedTimeRemaining {
+        Text("~\(Int(estimatedTime))s")
+          .font(.system(size: 9, weight: .regular))
+          .foregroundColor(.white.opacity(0.8))
+      }
+    }
+    .padding(.horizontal, 6)
+    .padding(.vertical, 3)
+    .background(
+      RoundedRectangle(cornerRadius: 4)
+        .fill(Color.black.opacity(0.8))
+    )
+  }
+}
+
+struct StreamingTranscriptionTooltip: View {
+  let streaming: StreamingTranscription
+  
+  var body: some View {
+    VStack(spacing: 4) {
+      Text("Live Transcription")
+        .font(.system(size: 9, weight: .medium))
+        .foregroundColor(.white.opacity(0.8))
+      
+      Text(displayText)
+        .font(.system(size: 11, weight: .medium))
+        .foregroundColor(.white)
+        .multilineTextAlignment(.center)
+        .lineLimit(3)
+    }
+    .padding(.horizontal, 8)
+    .padding(.vertical, 6)
+    .frame(maxWidth: 200)
+    .background(
+      RoundedRectangle(cornerRadius: 6)
+        .fill(Color.black.opacity(0.9))
+    )
+  }
+  
+  private var displayText: String {
+    // Show the current text, with unconfirmed segments in a lighter style
+    let confirmedText = streaming.confirmedSegments.map(\.text).joined(separator: " ")
+    let unconfirmedText = streaming.unconfirmedSegments.map(\.text).joined(separator: " ")
+    
+    print("[StreamingTranscriptionTooltip] Computing displayText...")
+    print("[StreamingTranscriptionTooltip] streaming.currentText: '\(streaming.currentText)'")
+    print("[StreamingTranscriptionTooltip] confirmedText: '\(confirmedText)'")
+    print("[StreamingTranscriptionTooltip] unconfirmedText: '\(unconfirmedText)'")
+    
+    let result: String
+    // Prioritize showing actual text content over "Listening..."
+    if !streaming.currentText.isEmpty {
+      result = streaming.currentText
+    } else if !confirmedText.isEmpty && !unconfirmedText.isEmpty {
+      result = "\(confirmedText) \(unconfirmedText)..."
+    } else if !confirmedText.isEmpty {
+      result = confirmedText
+    } else if !unconfirmedText.isEmpty {
+      result = "\(unconfirmedText)..."
+    } else {
+      result = "Listening..."
+    }
+    
+    print("[StreamingTranscriptionTooltip] Final displayText: '\(result)'")
+    return result
+  }
+}
+
 #Preview("HEX") {
   VStack(spacing: 8) {
-    TranscriptionIndicatorView(status: .hidden, meter: .init(averagePower: 0, peakPower: 0))
-    TranscriptionIndicatorView(status: .optionKeyPressed, meter: .init(averagePower: 0, peakPower: 0))
-    TranscriptionIndicatorView(status: .recording, meter: .init(averagePower: 0.5, peakPower: 0.5))
-    TranscriptionIndicatorView(status: .transcribing, meter: .init(averagePower: 0, peakPower: 0))
-    TranscriptionIndicatorView(status: .prewarming, meter: .init(averagePower: 0, peakPower: 0))
-    TranscriptionIndicatorView(status: .enhancing, meter: .init(averagePower: 0, peakPower: 0))
+    TranscriptionIndicatorView(
+      status: .hidden, 
+      meter: .init(averagePower: 0, peakPower: 0), 
+      recordingProgress: nil, 
+      enhancementProgress: nil, 
+      showRecordingPulse: false,
+      streamingTranscription: nil
+    )
+    TranscriptionIndicatorView(
+      status: .optionKeyPressed, 
+      meter: .init(averagePower: 0, peakPower: 0), 
+      recordingProgress: nil, 
+      enhancementProgress: nil, 
+      showRecordingPulse: false,
+      streamingTranscription: nil
+    )
+    TranscriptionIndicatorView(
+      status: .recording, 
+      meter: .init(averagePower: 0.5, peakPower: 0.5), 
+      recordingProgress: RecordingProgress(), 
+      enhancementProgress: nil, 
+      showRecordingPulse: true,
+      streamingTranscription: nil
+    )
+    TranscriptionIndicatorView(
+      status: .transcribing, 
+      meter: .init(averagePower: 0, peakPower: 0), 
+      recordingProgress: nil, 
+      enhancementProgress: nil, 
+      showRecordingPulse: false,
+      streamingTranscription: nil
+    )
+    TranscriptionIndicatorView(
+      status: .streamingTranscription, 
+      meter: .init(averagePower: 0, peakPower: 0), 
+      recordingProgress: nil, 
+      enhancementProgress: nil, 
+      showRecordingPulse: false,
+      streamingTranscription: StreamingTranscription()
+    )
+    TranscriptionIndicatorView(
+      status: .prewarming, 
+      meter: .init(averagePower: 0, peakPower: 0), 
+      recordingProgress: nil, 
+      enhancementProgress: nil, 
+      showRecordingPulse: false,
+      streamingTranscription: nil
+    )
+    TranscriptionIndicatorView(
+      status: .enhancing, 
+      meter: .init(averagePower: 0, peakPower: 0), 
+      recordingProgress: nil, 
+      enhancementProgress: EnhancementProgress(), 
+      showRecordingPulse: false,
+      streamingTranscription: nil
+    )
   }
   .padding(40)
 }
