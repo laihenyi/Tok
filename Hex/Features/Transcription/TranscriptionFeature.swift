@@ -160,6 +160,9 @@ struct TranscriptionFeature {
     var streamingTranscription: StreamingTranscription = StreamingTranscription()
     var isStreamingTranscription: Bool = false
     
+    // Prompt derived from screenshot analysis that is fed into Whisper for better recognition
+    var contextPrompt: String? = nil
+    
     @Shared(.hexSettings) var hexSettings: HexSettings
     @Shared(.transcriptionHistory) var transcriptionHistory: TranscriptionHistory
   }
@@ -199,6 +202,9 @@ struct TranscriptionFeature {
     
     // Streaming transcription actions
     case streamTranscriptionUpdate(StreamTranscriptionUpdate)
+    
+    // Context prompt actions
+    case setContextPrompt(String)
   }
 
   enum CancelID {
@@ -218,6 +224,7 @@ struct TranscriptionFeature {
   @Dependency(\.keyEventMonitor) var keyEventMonitor
   @Dependency(\.soundEffects) var soundEffect
   @Dependency(\.aiEnhancement) var aiEnhancement
+  @Dependency(\.screenCapture) var screenCapture
 
   var body: some ReducerOf<Self> {
     Reduce { state, action in
@@ -297,14 +304,11 @@ struct TranscriptionFeature {
           // 3. Fall back to the original transcription that produced this action
           print("AI Enhancement error: \(error)")
           
-          // In the enhance method, there's a parameter to capture the original transcription
-          // We'll modify enhanceWithAI() to store the original transcription for error case
-          
-          // For now, use the bare minimum error message to inform the user
+          // Inform the user but avoid re-triggering AI enhancement
           state.error = "AI enhancement failed: \(error.localizedDescription). Using original transcription instead."
           
-          // Continue with original transcription processing
-          return .send(.transcriptionResult(state.pendingTranscription ?? ""))
+          // Finalize the flow with the raw transcription without retrying enhancement
+          return .send(.aiEnhancementResult(state.pendingTranscription ?? ""))
         }
         
       case .ollamaBecameUnavailable:
@@ -400,6 +404,13 @@ struct TranscriptionFeature {
         }
         
         print("[TranscriptionFeature] After update - state.streamingTranscription.currentText: '\(state.streamingTranscription.currentText)'")
+        return .none
+
+      // MARK: - Context Prompt Actions
+      
+      case let .setContextPrompt(prompt):
+        print("[TranscriptionFeature] Setting context prompt: \"\(prompt)\"")
+        state.contextPrompt = prompt
         return .none
 
       // MARK: - Cancel Entire Flow
@@ -584,6 +595,11 @@ private extension TranscriptionFeature {
     let model = state.hexSettings.selectedModel
     let language = state.hexSettings.outputLanguage
     let settings = state.hexSettings
+    let contextPrompt = state.contextPrompt
+    // Values for image analysis
+    let providerTypeForImage = state.hexSettings.aiProviderType
+    let imageModel = providerTypeForImage == .ollama ? state.hexSettings.selectedAIModel : state.hexSettings.selectedRemoteModel
+    let groqAPIKey = state.hexSettings.groqAPIKey
 
     return .merge(
       .run { _ in
@@ -591,14 +607,47 @@ private extension TranscriptionFeature {
         await soundEffect.play(.startRecording)
       },
       .send(.startRecordingPulse),
+      // Capture screenshot and analyse image for context prompt
+      .run { send in
+        do {
+          print("[TranscriptionFeature] Capturing screenshot for context prompt…")
+          let screenshotData = try await screenCapture.captureScreenshot()
+          print("[TranscriptionFeature] Screenshot captured (\(screenshotData.count) bytes)")
+          // Use user-configurable model & prompt when available, otherwise sensible defaults
+          let provider = providerTypeForImage
+          let modelName = imageModel
+          let imagePrompt = "You will be given a screenshot of the user's screen, please analyse the content and output a short summary of what the user is currently working on,"
+
+          print("[TranscriptionFeature] Image analysis provider: \(provider.displayName), model: \(modelName)")
+          print("[TranscriptionFeature] Invoking AI image analysis…")
+          let context = try await aiEnhancement.analyzeImage(
+            screenshotData,
+            modelName,
+            imagePrompt,
+            provider,
+            provider == .groq ? groqAPIKey : nil
+          ) { _ in }
+          print("[TranscriptionFeature] Image analysis returned context prompt: \"\(context)\"")
+          await send(.setContextPrompt(context))
+        } catch {
+          print("[TranscriptionFeature] Failed to capture/analyse screenshot: \(error)")
+        }
+      },
       // Start streaming transcription for real-time feedback during recording
       .run { send in
         do {
-          let decodeOptions = DecodingOptions(
+          // Create decoding options with context prompt support
+          var decodeOptions = DecodingOptions(
             language: language,
             detectLanguage: language == nil,
             chunkingStrategy: .vad
           )
+          
+          // NOTE: We intentionally do NOT pass the context prompt to the *streaming* decoder.
+          // Doing so caused the prompt text (derived from image analysis) to be included at the
+          // beginning of `streamingTranscription.currentText`, which clutters the real-time UI.
+          // The prompt is still applied later for the final, file-based transcription so accuracy
+          // is unchanged.
 
           print("Starting streaming transcription for real-time feedback…")
 
@@ -671,6 +720,7 @@ private extension TranscriptionFeature {
     let model = state.hexSettings.selectedModel
     let language = state.hexSettings.outputLanguage
     let settings = state.hexSettings
+    let contextPrompt = state.contextPrompt
     // recordingStartTime captured in handleTranscriptionResult
     
     state.isPrewarming = true
@@ -688,12 +738,23 @@ private extension TranscriptionFeature {
           await soundEffect.play(.stopRecording)
           let audioURL = await recording.stopRecording()
 
-          // Create transcription options with the selected language
-          let decodeOptions = DecodingOptions(
+          // Create transcription options with the selected language and context prompt
+          var decodeOptions = DecodingOptions(
             language: language,
-            detectLanguage: language == nil, // Only auto-detect if no language specified
+            detectLanguage: language == nil,
             chunkingStrategy: .vad
           )
+          
+          // Add context prompt if available
+          if let prompt = contextPrompt, !prompt.isEmpty {
+            // Use the proper WhisperKit context prompt API
+            if let tokenizer = await transcription.getTokenizer() {
+              decodeOptions.promptTokens = tokenizer.encode(text: " " + prompt.trimmingCharacters(in: .whitespaces))
+                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+              decodeOptions.usePrefillPrompt = true
+              print("[TranscriptionFeature] Applied context prompt with \(decodeOptions.promptTokens?.count ?? 0) tokens")
+            }
+          }
           
           // Use traditional file-based transcription for accurate final result
           print("Transcribing recorded audio file for final result...")
@@ -732,6 +793,7 @@ private extension TranscriptionFeature {
       let promptText = state.hexSettings.aiEnhancementPrompt
       let temperature = state.hexSettings.aiEnhancementTemperature
       let groqAPIKey = state.hexSettings.groqAPIKey
+      let contextPrompt = state.contextPrompt
       
       return enhanceWithAI(
         result: result,
@@ -740,7 +802,8 @@ private extension TranscriptionFeature {
         selectedRemoteModel: selectedRemoteModel,
         promptText: promptText,
         temperature: temperature,
-        groqAPIKey: groqAPIKey
+        groqAPIKey: groqAPIKey,
+        contextPrompt: contextPrompt
       )
     } else {
       state.isTranscribing = false
@@ -773,7 +836,8 @@ private extension TranscriptionFeature {
     selectedRemoteModel: String,
     promptText: String,
     temperature: Double,
-    groqAPIKey: String
+    groqAPIKey: String,
+    contextPrompt: String?
   ) -> Effect<Action> {
     // If empty text, nothing else to do
     guard !result.isEmpty else {
@@ -782,7 +846,8 @@ private extension TranscriptionFeature {
     
     let options = EnhancementOptions(
       prompt: promptText,
-      temperature: temperature
+      temperature: temperature,
+      context: contextPrompt
     )
     
     // Determine the actual model to use based on provider
@@ -988,7 +1053,7 @@ private extension TranscriptionFeature {
 private extension TranscriptionFeature {
   func preventSystemSleep(_ state: inout State) {
     // Prevent system sleep during recording
-    let reasonForActivity = "Hex Voice Recording" as CFString
+    let reasonForActivity = "Tok Voice Recording" as CFString
     var assertionID: IOPMAssertionID = 0
     let success = IOPMAssertionCreateWithName(
       kIOPMAssertionTypeNoDisplaySleep as CFString,

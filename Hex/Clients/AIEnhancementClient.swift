@@ -30,6 +30,17 @@ struct AIEnhancementClient {
     
     /// Tests connection to a remote AI provider
     var testRemoteConnection: @Sendable (AIProviderType, String) async -> Bool = { _, _ in false }
+    
+    /// Analyzes a screenshot (PNG/JPEG data) with a VLM model and returns a short textual summary.
+    /// - Parameters:
+    ///   - imageData: The raw PNG/JPEG data to analyse.
+    ///   - model: The name of the VLM model to use (e.g. "llava:latest").
+    ///   - prompt: A natural-language instruction describing what the model should return.
+    ///   - provider: The provider to route the request to (local Ollama or a remote service).
+    ///   - apiKey: Optional API-key for remote providers.
+    ///   - progressCallback: Reports fractional completion (0–1).
+    /// - Returns: The model's textual response, trimmed of whitespace.
+    var analyzeImage: @Sendable (Data, String, String, AIProviderType, String?, @escaping (Progress) -> Void) async throws -> String = { _, _, _, _, _, _ in "" }
 }
 
 /// Enhancement options for AI processing
@@ -43,6 +54,9 @@ struct EnhancementOptions {
     
     /// Maximum number of tokens to generate in the response
     var maxTokens: Int
+    
+    /// Optional context information (e.g., screenshot summary) to help the model
+    var context: String?
     
     /// Default prompt for enhancing transcribed text with clear instructions
     static let defaultPrompt = """
@@ -64,14 +78,16 @@ struct EnhancementOptions {
     static let `default` = EnhancementOptions(
         prompt: defaultPrompt,
         temperature: 0.3,
-        maxTokens: 1000
+        maxTokens: 1000,
+        context: nil
     )
     
     /// Custom initialization with sensible defaults
-    init(prompt: String = defaultPrompt, temperature: Double = 0.3, maxTokens: Int = 1000) {
+    init(prompt: String = defaultPrompt, temperature: Double = 0.3, maxTokens: Int = 1000, context: String? = nil) {
         self.prompt = prompt
         self.temperature = temperature
         self.maxTokens = maxTokens
+        self.context = context
     }
 }
 
@@ -102,7 +118,8 @@ extension AIEnhancementClient: DependencyKey {
             isOllamaAvailable: { await live.isOllamaAvailable() },
             getAvailableModels: { try await live.getAvailableModels() },
             getRemoteModels: { try await live.getRemoteModels(provider: $0, apiKey: $1) },
-            testRemoteConnection: { await live.testRemoteConnection(provider: $0, apiKey: $1) }
+            testRemoteConnection: { await live.testRemoteConnection(provider: $0, apiKey: $1) },
+            analyzeImage: { try await live.analyzeImage(imageData: $0, model: $1, prompt: $2, provider: $3, apiKey: $4, progressCallback: $5) }
         )
     }
 }
@@ -267,13 +284,23 @@ class AIEnhancementClientLive {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 60.0 // Allow longer timeout for generation
         
-        // Create a well-formatted prompt with clear instructions
-        let fullPrompt = """
+        var fullPrompt = """
         \(options.prompt)
-        
+        """
+
+        if let ctx = options.context, !ctx.isEmpty {
+            fullPrompt += """
+
+        CONTEXT:
+        \(ctx)
+        """
+        }
+
+        fullPrompt += """
+
         TEXT TO IMPROVE:
         \(text)
-        
+
         IMPROVED TEXT:
         """
         
@@ -526,7 +553,7 @@ class AIEnhancementClientLive {
         let messages = [
             [
                 "role": "system",
-                "content": options.prompt
+                "content": options.prompt + (options.context != nil ? "\n\nCONTEXT: \(options.context!)" : "")
             ],
             [
                 "role": "user",
@@ -622,6 +649,183 @@ class AIEnhancementClientLive {
             print("[AIEnhancementClientLive] Unexpected error with Groq: \(error)")
             throw NSError(domain: "AIEnhancementClient", code: -3,
                           userInfo: [NSLocalizedDescriptionKey: "Error communicating with Groq API: \(error.localizedDescription)"])
+        }
+    }
+    
+    /// Analyzes a screenshot (PNG/JPEG data) with a VLM model and returns a short textual summary.
+    /// - Parameters:
+    ///   - imageData: The raw PNG/JPEG data to analyse.
+    ///   - model: The name of the VLM model to use (e.g. "llava:latest").
+    ///   - prompt: A natural-language instruction describing what the model should return.
+    ///   - provider: The provider to route the request to (local Ollama or a remote service).
+    ///   - apiKey: Optional API-key for remote providers.
+    ///   - progressCallback: Reports fractional completion (0–1).
+    /// - Returns: The model's textual response, trimmed of whitespace.
+    func analyzeImage(imageData: Data, model: String, prompt: String, provider: AIProviderType, apiKey: String?, progressCallback: @escaping (Progress) -> Void) async throws -> String {
+        print("[AIEnhancementClient] analyzeImage called. Provider: \(provider.displayName), Model: \(model), Prompt (first 60): \(prompt.prefix(60))…  Image bytes: \(imageData.count)")
+        guard !imageData.isEmpty else {
+            throw NSError(domain: "AIEnhancementClient", code: -10, userInfo: [NSLocalizedDescriptionKey: "Screenshot data is empty"])
+        }
+
+        // Create a Progress instance so callers can hook into it.
+        let progress = Progress(totalUnitCount: 100)
+        progress.completedUnitCount = 0
+        progressCallback(progress)
+
+        switch provider {
+        case .ollama:
+            // Verify Ollama availability first
+            guard await isOllamaAvailable() else {
+                throw NSError(domain: "AIEnhancementClient", code: -5, userInfo: [NSLocalizedDescriptionKey: "Ollama is not available. Please ensure it's running."])
+            }
+
+            // Detect image format (PNG vs JPEG) by header bytes
+            let isPNG: Bool = imageData.starts(with: [0x89, 0x50, 0x4E, 0x47])
+            let mimeType = isPNG ? "image/png" : "image/jpeg"
+            let base64Image = imageData.base64EncodedString()
+
+            // Build request
+            let url = URL(string: "http://localhost:11434/api/generate")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 60.0
+
+            let requestDict: [String: Any] = [
+                "model": model,
+                "prompt": prompt,
+                "images": [
+                    [
+                        "type": mimeType,
+                        "data": base64Image
+                    ]
+                ],
+                "stream": false,
+                "system": "You are an AI assistant that summarises what the user is currently working on based on a screenshot."
+            ]
+
+            do {
+                progress.completedUnitCount = 10
+                progressCallback(progress)
+
+                let data = try JSONSerialization.data(withJSONObject: requestDict)
+                request.httpBody = data
+
+                let (responseData, urlResponse) = try await URLSession.shared.data(for: request)
+
+                guard let httpResponse = urlResponse as? HTTPURLResponse else {
+                    throw NSError(domain: "AIEnhancementClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response from Ollama"])
+                }
+
+                if httpResponse.statusCode != 200 {
+                    let msg = String(data: responseData, encoding: .utf8) ?? "Unknown error"
+                    throw NSError(domain: "AIEnhancementClient", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Ollama error: \(msg)"])
+                }
+
+                progress.completedUnitCount = 80
+                progressCallback(progress)
+
+                if let respDict = try JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+                   let summary = respDict["response"] as? String {
+                    progress.completedUnitCount = 100
+                    progressCallback(progress)
+                    print("[AIEnhancementClient] Analysis complete. Summary length: \(summary.count) chars")
+                    return summary.trimmingCharacters(in: .whitespacesAndNewlines)
+                } else {
+                    throw NSError(domain: "AIEnhancementClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "Unable to parse Ollama response"])
+                }
+            } catch {
+                print("[AIEnhancementClient] Error during image analysis: \(error)")
+                throw error
+            }
+
+        case .groq:
+            // Implement image analysis through Groq's OpenAI-compatible vision endpoint
+            guard let apiKey = apiKey, !apiKey.isEmpty else {
+                throw NSError(domain: "AIEnhancementClient", code: -6, userInfo: [NSLocalizedDescriptionKey: "Groq API key is required for image analysis"])
+            }
+
+            // Detect image format (PNG vs JPEG) by header bytes
+            let isPNG: Bool = imageData.starts(with: [0x89, 0x50, 0x4E, 0x47])
+            let mimeType = isPNG ? "image/png" : "image/jpeg"
+            let base64Image = imageData.base64EncodedString()
+
+            // Prepare request to Groq's OpenAI-compatible endpoint
+            let url = URL(string: "https://api.groq.com/openai/v1/chat/completions")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 60.0
+
+            // Build messages according to OpenAI vision format
+            let messages: [[String: Any]] = [
+                [
+                    "role": "user",
+                    "content": [
+                        ["type": "text", "text": prompt],
+                        [
+                            "type": "image_url",
+                            "image_url": [
+                                "url": "data:\(mimeType);base64,\(base64Image)"
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+
+            // Build request body
+            let requestDict: [String: Any] = [
+                "model": model,
+                "messages": messages,
+                "max_completion_tokens": 512,
+                "temperature": 0.2,
+                "stream": false
+            ]
+
+            do {
+                progress.completedUnitCount = 10
+                progressCallback(progress)
+
+                let data = try JSONSerialization.data(withJSONObject: requestDict)
+                request.httpBody = data
+
+                print("[AIEnhancementClient] Sending Groq vision request (model: \(model))…")
+
+                let (responseData, urlResponse) = try await URLSession.shared.data(for: request)
+
+                guard let httpResponse = urlResponse as? HTTPURLResponse else {
+                    throw NSError(domain: "AIEnhancementClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response from Groq API"])
+                }
+
+                if httpResponse.statusCode != 200 {
+                    let msg = String(data: responseData, encoding: .utf8) ?? "Unknown error"
+                    throw NSError(domain: "AIEnhancementClient", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Groq error: \(msg)"])
+                }
+
+                progress.completedUnitCount = 80
+                progressCallback(progress)
+
+                struct GroqVisionResponse: Decodable {
+                    struct Choice: Decodable { struct Message: Decodable { let content: String }; let message: Message }
+                    let choices: [Choice]
+                }
+
+                let decoded = try JSONDecoder().decode(GroqVisionResponse.self, from: responseData)
+
+                guard let content = decoded.choices.first?.message.content else {
+                    throw NSError(domain: "AIEnhancementClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "No content in Groq response"])
+                }
+
+                progress.completedUnitCount = 100
+                progressCallback(progress)
+                print("[AIEnhancementClient] Groq vision analysis complete. Summary length: \(content.count) chars")
+                return content.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            } catch {
+                print("[AIEnhancementClient] Error during Groq image analysis: \(error)")
+                throw error
+            }
         }
     }
 }

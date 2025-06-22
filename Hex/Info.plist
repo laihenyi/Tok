@@ -3,14 +3,16 @@
 <plist version="1.0">
 <dict>
 	<key>NSAccessibilityUsageDescription</key>
-	<string>Hex needs accessibility access to monitor keyboard events for hotkey detection.</string>
+	<string>Tok needs accessibility access to monitor keyboard events for hotkey detection.</string>
+	<key>NSScreenCaptureDescription</key>
+	<string>Tok needs screen recording permission to capture screenshots for AI analysis and context understanding.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
 	<key>SUFeedURL</key>
-	<string>https://hex-updates.s3.amazonaws.com/appcast.xml</string>
+	<string>https://tok-updates.s3.amazonaws.com/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>mIek27lttJe8cIBqVZFhh6reRKjpTx1h9ZY9OKWPtuM=</string>
 </dict>

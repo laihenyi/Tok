@@ -474,18 +474,22 @@ struct StreamingTranscriptionTooltip: View {
   var body: some View {
     VStack(spacing: 4) {
       Text("Live Transcription")
-        .font(.system(size: 9, weight: .medium))
-        .foregroundColor(.white.opacity(0.8))
+        .font(.system(size: 12, weight: .medium))
+        .foregroundColor(.white.opacity(0.85))
       
+      // Dynamically adjust font size so longer passages remain readable within the 5-line limit
       Text(displayText)
-        .font(.system(size: 11, weight: .medium))
+        .font(.system(size: dynamicFontSize, weight: .medium))
         .foregroundColor(.white)
         .multilineTextAlignment(.center)
-        .lineLimit(3)
+        .lineLimit(5)
+        // If text still overflows, shrink each line further as needed
+        .minimumScaleFactor(0.5)
     }
-    .padding(.horizontal, 8)
+    .padding(.horizontal, 12)
     .padding(.vertical, 6)
-    .frame(maxWidth: 200)
+    // Increase the maximum width so longer text can wrap within a larger container
+    .frame(maxWidth: 420)
     .background(
       RoundedRectangle(cornerRadius: 6)
         .fill(Color.black.opacity(0.9))
@@ -518,6 +522,20 @@ struct StreamingTranscriptionTooltip: View {
     
     print("[StreamingTranscriptionTooltip] Final displayText: '\(result)'")
     return result
+  }
+
+  // Heuristic font-size scaling based on the length of the text that needs to be displayed.
+  private var dynamicFontSize: CGFloat {
+    let base: CGFloat = 15
+    let length = displayText.count
+    switch length {
+    case 0..<100:   return base          // short sentences
+    case 100..<160: return base - 1      // moderately long
+    case 160..<220: return base - 2      // getting longer
+    case 220..<280: return base - 3
+    case 280..<350: return base - 4
+    default:        return max(base - 5, 10) // very long
+    }
   }
 }
 

@@ -14,6 +14,8 @@ struct HotKeyView: View {
   var key: Key?
   var isActive: Bool
 
+  @Environment(\.colorScheme) private var colorScheme
+
   var body: some View {
     HStack(spacing: 6) {
       if modifiers.isHyperkey {
@@ -61,10 +63,12 @@ struct HotKeyView: View {
 struct KeyView: View {
   var text: String
 
+  @Environment(\.colorScheme) private var colorScheme
+
   var body: some View {
     Text(text)
       .font(.title.weight(.bold))
-      .foregroundColor(.primary)
+      .foregroundColor(colorScheme == .light ? .white : .primary)
       .frame(width: 48, height: 48)
       .background(
         RoundedRectangle(cornerRadius: 8)

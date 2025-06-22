@@ -284,13 +284,13 @@
     "Enhancement Prompt" : {
 
     },
-    "Ensure Hex can access your microphone and system accessibility features." : {
+    "Ensure Tok can access your microphone and system accessibility features." : {
       "comment" : "Footer for permissions section in settings",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Sicherstellen, dass Hex dein Mikrofon und Systemweite Bedienungshilfen benutzen kann."
+            "value" : "Sicherstellen, dass Tok dein Mikrofon und Systemweite Bedienungshilfen benutzen kann."
           }
         }
       }
@@ -334,13 +334,13 @@
         }
       }
     },
-    "Hex is open source" : {
+    "Tok is open source" : {
       "comment" : "In about section in settings.",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hex ist Open Source"
+            "value" : "Tok ist Open Source"
           }
         }
       }

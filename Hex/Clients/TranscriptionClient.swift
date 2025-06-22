@@ -56,6 +56,9 @@ struct TranscriptionClient {
   
   /// Stops the current streaming transcription
   var stopStreamTranscription: @Sendable () async -> Void
+  
+  /// Gets the tokenizer for the currently loaded model, if available
+  var getTokenizer: @Sendable () async -> WhisperTokenizer?
 }
 
 extension TranscriptionClient: DependencyKey {
@@ -69,7 +72,8 @@ extension TranscriptionClient: DependencyKey {
       getRecommendedModels: { await live.getRecommendedModels() },
       getAvailableModels: { try await live.getAvailableModels() },
       startStreamTranscription: { try await live.startStreamTranscription(model: $0, options: $1, settings: $2, updateCallback: $3) },
-      stopStreamTranscription: { await live.stopStreamTranscription() }
+      stopStreamTranscription: { await live.stopStreamTranscription() },
+      getTokenizer: { await live.getTokenizer() }
     )
   }
 }
@@ -296,8 +300,17 @@ actor TranscriptionClientLive {
 
   // Unloads any currently loaded model (clears `whisperKit` and `currentModelName`).
   private func unloadCurrentModel() {
+    print("[TranscriptionClientLive] Unloading current model: \(currentModelName ?? "none")")
+    
+    // Make sure to stop any streaming first to prevent crashes
+    Task {
+      await stopStreamTranscription()
+    }
+    
     whisperKit = nil
     currentModelName = nil
+    
+    print("[TranscriptionClientLive] Model unloaded successfully")
   }
 
   /// Downloads the model to a temporary folder (if it isn't already on disk),
@@ -403,7 +416,7 @@ actor TranscriptionClientLive {
   }
   
   /// Cleans up raw Whisper tokens from streaming transcription text
-  private func cleanWhisperTokens(from text: String) -> String {
+  nonisolated private func cleanWhisperTokens(from text: String) -> String {
     var cleaned = text
     
     // Remove Whisper special tokens
@@ -484,7 +497,7 @@ actor TranscriptionClientLive {
     print("  - textDecoder: \(whisperKit.textDecoder != nil)")
     print("  - audioProcessor: \(whisperKit.audioProcessor != nil)")
 
-    // Create AudioStreamTranscriber
+    // Create AudioStreamTranscriber with weak self reference to prevent crashes
     let streamTranscriber = AudioStreamTranscriber(
       audioEncoder: whisperKit.audioEncoder,
       featureExtractor: whisperKit.featureExtractor,
@@ -493,7 +506,13 @@ actor TranscriptionClientLive {
       tokenizer: tokenizer,
       audioProcessor: whisperKit.audioProcessor,
       decodingOptions: options
-    ) { oldState, newState in
+    ) { [weak self] oldState, newState in
+      // Safely access self to prevent EXC_BAD_ACCESS
+      guard let self = self else {
+        print("[TranscriptionClientLive] Self deallocated during callback, skipping update")
+        return
+      }
+      
       // Clean up raw Whisper tokens from the text
       let cleanedText = self.cleanWhisperTokens(from: newState.currentText)
       
@@ -533,14 +552,25 @@ actor TranscriptionClientLive {
       )
       
       print("[TranscriptionClientLive] Sending update with cleaned text: '\(update.currentText)'")
-      updateCallback(update)
+      
+      // Safely call the update callback with error handling
+      do {
+        updateCallback(update)
+      } catch {
+        print("[TranscriptionClientLive] Error in update callback: \(error)")
+      }
     }
     
     self.audioStreamTranscriber = streamTranscriber
     print("[TranscriptionClientLive] AudioStreamTranscriber created successfully")
     
-    // Start the streaming transcription in a task
-    streamTask = Task {
+    // Start the streaming transcription in a task with proper error handling
+    streamTask = Task { [weak self] in
+      guard let self = self else {
+        print("[TranscriptionClientLive] Self deallocated before stream task started")
+        return
+      }
+      
       do {
         print("[TranscriptionClientLive] Starting AudioStreamTranscriber...")
         try await streamTranscriber.startStreamTranscription()
@@ -556,7 +586,13 @@ actor TranscriptionClientLive {
           currentText: "",
           isComplete: true
         )
-        updateCallback(finalUpdate)
+        
+        // Safely call the update callback with error handling
+        do {
+          updateCallback(finalUpdate)
+        } catch {
+          print("[TranscriptionClientLive] Error in final update callback: \(error)")
+        }
         throw error
       }
     }
@@ -564,16 +600,36 @@ actor TranscriptionClientLive {
   
   /// Stops the current streaming transcription
   func stopStreamTranscription() async {
-    // Cancel the stream task
-    streamTask?.cancel()
-    streamTask = nil
+    print("[TranscriptionClientLive] Stopping stream transcription...")
+    
+    // Cancel the stream task first
+    if let task = streamTask {
+      task.cancel()
+      streamTask = nil
+      
+      // Wait for the task to complete cancellation to ensure clean shutdown
+      do {
+        _ = try await task.value
+      } catch is CancellationError {
+        // Expected - task was cancelled
+        print("[TranscriptionClientLive] Stream task cancelled successfully")
+      } catch {
+        print("[TranscriptionClientLive] Stream task ended with error: \(error)")
+      }
+    }
     
     // Stop the audio stream transcriber
     if let streamTranscriber = audioStreamTranscriber {
       await streamTranscriber.stopStreamTranscription()
       audioStreamTranscriber = nil
+      print("[TranscriptionClientLive] AudioStreamTranscriber stopped and cleared")
     }
     
-    print("[TranscriptionClientLive] Stopped stream transcription")
+    print("[TranscriptionClientLive] Stream transcription stopped completely")
+  }
+  
+  /// Gets the tokenizer for the currently loaded model, if available
+  func getTokenizer() async -> WhisperTokenizer? {
+    return whisperKit?.tokenizer
   }
 }

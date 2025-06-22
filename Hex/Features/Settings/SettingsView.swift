@@ -57,7 +57,7 @@ struct SettingsView: View {
 			} header: {
 				Text("Permissions")
 			} footer: {
-				Text("Ensure Hex can access your microphone and system accessibility features.")
+				Text("Ensure Tok can access your microphone and system accessibility features.")
 					.font(.footnote)
 					.foregroundColor(.secondary)
 			}

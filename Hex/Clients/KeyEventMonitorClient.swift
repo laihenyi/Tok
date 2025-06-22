@@ -6,7 +6,7 @@ import Foundation
 import os
 import Sauce
 
-private let logger = Logger(subsystem: "com.kitlangton.Hex", category: "KeyEventMonitor")
+private let logger = Logger(subsystem: "xyz.2qs.Tok", category: "KeyEventMonitor")
 
 /// Thread-safe wrapper for interacting with the Sauce library
 /// This ensures all Sauce operations happen on the main thread

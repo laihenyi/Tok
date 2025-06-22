@@ -32,17 +32,17 @@
 		473544502D445936001FBCB5 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = Platforms/MacOSX.platform/Developer/Library/Frameworks/XCTest.framework; sourceTree = DEVELOPER_DIR; };
 		473544542D445959001FBCB5 /* Testing.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Testing.framework; path = Platforms/MacOSX.platform/Developer/Library/Frameworks/Testing.framework; sourceTree = DEVELOPER_DIR; };
 		478637A52D48725900319BFA /* HexTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HexTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		47E05DEE2D444EC600D26DA6 /* Hex.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Hex.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		47E05DEE2D444EC600D26DA6 /* Tok.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tok.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B53355FF2D7B8D4900E5F542 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		476BAD402D47E8500088C61F /* Exceptions for "Hex" folder in "Hex" target */ = {
+		476BAD402D47E8500088C61F /* Exceptions for "Hex" folder in "Tok" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = 47E05DED2D444EC600D26DA6 /* Hex */;
+			target = 47E05DED2D444EC600D26DA6 /* Tok */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -55,7 +55,7 @@
 		47E05DF02D444EC600D26DA6 /* Hex */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				476BAD402D47E8500088C61F /* Exceptions for "Hex" folder in "Hex" target */,
+				476BAD402D47E8500088C61F /* Exceptions for "Hex" folder in "Tok" target */,
 			);
 			path = Hex;
 			sourceTree = "<group>";
@@ -111,7 +111,7 @@
 		47E05DEF2D444EC600D26DA6 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				47E05DEE2D444EC600D26DA6 /* Hex.app */,
+				47E05DEE2D444EC600D26DA6 /* Tok.app */,
 				478637A52D48725900319BFA /* HexTests.xctest */,
 			);
 			name = Products;
@@ -143,9 +143,9 @@
 			productReference = 478637A52D48725900319BFA /* HexTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		47E05DED2D444EC600D26DA6 /* Hex */ = {
+		47E05DED2D444EC600D26DA6 /* Tok */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 47E05DFD2D444EC700D26DA6 /* Build configuration list for PBXNativeTarget "Hex" */;
+			buildConfigurationList = 47E05DFD2D444EC700D26DA6 /* Build configuration list for PBXNativeTarget "Tok" */;
 			buildPhases = (
 				47E05DEA2D444EC600D26DA6 /* Sources */,
 				47E05DEB2D444EC600D26DA6 /* Frameworks */,
@@ -158,7 +158,7 @@
 			fileSystemSynchronizedGroups = (
 				47E05DF02D444EC600D26DA6 /* Hex */,
 			);
-			name = Hex;
+			name = Tok;
 			packageProductDependencies = (
 				47E05E012D444EE900D26DA6 /* ComposableArchitecture */,
 				47E05E042D444EF800D26DA6 /* Sauce */,
@@ -169,8 +169,8 @@
 				476BAD3D2D47E7880088C61F /* Sparkle */,
 				B5045C962D78DED500D0A119 /* MarkdownUI */,
 			);
-			productName = Hex;
-			productReference = 47E05DEE2D444EC600D26DA6 /* Hex.app */;
+			productName = Tok;
+			productReference = 47E05DEE2D444EC600D26DA6 /* Tok.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -215,7 +215,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				47E05DED2D444EC600D26DA6 /* Hex */,
+				47E05DED2D444EC600D26DA6 /* Tok */,
 				478637A42D48725900319BFA /* HexTests */,
 			);
 		};
@@ -259,7 +259,7 @@
 /* Begin PBXTargetDependency section */
 		478637AA2D48725900319BFA /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 47E05DED2D444EC600D26DA6 /* Hex */;
+			target = 47E05DED2D444EC600D26DA6 /* Tok */;
 			targetProxy = 478637A92D48725900319BFA /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -426,6 +426,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Hex/Hex.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
@@ -438,6 +439,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Hex/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Tok;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Hex needs to control keyboard events to simulate paste operations.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Hex needs microphone access in order to transcribe your voice.";
@@ -460,6 +462,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = Hex/Hex.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
@@ -472,6 +475,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Hex/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Tok;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Hex needs to control keyboard events to simulate paste operations.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Hex needs microphone access in order to transcribe your voice.";
@@ -509,7 +513,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		47E05DFD2D444EC700D26DA6 /* Build configuration list for PBXNativeTarget "Hex" */ = {
+		47E05DFD2D444EC700D26DA6 /* Build configuration list for PBXNativeTarget "Tok" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				47E05DFE2D444EC700D26DA6 /* Debug */,
