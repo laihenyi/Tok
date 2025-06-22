@@ -121,7 +121,7 @@ class AIEnhancementClientLive {
     /// Enhances text using either local or remote AI models
     func enhance(text: String, model: String, options: EnhancementOptions, provider: AIProviderType, apiKey: String?, progressCallback: @escaping (Progress) -> Void) async throws -> String {
         // Skip if the text is empty or too short
-        guard !text.isEmpty, text.count > 5 else {
+        guard !text.isEmpty, text.count > 5, text != "[BLANK_AUDIO]" else {
             print("[AIEnhancementClientLive] Text too short for enhancement, returning original")
             return text
         }
