@@ -610,6 +610,7 @@
 
     },
     "Show Changelog" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {

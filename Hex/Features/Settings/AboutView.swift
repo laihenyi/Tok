@@ -20,19 +20,6 @@ struct AboutView: View {
                     .buttonStyle(.bordered)
                 }
                 HStack {
-                    Label("Changelog", systemImage: "doc.text")
-                    Spacer()
-                    Button("Show Changelog") {
-                        showingChangelog.toggle()
-                    }
-                    .buttonStyle(.bordered)
-                    .sheet(isPresented: $showingChangelog, onDismiss: {
-                        showingChangelog = false
-                    }) {
-                        ChangelogView()
-                    }
-                }
-                HStack {
                     Label("Tok is open source", systemImage: "apple.terminal.on.rectangle")
                     Spacer()
                     Link("Visit our GitHub", destination: URL(string: "https://github.com/untsop/Hex")!)
