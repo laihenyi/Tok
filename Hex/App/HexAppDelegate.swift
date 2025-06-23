@@ -7,6 +7,7 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 	var statusItem: NSStatusItem!
 
 	@Dependency(\.soundEffects) var soundEffect
+	@Dependency(\.recording) var recording
 	@Shared(.hexSettings) var hexSettings: HexSettings
 
 	func applicationDidFinishLaunching(_: Notification) {
@@ -15,8 +16,13 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 			return
 		}
 
+		// Reset model warm status to cold since models are unloaded when app closes
+		$hexSettings.withLock { $0.transcriptionModelWarmStatus = .cold }
+
 		Task {
 			await soundEffect.preloadSounds()
+			// Warm up audio input device to reduce first recording delay
+			await recording.warmUpAudioInput()
 		}
 		print("HexAppDelegate did finish launching")
 

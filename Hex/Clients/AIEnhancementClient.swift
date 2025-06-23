@@ -383,8 +383,8 @@ class AIEnhancementClientLive {
                 
                 print("[AIEnhancementClientLive] Successfully parsed Ollama response")
                 
-                // Clean up the response - trim whitespace and ensure it's not empty
-                let cleanedText = enhancedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Clean up the response - trim whitespace, remove thinking tags, and ensure it's not empty
+                let cleanedText = cleanThinkingTags(from: enhancedText).trimmingCharacters(in: .whitespacesAndNewlines)
                 return cleanedText.isEmpty ? text : cleanedText
             } else {
                 print("[AIEnhancementClientLive] Error: Failed to parse Ollama response")
@@ -633,9 +633,9 @@ class AIEnhancementClientLive {
             // Progress update - processing complete
             progressCallback(1.0)
             
-            let enhancedText = firstChoice.message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            let enhancedText = cleanThinkingTags(from: firstChoice.message.content).trimmingCharacters(in: .whitespacesAndNewlines)
             print("[AIEnhancementClientLive] Successfully enhanced text with Groq")
-            
+
             return enhancedText.isEmpty ? text : enhancedText
             
         } catch let decodingError as DecodingError {
@@ -820,12 +820,45 @@ class AIEnhancementClientLive {
                 progress.completedUnitCount = 100
                 progressCallback(progress)
                 print("[AIEnhancementClient] Groq vision analysis complete. Summary length: \(content.count) chars")
-                return content.trimmingCharacters(in: .whitespacesAndNewlines)
+                return cleanThinkingTags(from: content).trimmingCharacters(in: .whitespacesAndNewlines)
 
             } catch {
                 print("[AIEnhancementClient] Error during Groq image analysis: \(error)")
                 throw error
             }
         }
+    }
+
+    // MARK: - Private Helper Methods
+
+    /// Removes thinking tags and their content from AI model outputs
+    private func cleanThinkingTags(from text: String) -> String {
+        var cleaned = text
+
+        // Remove <think>...</think> tags and their content
+        // Use [\s\S] instead of . to match across line breaks
+        let thinkingPatterns = [
+            "<think>[\\s\\S]*?</think>",
+            "<thinking>[\\s\\S]*?</thinking>",
+            "\\[thinking\\][\\s\\S]*?\\[/thinking\\]",
+            "\\*thinking\\*[\\s\\S]*?\\*/thinking\\*"
+        ]
+
+        for pattern in thinkingPatterns {
+            cleaned = cleaned.replacingOccurrences(
+                of: pattern,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+
+        // Clean up any extra whitespace that might be left
+        cleaned = cleaned.replacingOccurrences(
+            of: "\\n\\s*\\n\\s*\\n",
+            with: "\n\n",
+            options: .regularExpression
+        )
+
+        return cleaned
     }
 }

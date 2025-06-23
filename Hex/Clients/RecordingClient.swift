@@ -26,6 +26,7 @@ struct RecordingClient {
   var requestMicrophoneAccess: @Sendable () async -> Bool = { false }
   var observeAudioLevel: @Sendable () async -> AsyncStream<Meter> = { AsyncStream { _ in } }
   var getAvailableInputDevices: @Sendable () async -> [AudioInputDevice] = { [] }
+  var warmUpAudioInput: @Sendable () async -> Void = {}
 }
 
 extension RecordingClient: DependencyKey {
@@ -36,7 +37,8 @@ extension RecordingClient: DependencyKey {
       stopRecording: { await live.stopRecording() },
       requestMicrophoneAccess: { await live.requestMicrophoneAccess() },
       observeAudioLevel: { await live.observeAudioLevel() },
-      getAvailableInputDevices: { await live.getAvailableInputDevices() }
+      getAvailableInputDevices: { await live.getAvailableInputDevices() },
+      warmUpAudioInput: { await live.warmUpAudioInput() }
     )
   }
 }
@@ -477,9 +479,55 @@ actor RecordingClientLive {
     await AVCaptureDevice.requestAccess(for: .audio)
   }
 
+  func warmUpAudioInput() async {
+    let warmupStart = Date()
+    print("🎙️ [TIMING] Audio input warmup started at: \(warmupStart.timeIntervalSince1970)")
+
+    do {
+      // Create a temporary recorder to warm up the audio input device
+      // Note: On macOS, AVAudioSession is not available, so we skip session setup
+      let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("warmup.wav")
+      let settings: [String: Any] = [
+        AVFormatIDKey: Int(kAudioFormatLinearPCM),
+        AVSampleRateKey: 16000.0,
+        AVNumberOfChannelsKey: 1,
+        AVLinearPCMBitDepthKey: 32,
+        AVLinearPCMIsFloatKey: true,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: false,
+      ]
+
+      let tempRecorder = try AVAudioRecorder(url: tempURL, settings: settings)
+      tempRecorder.prepareToRecord()
+
+      // Start recording briefly to warm up the audio input device
+      tempRecorder.record()
+
+      // Record for a very short time (100ms) to warm up the device
+      try await Task.sleep(for: .milliseconds(100))
+
+      tempRecorder.stop()
+
+      // Clean up the temporary file
+      try? FileManager.default.removeItem(at: tempURL)
+
+      let warmupEnd = Date()
+      let warmupDuration = warmupEnd.timeIntervalSince(warmupStart)
+      print("🎙️ [TIMING] Audio input warmup completed in: \(String(format: "%.3f", warmupDuration))s")
+    } catch {
+      print("🎙️ [WARNING] Audio input warmup failed: \(error)")
+    }
+  }
+
   func startRecording() async {
+    let startTime = Date()
+    print("🎙️ [TIMING] Recording start requested at: \(startTime.timeIntervalSince1970)")
+
     // If audio is playing on the default output, pause it.
     if hexSettings.pauseMediaOnRecord {
+      let mediaPauseStart = Date()
+      print("🎙️ [TIMING] Starting media pause check at: \(mediaPauseStart.timeIntervalSince1970)")
+
       // First, pause all media applications using their AppleScript interface.
       pausedPlayers = await pauseAllMediaApplications()
       // If no specific players were paused, pause generic media using the media key.
@@ -495,9 +543,16 @@ actor RecordingClientLive {
       } else {
         print("Paused media players: \(pausedPlayers.joined(separator: ", "))")
       }
+
+      let mediaPauseEnd = Date()
+      let mediaPauseDuration = mediaPauseEnd.timeIntervalSince(mediaPauseStart)
+      print("🎙️ [TIMING] Media pause completed in: \(String(format: "%.3f", mediaPauseDuration))s")
     }
-    
+
     // If user has selected a specific microphone, verify it exists and set it as the default input device
+    let deviceSetupStart = Date()
+    print("🎙️ [TIMING] Starting device setup at: \(deviceSetupStart.timeIntervalSince1970)")
+
     if let selectedDeviceIDString = hexSettings.selectedMicrophoneID,
        let selectedDeviceID = AudioDeviceID(selectedDeviceIDString) {
       // Check if the selected device is still available
@@ -512,7 +567,16 @@ actor RecordingClientLive {
     } else {
       print("Using default system microphone")
     }
-      
+
+    let deviceSetupEnd = Date()
+    let deviceSetupDuration = deviceSetupEnd.timeIntervalSince(deviceSetupStart)
+    print("🎙️ [TIMING] Device setup completed in: \(String(format: "%.3f", deviceSetupDuration))s")
+
+    let recorderSetupStart = Date()
+    print("🎙️ [TIMING] Starting AVAudioRecorder setup at: \(recorderSetupStart.timeIntervalSince1970)")
+
+    // Note: AVAudioSession is not available on macOS, so we skip audio session setup
+
     let settings: [String: Any] = [
       AVFormatIDKey: Int(kAudioFormatLinearPCM),
       AVSampleRateKey: 16000.0,
@@ -524,11 +588,65 @@ actor RecordingClientLive {
     ]
 
     do {
+      let recorderInitStart = Date()
       recorder = try AVAudioRecorder(url: recordingURL, settings: settings)
+      let recorderInitEnd = Date()
+      let recorderInitDuration = recorderInitEnd.timeIntervalSince(recorderInitStart)
+      print("🎙️ [TIMING] AVAudioRecorder init completed in: \(String(format: "%.3f", recorderInitDuration))s")
+
+      let meteringSetupStart = Date()
       recorder?.isMeteringEnabled = true
+      let meteringSetupEnd = Date()
+      let meteringSetupDuration = meteringSetupEnd.timeIntervalSince(meteringSetupStart)
+      print("🎙️ [TIMING] Metering enabled in: \(String(format: "%.3f", meteringSetupDuration))s")
+
+      // Prepare the recorder to warm up the audio input device
+      let prepareStart = Date()
+      recorder?.prepareToRecord()
+      let prepareEnd = Date()
+      let prepareDuration = prepareEnd.timeIntervalSince(prepareStart)
+      print("🎙️ [TIMING] prepareToRecord() completed in: \(String(format: "%.3f", prepareDuration))s")
+
+      let recordStart = Date()
+      print("🎙️ [TIMING] Calling recorder.record() at: \(recordStart.timeIntervalSince1970)")
       recorder?.record()
+      let recordEnd = Date()
+      let recordDuration = recordEnd.timeIntervalSince(recordStart)
+      print("🎙️ [TIMING] recorder.record() completed in: \(String(format: "%.3f", recordDuration))s")
+
+      let meterTaskStart = Date()
       startMeterTask()
+      let meterTaskEnd = Date()
+      let meterTaskDuration = meterTaskEnd.timeIntervalSince(meterTaskStart)
+      print("🎙️ [TIMING] Meter task started in: \(String(format: "%.3f", meterTaskDuration))s")
+
+      let totalDuration = Date().timeIntervalSince(startTime)
+      print("🎙️ [TIMING] Total recording start duration: \(String(format: "%.3f", totalDuration))s")
       print("Recording started.")
+
+      // Pause any playing media *after* the microphone is already recording to avoid delaying capture startup.
+      if hexSettings.pauseMediaOnRecord {
+        let mediaPauseStart = Date()
+        print("🎙️ [TIMING] Starting media pause check (post-record start) at: \(mediaPauseStart.timeIntervalSince1970)")
+
+        // First, pause all media applications using their AppleScript interface.
+        pausedPlayers = await pauseAllMediaApplications()
+        // If no specific players were paused, pause generic media using the media key.
+        if pausedPlayers.isEmpty {
+          if await isAudioPlayingOnDefaultOutput() {
+            print("Audio is playing on the default output; pausing it for recording.")
+            await MainActor.run { sendMediaKey() }
+            didPauseMedia = true
+            print("Media was playing; pausing it for recording.")
+          }
+        } else {
+          print("Paused media players: \(pausedPlayers.joined(separator: ", "))")
+        }
+
+        let mediaPauseEnd = Date()
+        let mediaPauseDuration = mediaPauseEnd.timeIntervalSince(mediaPauseStart)
+        print("🎙️ [TIMING] Media pause completed in: \(String(format: "%.3f", mediaPauseDuration))s")
+      }
     } catch {
       print("Could not start recording: \(error)")
     }
@@ -559,9 +677,13 @@ actor RecordingClientLive {
 
   func startMeterTask() {
     meterTask = Task {
+      let meterTaskStart = Date()
+      print("🎙️ [TIMING] Meter task started at: \(meterTaskStart.timeIntervalSince1970)")
+
       var lastMeter = Meter(averagePower: 0, peakPower: 0)
       var updateCount = 0
       var lastUpdateTime = Date()
+      var firstAudioDetected = false
 
       // Use lower sampling rates when there's less activity
       var inactiveCount = 0
@@ -574,6 +696,14 @@ actor RecordingClientLive {
         let peakPower = r.peakPower(forChannel: 0)
         let peakNormalized = pow(10, peakPower / 20.0)
         let currentMeter = Meter(averagePower: Double(averageNormalized), peakPower: Double(peakNormalized))
+
+        // Track when we first detect meaningful audio input
+        if !firstAudioDetected && (averageNormalized > 0.01 || peakNormalized > 0.01) {
+          let firstAudioTime = Date()
+          let timeToFirstAudio = firstAudioTime.timeIntervalSince(meterTaskStart)
+          print("🎙️ [TIMING] First audio detected after: \(String(format: "%.3f", timeToFirstAudio))s (avg: \(String(format: "%.4f", averageNormalized)), peak: \(String(format: "%.4f", peakNormalized)))")
+          firstAudioDetected = true
+        }
 
         // Determine threshold for significant change (adaptive based on current levels)
         let averageThreshold = max(0.05, lastMeter.averagePower * 0.15) // More sensitive at low levels

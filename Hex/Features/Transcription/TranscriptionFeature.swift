@@ -196,7 +196,6 @@ struct TranscriptionFeature {
     // Real-time feedback actions
     case updateRecordingProgress
     case updateEnhancementProgress(EnhancementProgress.Stage)
-    case playAudioFeedback
     case startRecordingPulse
     case stopRecordingPulse
     
@@ -205,6 +204,11 @@ struct TranscriptionFeature {
     
     // Context prompt actions
     case setContextPrompt(String)
+
+    // Model prewarming actions
+    case prewarmSelectedModel
+    case prewarmProgress(Double)
+    case prewarmCompleted(Result<String, Error>)
   }
 
   enum CancelID {
@@ -216,6 +220,7 @@ struct TranscriptionFeature {
     case recordingPulse
     case enhancementFeedback
     case streamTranscription
+    case prewarm
   }
 
   @Dependency(\.transcription) var transcription
@@ -232,12 +237,14 @@ struct TranscriptionFeature {
       // MARK: - Lifecycle / Setup
 
       case .task:
-        // Starts two concurrent effects:
+        // Starts three concurrent effects:
         // 1) Observing audio meter
         // 2) Monitoring hot key events
+        // 3) Prewarming the selected model
         return .merge(
           startMeteringEffect(),
-          startHotKeyMonitoringEffect()
+          startHotKeyMonitoringEffect(),
+          .send(.prewarmSelectedModel)
         )
 
       // MARK: - Metering
@@ -334,27 +341,11 @@ struct TranscriptionFeature {
       
       case .updateRecordingProgress:
         state.recordingProgress.update(meter: state.meter, startTime: state.recordingStartTime)
-        
-        // Check if we should play audio feedback (every 2 seconds during recording)
-        let now = Date()
-        if now.timeIntervalSince(state.lastAudioFeedbackTime) >= 2.0 {
-          state.lastAudioFeedbackTime = now
-          return .send(.playAudioFeedback)
-        }
         return .none
         
       case let .updateEnhancementProgress(stage):
         state.enhancementProgress.updateStage(stage)
         return .none
-        
-      case .playAudioFeedback:
-        // Play gentle audio feedback during recording based on quality
-        return .run { [quality = state.recordingProgress.recordingQuality] _ in
-          // Play a gentle beep if recording quality is good
-          if quality == .good || quality == .excellent {
-            await soundEffect.play(.recordingFeedback)
-          }
-        }
         
       case .startRecordingPulse:
         state.shouldShowRecordingPulse = true
@@ -407,10 +398,68 @@ struct TranscriptionFeature {
         return .none
 
       // MARK: - Context Prompt Actions
-      
+
       case let .setContextPrompt(prompt):
         print("[TranscriptionFeature] Setting context prompt: \"\(prompt)\"")
         state.contextPrompt = prompt
+        return .none
+
+      // MARK: - Model Prewarming Actions
+
+      case .prewarmSelectedModel:
+        let selectedModel = state.hexSettings.selectedModel
+
+        // Only prewarm if the model is not already warm
+        guard state.hexSettings.transcriptionModelWarmStatus != .warm else {
+          print("[TranscriptionFeature] Model \(selectedModel) is already warm, skipping prewarming")
+          return .none
+        }
+
+        // Set warming status
+        state.$hexSettings.withLock { $0.transcriptionModelWarmStatus = .warming }
+
+        return .run { send in
+          do {
+            // Check if the model is downloaded first
+            let isDownloaded = await transcription.isModelDownloaded(selectedModel)
+            guard isDownloaded else {
+              print("[TranscriptionFeature] Model \(selectedModel) is not downloaded, skipping prewarming")
+              await send(.prewarmCompleted(.failure(NSError(
+                domain: "TranscriptionFeature",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Model \(selectedModel) is not downloaded"]
+              ))))
+              return
+            }
+
+            print("[TranscriptionFeature] Starting prewarming for model: \(selectedModel)")
+            try await transcription.prewarmModel(selectedModel) { progress in
+              Task { @MainActor in
+                await send(.prewarmProgress(progress.fractionCompleted))
+              }
+            }
+            await send(.prewarmCompleted(.success(selectedModel)))
+          } catch {
+            print("[TranscriptionFeature] Prewarming failed for model \(selectedModel): \(error)")
+            await send(.prewarmCompleted(.failure(error)))
+          }
+        }
+        .cancellable(id: CancelID.prewarm)
+
+      case let .prewarmProgress(progress):
+        // Progress updates are handled silently for now
+        // Could be used to update UI if needed
+        return .none
+
+      case let .prewarmCompleted(result):
+        switch result {
+        case let .success(model):
+          print("[TranscriptionFeature] Successfully prewarmed model: \(model)")
+          state.$hexSettings.withLock { $0.transcriptionModelWarmStatus = .warm }
+        case let .failure(error):
+          print("[TranscriptionFeature] Failed to prewarm model: \(error)")
+          state.$hexSettings.withLock { $0.transcriptionModelWarmStatus = .cold }
+        }
         return .none
 
       // MARK: - Cancel Entire Flow
@@ -511,6 +560,8 @@ private extension TranscriptionFeature {
         // Process the key event
         switch hotKeyProcessor.process(keyEvent: keyEvent) {
         case .startRecording:
+          let hotkeyTriggerTime = Date()
+          print("🎙️ [TIMING] Hotkey triggered at: \(hotkeyTriggerTime.timeIntervalSince1970)")
           // If double-tap lock is triggered, we start recording immediately
           if hotKeyProcessor.state == .doubleTapLock {
             Task { await send(.startRecording) }
@@ -548,13 +599,18 @@ private extension TranscriptionFeature {
 
 private extension TranscriptionFeature {
   func handleHotKeyPressed(isTranscribing: Bool) -> Effect<Action> {
+    let hotkeyPressedTime = Date()
+    print("🎙️ [TIMING] HotKey pressed handler triggered at: \(hotkeyPressedTime.timeIntervalSince1970)")
+
     let maybeCancel = isTranscribing ? Effect.send(Action.cancel) : .none
 
     // We wait 200ms before actually sending `.startRecording`
     // so the user can do a quick press => do something else
     // (like a double-tap).
     let delayedStart = Effect.run { send in
+      print("🎙️ [TIMING] Starting 200ms delay at: \(Date().timeIntervalSince1970)")
       try await Task.sleep(for: .milliseconds(200))
+      print("🎙️ [TIMING] 200ms delay completed, sending startRecording at: \(Date().timeIntervalSince1970)")
       await send(Action.startRecording)
     }
     .cancellable(id: CancelID.delayedRecord, cancelInFlight: true)
@@ -577,11 +633,14 @@ private extension TranscriptionFeature {
 
 private extension TranscriptionFeature {
   func handleStartRecording(_ state: inout State) -> Effect<Action> {
+    let uiStartTime = Date()
+    print("🎙️ [TIMING] UI startRecording action triggered at: \(uiStartTime.timeIntervalSince1970)")
+
     state.isRecording = true
     state.recordingStartTime = Date()
     state.lastAudioFeedbackTime = Date()
     state.isStreamingTranscription = true
-    
+
     // Reset recording progress and streaming state
     state.recordingProgress = RecordingProgress()
     state.streamingTranscription.reset()
@@ -598,13 +657,19 @@ private extension TranscriptionFeature {
     let contextPrompt = state.contextPrompt
     // Values for image analysis
     let providerTypeForImage = state.hexSettings.aiProviderType
-    let imageModel = providerTypeForImage == .ollama ? state.hexSettings.selectedAIModel : state.hexSettings.selectedRemoteModel
+    let imageModel = providerTypeForImage == .ollama ? state.hexSettings.selectedImageModel : state.hexSettings.selectedRemoteImageModel
     let groqAPIKey = state.hexSettings.groqAPIKey
+
+    print("[TranscriptionFeature] Starting recording…")
 
     return .merge(
       .run { _ in
+        let recordingClientCallStart = Date()
+        print("🎙️ [TIMING] Calling recording.startRecording() at: \(recordingClientCallStart.timeIntervalSince1970)")
         await recording.startRecording()
-        await soundEffect.play(.startRecording)
+        let recordingClientCallEnd = Date()
+        let recordingClientCallDuration = recordingClientCallEnd.timeIntervalSince(recordingClientCallStart)
+        print("🎙️ [TIMING] recording.startRecording() completed in: \(String(format: "%.3f", recordingClientCallDuration))s")
       },
       .send(.startRecordingPulse),
       // Capture screenshot and analyse image for context prompt

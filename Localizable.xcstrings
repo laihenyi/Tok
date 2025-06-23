@@ -64,6 +64,9 @@
     "Browse Models" : {
 
     },
+    "Browse Vision Models" : {
+
+    },
     "by %@ • %lldK context" : {
       "localizations" : {
         "en" : {
@@ -73,6 +76,9 @@
           }
         }
       }
+    },
+    "by %@ • Vision Model" : {
+
     },
     "Cancel" : {
       "comment" : "Cancel deleting All Transcripts",
@@ -369,6 +375,9 @@
         }
       }
     },
+    "Image Recognition" : {
+
+    },
     "Initial Prompt" : {
 
     },
@@ -385,6 +394,9 @@
 
     },
     "Loading available models..." : {
+
+    },
+    "Loading available vision models..." : {
 
     },
     "Lower values produce more consistent, conservative improvements. Higher values allow more creative rewording." : {
@@ -556,6 +568,9 @@
 
     },
     "Select AI model:" : {
+
+    },
+    "Select vision model:" : {
 
     },
     "Selected device not connected. System default will be used." : {
@@ -744,6 +759,9 @@
           }
         }
       }
+    },
+    "Vision Model" : {
+
     },
     "Visit our GitHub" : {
       "comment" : "button text to link to github",

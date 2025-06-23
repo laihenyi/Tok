@@ -7,6 +7,7 @@
 
 import Pow
 import SwiftUI
+import Dependencies
 
 struct TranscriptionIndicatorView: View {
   enum Status {
@@ -470,6 +471,7 @@ struct EnhancementStatusTooltip: View {
 
 struct StreamingTranscriptionTooltip: View {
   let streaming: StreamingTranscription
+  @Dependency(\.transcription) var transcriptionClient
   
   var body: some View {
     VStack(spacing: 4) {
@@ -506,7 +508,7 @@ struct StreamingTranscriptionTooltip: View {
     print("[StreamingTranscriptionTooltip] confirmedText: '\(confirmedText)'")
     print("[StreamingTranscriptionTooltip] unconfirmedText: '\(unconfirmedText)'")
     
-    let result: String
+    var result: String
     // Prioritize showing actual text content over "Listening..."
     if !streaming.currentText.isEmpty {
       result = streaming.currentText
@@ -519,6 +521,8 @@ struct StreamingTranscriptionTooltip: View {
     } else {
       result = "Listening..."
     }
+
+    result = transcriptionClient.cleanWhisperTokens(result)
     
     print("[StreamingTranscriptionTooltip] Final displayText: '\(result)'")
     return result

@@ -62,6 +62,9 @@ struct TranscriptionClient {
   
   /// Gets the tokenizer for the currently loaded model, if available
   var getTokenizer: @Sendable () async -> WhisperTokenizer?
+
+  /// Cleans up raw Whisper tokens from text
+  var cleanWhisperTokens: @Sendable (String) -> String = { $0 }
 }
 
 extension TranscriptionClient: DependencyKey {
@@ -77,7 +80,8 @@ extension TranscriptionClient: DependencyKey {
       prewarmModel: { try await live.prewarmModel(variant: $0, progressCallback: $1) },
       startStreamTranscription: { try await live.startStreamTranscription(model: $0, options: $1, settings: $2, updateCallback: $3) },
       stopStreamTranscription: { await live.stopStreamTranscription() },
-      getTokenizer: { await live.getTokenizer() }
+      getTokenizer: { await live.getTokenizer() },
+      cleanWhisperTokens: { live.cleanWhisperTokens(from: $0) }
     )
   }
 }
@@ -459,7 +463,7 @@ actor TranscriptionClientLive {
   }
   
   /// Cleans up raw Whisper tokens from streaming transcription text
-  nonisolated private func cleanWhisperTokens(from text: String) -> String {
+  nonisolated func cleanWhisperTokens(from text: String) -> String {
     var cleaned = text
     
     // Remove Whisper special tokens

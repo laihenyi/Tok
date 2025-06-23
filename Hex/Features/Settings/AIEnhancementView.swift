@@ -44,7 +44,10 @@ struct AIEnhancementView: View {
                 
                 // Model Selection Section
                 modelSelectionSection
-                
+
+                // Image Recognition Model Selection Section
+                imageModelSelectionSection
+
                 // Temperature Control Section
                 temperatureSection
                 
@@ -216,6 +219,34 @@ struct AIEnhancementView: View {
             return "Smaller models are faster but less capable. Llama3 offers a good balance of speed and quality."
         case .groq:
             return "Different models offer various capabilities and speeds. Compound-beta models are optimized for quality."
+        }
+    }
+
+    // Image model selection helper properties
+    private var hasAvailableImageModels: Bool {
+        switch store.currentProvider {
+        case .ollama:
+            return !store.availableImageModels.isEmpty
+        case .groq:
+            return !store.availableRemoteImageModels.isEmpty
+        }
+    }
+
+    private var noImageModelsMessage: String {
+        switch store.currentProvider {
+        case .ollama:
+            return "No vision models found in Ollama"
+        case .groq:
+            return "No vision models available from Groq"
+        }
+    }
+
+    private var imageModelSelectionFooterText: String {
+        switch store.currentProvider {
+        case .ollama:
+            return "Vision models like LLaVA can analyze screenshots and images. Install vision models in Ollama to enable image recognition."
+        case .groq:
+            return "Vision models can analyze screenshots and images to provide context for your transcriptions."
         }
     }
     
@@ -451,7 +482,140 @@ struct AIEnhancementView: View {
             }
         }
     }
-    
+
+    // Image Recognition Model Selection Section
+    private var imageModelSelectionSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 12) {
+                // Model selection header
+                HStack {
+                    Label {
+                        Text("Vision Model")
+                            .font(.body)
+                    } icon: {
+                        Image(systemName: "eye")
+                    }
+
+                    Spacer()
+
+                    // Refresh button for image models
+                    Button {
+                        switch store.currentProvider {
+                        case .ollama:
+                            store.send(.loadAvailableImageModels)
+                        case .groq:
+                            store.send(.loadRemoteImageModels)
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.body)
+                    }
+                    .buttonStyle(DefaultButtonStyle())
+                    .disabled(store.isLoadingImageModels || !canLoadModels)
+                    .opacity(store.isLoadingImageModels ? 0.5 : 0.7)
+                }
+
+                if store.isLoadingImageModels {
+                    // Loading indicator
+                    HStack {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text("Loading available vision models...")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                } else if !canLoadModels {
+                    // Provider not available message
+                    Text(unavailableMessage)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 4)
+                } else if let error = store.imageModelErrorMessage {
+                    // Error message
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(.red)
+                        Text("Error: \(error)")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                            .lineLimit(2)
+                    }
+                    .padding(.vertical, 4)
+                } else if !hasAvailableImageModels {
+                    // No image models available
+                    HStack(alignment: .center) {
+                        Text(noImageModelsMessage)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+
+                        Spacer()
+
+                        if store.currentProvider == .ollama {
+                            Link("Browse Vision Models", destination: URL(string: "https://ollama.com/library?q=vision")!)
+                                .font(.subheadline)
+                                .foregroundColor(.blue)
+                        }
+                    }
+                    .padding(.vertical, 8)
+                } else {
+                    // Image model picker
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Select vision model:")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+
+                        switch store.currentProvider {
+                        case .ollama:
+                            Picker("", selection: Binding(
+                                get: { store.hexSettings.selectedImageModel },
+                                set: { store.send(.setSelectedImageModel($0)) }
+                            )) {
+                                ForEach(store.availableImageModels, id: \.self) { model in
+                                    Text(model).tag(model)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
+
+                        case .groq:
+                            Picker("", selection: Binding(
+                                get: { store.hexSettings.selectedRemoteImageModel },
+                                set: { store.send(.setSelectedRemoteImageModel($0)) }
+                            )) {
+                                ForEach(store.availableRemoteImageModels) { model in
+                                    VStack(alignment: .leading) {
+                                        Text(model.displayName)
+                                            .font(.body)
+                                        Text("by \(model.ownedBy) • Vision Model")
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .tag(model.id)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Image Recognition")
+        } footer: {
+            if hasAvailableImageModels {
+                Text(imageModelSelectionFooterText)
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .font(.caption)
+            }
+        }
+    }
+
     // Temperature Section
     private var temperatureSection: some View {
         Section {

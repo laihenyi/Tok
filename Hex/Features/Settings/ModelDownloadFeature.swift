@@ -431,11 +431,13 @@ private struct AllModelsPicker: View {
 					)
 					Spacer()
 					if info.isDownloaded {
+						Image(systemName: "square.and.arrow.down.badge.checkmark")
+							.foregroundColor(.blue)
+					}
+					// Show green check for selected model
+					if info.name == store.hexSettings.selectedModel {
 						Image(systemName: "checkmark.circle.fill")
 							.foregroundColor(.green)
-					}
-					// Show warm status for selected model
-					if info.name == store.hexSettings.selectedModel {
 						ModelWarmStatusIndicator(status: store.hexSettings.transcriptionModelWarmStatus)
 					}
 				}
@@ -495,12 +497,12 @@ private struct CuratedRow: View {
 					Text(model.displayName)
 						.font(.headline)
 					if model.isDownloaded {
-						Image(systemName: "checkmark.circle.fill")
-							.foregroundColor(.green)
+						Image(systemName: "square.and.arrow.down.badge.checkmark")
+							.foregroundColor(.blue)
 					}
 					if isSelected {
-						Image(systemName: "checkmark")
-							.foregroundColor(.blue)
+						Image(systemName: "checkmark.circle.fill")
+							.foregroundColor(.green)
 						ModelWarmStatusIndicator(status: store.hexSettings.transcriptionModelWarmStatus)
 					}
 				}

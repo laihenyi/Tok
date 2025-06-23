@@ -39,6 +39,9 @@ struct HexSettings: Codable, Equatable {
     var selectedRemoteModel: String = "compound-beta-mini"
     // Voice Recognition Initial Prompt
     var voiceRecognitionPrompt: String = ""
+    // Image Recognition Model settings
+    var selectedImageModel: String = "llava:latest"
+    var selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview"
 
 	// Define coding keys to match struct properties
 	enum CodingKeys: String, CodingKey {
@@ -65,6 +68,8 @@ struct HexSettings: Codable, Equatable {
         case selectedRemoteModel
         case voiceRecognitionPrompt
         case transcriptionModelWarmStatus
+        case selectedImageModel
+        case selectedRemoteImageModel
 	}
 
 	init(
@@ -90,7 +95,9 @@ struct HexSettings: Codable, Equatable {
         groqAPIKey: String = "",
         selectedRemoteModel: String = "compound-beta-mini",
         voiceRecognitionPrompt: String = "",
-        transcriptionModelWarmStatus: ModelWarmStatus = .cold
+        transcriptionModelWarmStatus: ModelWarmStatus = .cold,
+        selectedImageModel: String = "llava:latest",
+        selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview"
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
@@ -115,6 +122,8 @@ struct HexSettings: Codable, Equatable {
         self.selectedRemoteModel = selectedRemoteModel
         self.voiceRecognitionPrompt = voiceRecognitionPrompt
         self.transcriptionModelWarmStatus = transcriptionModelWarmStatus
+        self.selectedImageModel = selectedImageModel
+        self.selectedRemoteImageModel = selectedRemoteImageModel
 	}
 
 	// Custom decoder that handles missing fields
@@ -159,6 +168,9 @@ struct HexSettings: Codable, Equatable {
         voiceRecognitionPrompt = try container.decodeIfPresent(String.self, forKey: .voiceRecognitionPrompt) ?? ""
         // Model warm status tracking (only for transcription models)
         transcriptionModelWarmStatus = try container.decodeIfPresent(ModelWarmStatus.self, forKey: .transcriptionModelWarmStatus) ?? .cold
+        // Image Recognition Model settings
+        selectedImageModel = try container.decodeIfPresent(String.self, forKey: .selectedImageModel) ?? "llava:latest"
+        selectedRemoteImageModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteImageModel) ?? "llava-v1.5-7b-4096-preview"
 	}
 }
 
