@@ -604,6 +604,12 @@ private extension TranscriptionFeature {
 
     let maybeCancel = isTranscribing ? Effect.send(Action.cancel) : .none
 
+    // Kick off a quick microphone warm-up immediately so the hardware path is
+    // already open by the time we call `recording.startRecording()` 200 ms later.
+    let warmUp: Effect<Action> = .run { _ in
+      await recording.warmUpAudioInput()
+    }
+
     // We wait 200ms before actually sending `.startRecording`
     // so the user can do a quick press => do something else
     // (like a double-tap).
@@ -615,7 +621,7 @@ private extension TranscriptionFeature {
     }
     .cancellable(id: CancelID.delayedRecord, cancelInFlight: true)
 
-    return .merge(maybeCancel, delayedStart)
+    return .merge(maybeCancel, warmUp, delayedStart)
   }
 
   func handleHotKeyReleased(isRecording: Bool) -> Effect<Action> {

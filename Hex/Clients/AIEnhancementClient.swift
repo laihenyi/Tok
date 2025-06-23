@@ -553,11 +553,11 @@ class AIEnhancementClientLive {
         let messages = [
             [
                 "role": "system",
-                "content": options.prompt + (options.context != nil ? "\n\nCONTEXT: \(options.context!)" : "")
+                "content": options.prompt
             ],
             [
                 "role": "user",
-                "content": text
+                "content": (options.context != nil ? "<CONTEXT>\(options.context!)</CONTEXT>\n\n" : "") + "<RAW_TRANSCRIPTION>\(text)</RAW_TRANSCRIPTION>"
             ]
         ]
         
