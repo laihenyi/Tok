@@ -49,7 +49,10 @@ struct TranscriptionClient {
 
   /// Lists all model variants found in `argmaxinc/whisperkit-coreml`.
   var getAvailableModels: @Sendable () async throws -> [String]
-  
+
+  /// Prewarms a model by loading it into memory without transcribing anything.
+  var prewarmModel: @Sendable (String, @escaping (Progress) -> Void) async throws -> Void
+
   /// Starts streaming transcription from microphone using AudioStreamTranscriber
   /// Returns updates via the callback with real-time transcription progress
   var startStreamTranscription: @Sendable (String, DecodingOptions, HexSettings?, @escaping (StreamTranscriptionUpdate) -> Void) async throws -> Void
@@ -71,6 +74,7 @@ extension TranscriptionClient: DependencyKey {
       isModelDownloaded: { await live.isModelDownloaded($0) },
       getRecommendedModels: { await live.getRecommendedModels() },
       getAvailableModels: { try await live.getAvailableModels() },
+      prewarmModel: { try await live.prewarmModel(variant: $0, progressCallback: $1) },
       startStreamTranscription: { try await live.startStreamTranscription(model: $0, options: $1, settings: $2, updateCallback: $3) },
       stopStreamTranscription: { await live.stopStreamTranscription() },
       getTokenizer: { await live.getTokenizer() }
@@ -232,6 +236,23 @@ actor TranscriptionClientLive {
   /// Lists all model variants available in the `argmaxinc/whisperkit-coreml` repository.
   func getAvailableModels() async throws -> [String] {
     try await WhisperKit.fetchAvailableModels()
+  }
+
+  /// Prewarms a model by loading it into memory without transcribing anything.
+  /// This is useful for reducing latency when the user switches models in settings.
+  func prewarmModel(variant: String, progressCallback: @escaping (Progress) -> Void) async throws {
+    // Only load if it's not already the current model
+    if whisperKit == nil || variant != currentModelName {
+      unloadCurrentModel()
+      try await downloadAndLoadModel(variant: variant, progressCallback: progressCallback)
+      print("[TranscriptionClientLive] Prewarmed model: \(variant)")
+    } else {
+      // Model is already loaded, just report completion
+      let progress = Progress(totalUnitCount: 100)
+      progress.completedUnitCount = 100
+      progressCallback(progress)
+      print("[TranscriptionClientLive] Model \(variant) already prewarmed")
+    }
   }
 
   /// Transcribes the audio file at `url` using a `model` name.

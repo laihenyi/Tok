@@ -130,13 +130,21 @@ public struct ModelDownloadFeature {
 		case selectModel(String)
 		case toggleModelDisplay
 		case downloadSelectedModel
+		case prewarmModel(String)
 		// Effects
 		case modelsLoaded(recommended: String, available: [ModelInfo])
 		case downloadProgress(Double)
 		case downloadCompleted(Result<String, Error>)
+		case prewarmProgress(Double)
+		case prewarmCompleted(Result<String, Error>)
 
 		case deleteSelectedModel
 		case openModelLocation
+	}
+
+	enum CancelID {
+		case download
+		case prewarm
 	}
 
 	// MARK: Dependencies
@@ -166,7 +174,14 @@ public struct ModelDownloadFeature {
 			return .none
 
 		case let .selectModel(model):
-			state.$hexSettings.withLock { $0.selectedModel = model }
+			state.$hexSettings.withLock {
+				$0.selectedModel = model
+				$0.transcriptionModelWarmStatus = .cold
+			}
+			// Trigger prewarming if the model is downloaded
+			if state.availableModels[id: model]?.isDownloaded == true {
+				return .send(.prewarmModel(model))
+			}
 			return .none
 
 		// MARK: – Fetch Models
@@ -222,6 +237,7 @@ public struct ModelDownloadFeature {
 					await send(.downloadCompleted(.failure(error)))
 				}
 			}
+			.cancellable(id: CancelID.download)
 
 		case let .downloadProgress(progress):
 			state.downloadProgress = progress
@@ -236,8 +252,43 @@ public struct ModelDownloadFeature {
 				if let idx = state.curatedModels.firstIndex(where: { $0.internalName == name }) {
 					state.curatedModels[idx].isDownloaded = true
 				}
+				// If this is the selected model, prewarm it
+				if name == state.selectedModel {
+					return .send(.prewarmModel(name))
+				}
 			case let .failure(err):
 				state.downloadError = err.localizedDescription
+			}
+			return .none
+
+		case let .prewarmModel(model):
+			// Set warming status
+			state.$hexSettings.withLock { $0.transcriptionModelWarmStatus = .warming }
+
+			return .run { send in
+				do {
+					try await transcription.prewarmModel(model) { progress in
+						Task { @MainActor in
+							await send(.prewarmProgress(progress.fractionCompleted))
+						}
+					}
+					await send(.prewarmCompleted(.success(model)))
+				} catch {
+					await send(.prewarmCompleted(.failure(error)))
+				}
+			}
+			.cancellable(id: CancelID.prewarm)
+
+		case let .prewarmProgress(progress):
+			// Could update UI with prewarming progress if needed
+			return .none
+
+		case let .prewarmCompleted(result):
+			switch result {
+			case .success:
+				state.$hexSettings.withLock { $0.transcriptionModelWarmStatus = .warm }
+			case .failure:
+				state.$hexSettings.withLock { $0.transcriptionModelWarmStatus = .cold }
 			}
 			return .none
 
@@ -383,6 +434,10 @@ private struct AllModelsPicker: View {
 						Image(systemName: "checkmark.circle.fill")
 							.foregroundColor(.green)
 					}
+					// Show warm status for selected model
+					if info.name == store.hexSettings.selectedModel {
+						ModelWarmStatusIndicator(status: store.hexSettings.transcriptionModelWarmStatus)
+					}
 				}
 				.tag(info.name)
 			}
@@ -446,6 +501,7 @@ private struct CuratedRow: View {
 					if isSelected {
 						Image(systemName: "checkmark")
 							.foregroundColor(.blue)
+						ModelWarmStatusIndicator(status: store.hexSettings.transcriptionModelWarmStatus)
 					}
 				}
 				.frame(minWidth: 80, alignment: .leading)
@@ -492,9 +548,12 @@ private struct FooterView: View {
 			}
 		} else {
 			HStack {
-				if let selected = store.curatedModels.first(where: { $0.internalName == store.hexSettings.selectedModel }) {
-					Text("Selected: \(selected.displayName)")
-						.font(.caption)
+				if let selected = store.availableModels.first(where: { $0.name == store.hexSettings.selectedModel }) {
+					HStack(spacing: 4) {
+						Text("Selected: \(selected.name)")
+							.font(.caption)
+						ModelWarmStatusIndicator(status: store.hexSettings.transcriptionModelWarmStatus)
+					}
 				}
 				Spacer()
 				if store.anyModelDownloaded {
@@ -522,5 +581,31 @@ private struct FooterView: View {
 				}
 			}
 		}
+	}
+}
+
+// MARK: - Model Warm Status Indicator
+
+private struct ModelWarmStatusIndicator: View {
+	let status: ModelWarmStatus
+
+	var body: some View {
+		Group {
+			switch status {
+			case .cold:
+				Image(systemName: "snowflake")
+					.foregroundColor(.gray)
+					.help("Model is cold (not loaded)")
+			case .warming:
+				Image(systemName: "thermometer.medium")
+					.foregroundColor(.orange)
+					.help("Model is warming up...")
+			case .warm:
+				Image(systemName: "flame.fill")
+					.foregroundColor(.red)
+					.help("Model is warm (ready)")
+			}
+		}
+		.font(.caption)
 	}
 }

@@ -72,7 +72,7 @@ struct AIEnhancementFeature {
         case remoteModelsLoaded([RemoteAIModel])
         case setSelectedRemoteModel(String)
     }
-    
+
     @Dependency(\.aiEnhancement) var aiEnhancement
     
     var body: some ReducerOf<Self> {

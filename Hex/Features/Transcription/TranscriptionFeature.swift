@@ -689,6 +689,10 @@ private extension TranscriptionFeature {
     state.isRecording = false
     state.isStreamingTranscription = false // Stop streaming immediately
 
+    // Reset streaming transcription state to ensure clean stop
+    // This must be done early to ensure all code paths reset the streaming state
+    state.streamingTranscription.reset()
+
     // Allow system to sleep again by releasing the power management assertion
     // Always call this, even if the setting is off, to ensure we don't leak assertions
     //  (e.g. if the setting was toggled off mid-recording)

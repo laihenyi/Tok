@@ -26,9 +26,8 @@ struct HexSettings: Codable, Equatable {
 	var selectedMicrophoneID: String? = nil
     var disableAutoCapitalization: Bool = false // New setting for disabling auto-capitalization
 
-    // Model warm status tracking
+    // Model warm status tracking (only for transcription models that need prewarming)
     var transcriptionModelWarmStatus: ModelWarmStatus = .cold
-    var aiModelWarmStatus: ModelWarmStatus = .cold
     // AI Enhancement options
     var useAIEnhancement: Bool = false
     var selectedAIModel: String = "gemma3"
@@ -65,6 +64,7 @@ struct HexSettings: Codable, Equatable {
         case groqAPIKey
         case selectedRemoteModel
         case voiceRecognitionPrompt
+        case transcriptionModelWarmStatus
 	}
 
 	init(
@@ -89,7 +89,8 @@ struct HexSettings: Codable, Equatable {
         aiProviderType: AIProviderType = .ollama,
         groqAPIKey: String = "",
         selectedRemoteModel: String = "compound-beta-mini",
-        voiceRecognitionPrompt: String = ""
+        voiceRecognitionPrompt: String = "",
+        transcriptionModelWarmStatus: ModelWarmStatus = .cold
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
@@ -113,6 +114,7 @@ struct HexSettings: Codable, Equatable {
         self.groqAPIKey = groqAPIKey
         self.selectedRemoteModel = selectedRemoteModel
         self.voiceRecognitionPrompt = voiceRecognitionPrompt
+        self.transcriptionModelWarmStatus = transcriptionModelWarmStatus
 	}
 
 	// Custom decoder that handles missing fields
@@ -155,6 +157,8 @@ struct HexSettings: Codable, Equatable {
         selectedRemoteModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteModel) ?? "compound-beta-mini"
         // Voice Recognition Initial Prompt
         voiceRecognitionPrompt = try container.decodeIfPresent(String.self, forKey: .voiceRecognitionPrompt) ?? ""
+        // Model warm status tracking (only for transcription models)
+        transcriptionModelWarmStatus = try container.decodeIfPresent(ModelWarmStatus.self, forKey: .transcriptionModelWarmStatus) ?? .cold
 	}
 }
 

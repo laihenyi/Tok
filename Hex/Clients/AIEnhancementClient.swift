@@ -30,7 +30,7 @@ struct AIEnhancementClient {
     
     /// Tests connection to a remote AI provider
     var testRemoteConnection: @Sendable (AIProviderType, String) async -> Bool = { _, _ in false }
-    
+
     /// Analyzes a screenshot (PNG/JPEG data) with a VLM model and returns a short textual summary.
     /// - Parameters:
     ///   - imageData: The raw PNG/JPEG data to analyse.
