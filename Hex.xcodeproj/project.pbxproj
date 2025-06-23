@@ -33,6 +33,7 @@
 		473544542D445959001FBCB5 /* Testing.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Testing.framework; path = Platforms/MacOSX.platform/Developer/Library/Frameworks/Testing.framework; sourceTree = DEVELOPER_DIR; };
 		478637A52D48725900319BFA /* HexTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HexTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		47E05DEE2D444EC600D26DA6 /* Tok.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tok.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5A113E1F2E09710D009AF85E /* ci_post_clone.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = ci_post_clone.sh; sourceTree = "<group>"; };
 		B53355FF2D7B8D4900E5F542 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -100,6 +101,7 @@
 		47E05DE52D444EC600D26DA6 = {
 			isa = PBXGroup;
 			children = (
+				5A113E1E2E0970FC009AF85E /* ci_scripts */,
 				B53355FF2D7B8D4900E5F542 /* Localizable.xcstrings */,
 				47E05DF02D444EC600D26DA6 /* Hex */,
 				478637A62D48725900319BFA /* HexTests */,
@@ -115,6 +117,14 @@
 				478637A52D48725900319BFA /* HexTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		5A113E1E2E0970FC009AF85E /* ci_scripts */ = {
+			isa = PBXGroup;
+			children = (
+				5A113E1F2E09710D009AF85E /* ci_post_clone.sh */,
+			);
+			path = ci_scripts;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
