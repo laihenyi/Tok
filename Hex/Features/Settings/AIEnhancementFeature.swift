@@ -107,7 +107,16 @@ struct AIEnhancementFeature {
         Reduce { state, action in
             switch action {
             case .task:
-                return .send(.checkOllamaAvailability)
+                // Check Ollama availability and load models for current provider
+                if state.currentProvider == .groq && !state.currentAPIKey.isEmpty {
+                    return .merge(
+                        .send(.checkOllamaAvailability),
+                        .send(.loadRemoteModels),
+                        .send(.loadRemoteImageModels)
+                    )
+                } else {
+                    return .send(.checkOllamaAvailability)
+                }
                 
             case .checkOllamaAvailability:
                 return .run { send in

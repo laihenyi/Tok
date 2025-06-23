@@ -35,7 +35,7 @@ struct AboutView: View {
                 HStack {
                     Label("Tok is open source", systemImage: "apple.terminal.on.rectangle")
                     Spacer()
-                    Link("Visit our GitHub", destination: URL(string: "https://github.com/untsop")!)
+                    Link("Visit our GitHub", destination: URL(string: "https://github.com/untsop/Hex")!)
                 }
             }
         }

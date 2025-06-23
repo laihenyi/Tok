@@ -383,16 +383,21 @@ struct AIEnhancementView: View {
                 }
                 
                 if store.isLoadingModels {
-                    // Loading indicator
-                    HStack {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                        Text("Loading available models...")
+                    // Show selected model while loading
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Select AI model:")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
-                        Spacer()
+                        
+                        HStack {
+                            Text(getCurrentSelectedModel().isEmpty ? "No model selected" : getCurrentSelectedModel())
+                                .font(.body)
+                            Spacer()
+                            ProgressView()
+                                .scaleEffect(0.7)
+                        }
+                        .padding(.vertical, 2)
                     }
-                    .padding(.vertical, 4)
                 } else if !canLoadModels {
                     // Provider not available message
                     Text(unavailableMessage)
@@ -516,16 +521,21 @@ struct AIEnhancementView: View {
                 }
 
                 if store.isLoadingImageModels {
-                    // Loading indicator
-                    HStack {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                        Text("Loading available vision models...")
+                    // Show selected model while loading
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Select vision model:")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
-                        Spacer()
+
+                        HStack {
+                            Text(getCurrentSelectedImageModel().isEmpty ? "No model selected" : getCurrentSelectedImageModel())
+                                .font(.body)
+                            Spacer()
+                            ProgressView()
+                                .scaleEffect(0.7)
+                        }
+                        .padding(.vertical, 2)
                     }
-                    .padding(.vertical, 4)
                 } else if !canLoadModels {
                     // Provider not available message
                     Text(unavailableMessage)
@@ -864,6 +874,26 @@ struct AIEnhancementView: View {
             Text(LocalizedStringKey(text))
                 .font(.subheadline)
                 .foregroundColor(.secondary)
+        }
+    }
+    
+    // Helper to get currently selected model
+    private func getCurrentSelectedModel() -> String {
+        switch store.currentProvider {
+        case .ollama:
+            return store.hexSettings.selectedAIModel
+        case .groq:
+            return store.hexSettings.selectedRemoteModel
+        }
+    }
+    
+    // Helper to get currently selected image model
+    private func getCurrentSelectedImageModel() -> String {
+        switch store.currentProvider {
+        case .ollama:
+            return store.hexSettings.selectedImageModel
+        case .groq:
+            return store.hexSettings.selectedRemoteImageModel
         }
     }
 }
