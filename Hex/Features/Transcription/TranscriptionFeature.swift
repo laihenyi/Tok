@@ -689,6 +689,9 @@ private extension TranscriptionFeature {
     state.isRecording = false
     state.isStreamingTranscription = false // Stop streaming immediately
 
+    // Capture streaming transcription text BEFORE resetting it for potential fallback use
+    let streamingFallbackText = state.streamingTranscription.currentText
+
     // Reset streaming transcription state to ensure clean stop
     // This must be done early to ensure all code paths reset the streaming state
     state.streamingTranscription.reset()
@@ -725,6 +728,7 @@ private extension TranscriptionFeature {
     let language = state.hexSettings.outputLanguage
     let settings = state.hexSettings
     let contextPrompt = state.contextPrompt
+    // streamingFallbackText already captured above before reset
     // recordingStartTime captured in handleTranscriptionResult
     
     state.isPrewarming = true
@@ -776,9 +780,18 @@ private extension TranscriptionFeature {
           // Use traditional file-based transcription for accurate final result
           print("Transcribing recorded audio file for final result...")
           let result = try await transcription.transcribe(audioURL, model, decodeOptions, settings) { _ in }
-          
-          print("Transcribed audio from URL: \(audioURL) to text: \(result)")
-          await send(.transcriptionResult(result))
+
+          // Check if transcription result is empty and use streaming fallback if available
+          let finalResult: String
+          if result.isEmpty && !streamingFallbackText.isEmpty {
+            print("[TranscriptionFeature] Transcription result is empty, using streamingTranscription.currentText as fallback: '\(streamingFallbackText)'")
+            finalResult = streamingFallbackText
+          } else {
+            finalResult = result
+          }
+
+          print("Transcribed audio from URL: \(audioURL) to text: \(finalResult)")
+          await send(.transcriptionResult(finalResult))
         } catch {
           print("Error transcribing audio: \(error)")
           await send(.transcriptionError(error))

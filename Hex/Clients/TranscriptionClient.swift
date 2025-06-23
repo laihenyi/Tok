@@ -103,9 +103,12 @@ actor TranscriptionClientLive {
   
   /// The current AudioStreamTranscriber instance for streaming transcription
   private var audioStreamTranscriber: AudioStreamTranscriber?
-  
+
   /// Task managing the streaming transcription
   private var streamTask: Task<Void, Error>?
+
+  /// Flag to track if streaming transcription is currently active
+  private var isStreamingActive: Bool = false
 
   /// The base folder under which we store model data (e.g., ~/Library/Application Support/...).
   private lazy var modelsBaseFolder: URL = {
@@ -241,6 +244,17 @@ actor TranscriptionClientLive {
   /// Prewarms a model by loading it into memory without transcribing anything.
   /// This is useful for reducing latency when the user switches models in settings.
   func prewarmModel(variant: String, progressCallback: @escaping (Progress) -> Void) async throws {
+    print("[TranscriptionClientLive] prewarmModel - checking model: '\(variant)' vs current: '\(currentModelName ?? "nil")', whisperKit: \(whisperKit != nil), isStreamingActive: \(isStreamingActive)")
+
+    // Don't prewarm if streaming is active to avoid interrupting transcription
+    if isStreamingActive {
+      print("[TranscriptionClientLive] prewarmModel - skipping prewarming while streaming is active")
+      let progress = Progress(totalUnitCount: 100)
+      progress.completedUnitCount = 100
+      progressCallback(progress)
+      return
+    }
+
     // Only load if it's not already the current model
     if whisperKit == nil || variant != currentModelName {
       unloadCurrentModel()
@@ -266,12 +280,20 @@ actor TranscriptionClientLive {
     progressCallback: @escaping (Progress) -> Void
   ) async throws -> String {
     // Load or switch to the required model if needed.
-    if whisperKit == nil || model != currentModelName {
+    print("[TranscriptionClientLive] transcribe - checking model: '\(model)' vs current: '\(currentModelName ?? "nil")', whisperKit: \(whisperKit != nil), isStreamingActive: \(isStreamingActive)")
+
+    // If streaming is active and we're using the same model, avoid reloading
+    if isStreamingActive && model == currentModelName && whisperKit != nil {
+      print("[TranscriptionClientLive] transcribe - streaming active with same model, skipping reload")
+    } else if whisperKit == nil || model != currentModelName {
+      print("[TranscriptionClientLive] transcribe - model reload needed: whisperKit=\(whisperKit == nil), modelMismatch=\(model != currentModelName)")
       unloadCurrentModel()
       try await downloadAndLoadModel(variant: model) { p in
         // Debug logging, or scale as desired:
         progressCallback(p)
       }
+    } else {
+      print("[TranscriptionClientLive] transcribe - using existing model: \(model)")
     }
 
     guard let whisperKit = whisperKit else {
@@ -321,16 +343,16 @@ actor TranscriptionClientLive {
 
   // Unloads any currently loaded model (clears `whisperKit` and `currentModelName`).
   private func unloadCurrentModel() {
-    print("[TranscriptionClientLive] Unloading current model: \(currentModelName ?? "none")")
-    
+    print("[TranscriptionClientLive] Unloading current model: \(currentModelName ?? "none"), isStreamingActive: \(isStreamingActive)")
+
     // Make sure to stop any streaming first to prevent crashes
     Task {
       await stopStreamTranscription()
     }
-    
+
     whisperKit = nil
     currentModelName = nil
-    
+
     print("[TranscriptionClientLive] Model unloaded successfully")
   }
 
@@ -483,11 +505,15 @@ actor TranscriptionClientLive {
   ) async throws {
     // Stop any existing stream
     await stopStreamTranscription()
-    
+
     // Load or switch to the required model if needed
+    print("[TranscriptionClientLive] startStreamTranscription - checking model: '\(model)' vs current: '\(currentModelName ?? "nil")', whisperKit: \(whisperKit != nil)")
     if whisperKit == nil || model != currentModelName {
+      print("[TranscriptionClientLive] startStreamTranscription - model reload needed: whisperKit=\(whisperKit == nil), modelMismatch=\(model != currentModelName)")
       unloadCurrentModel()
       try await downloadAndLoadModel(variant: model) { _ in }
+    } else {
+      print("[TranscriptionClientLive] startStreamTranscription - using existing model: \(model)")
     }
 
     guard let whisperKit = whisperKit else {
@@ -583,15 +609,16 @@ actor TranscriptionClientLive {
     }
     
     self.audioStreamTranscriber = streamTranscriber
-    print("[TranscriptionClientLive] AudioStreamTranscriber created successfully")
-    
+    self.isStreamingActive = true
+    print("[TranscriptionClientLive] AudioStreamTranscriber created successfully, streaming now active")
+
     // Start the streaming transcription in a task with proper error handling
     streamTask = Task { [weak self] in
       guard let self = self else {
         print("[TranscriptionClientLive] Self deallocated before stream task started")
         return
       }
-      
+
       do {
         print("[TranscriptionClientLive] Starting AudioStreamTranscriber...")
         try await streamTranscriber.startStreamTranscription()
@@ -607,7 +634,7 @@ actor TranscriptionClientLive {
           currentText: "",
           isComplete: true
         )
-        
+
         // Safely call the update callback with error handling
         do {
           updateCallback(finalUpdate)
@@ -616,18 +643,24 @@ actor TranscriptionClientLive {
         }
         throw error
       }
+
+      // Mark streaming as inactive when task completes
+      await self.setStreamingInactive()
     }
   }
   
   /// Stops the current streaming transcription
   func stopStreamTranscription() async {
     print("[TranscriptionClientLive] Stopping stream transcription...")
-    
+
+    // Mark streaming as inactive immediately
+    isStreamingActive = false
+
     // Cancel the stream task first
     if let task = streamTask {
       task.cancel()
       streamTask = nil
-      
+
       // Wait for the task to complete cancellation to ensure clean shutdown
       do {
         _ = try await task.value
@@ -638,19 +671,25 @@ actor TranscriptionClientLive {
         print("[TranscriptionClientLive] Stream task ended with error: \(error)")
       }
     }
-    
+
     // Stop the audio stream transcriber
     if let streamTranscriber = audioStreamTranscriber {
       await streamTranscriber.stopStreamTranscription()
       audioStreamTranscriber = nil
       print("[TranscriptionClientLive] AudioStreamTranscriber stopped and cleared")
     }
-    
-    print("[TranscriptionClientLive] Stream transcription stopped completely")
+
+    print("[TranscriptionClientLive] Stream transcription stopped completely, streaming now inactive")
   }
   
   /// Gets the tokenizer for the currently loaded model, if available
   func getTokenizer() async -> WhisperTokenizer? {
     return whisperKit?.tokenizer
+  }
+
+  /// Helper method to mark streaming as inactive
+  private func setStreamingInactive() {
+    isStreamingActive = false
+    print("[TranscriptionClientLive] Streaming marked as inactive")
   }
 }
