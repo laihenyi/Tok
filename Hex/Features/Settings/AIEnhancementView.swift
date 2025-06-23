@@ -11,6 +11,7 @@ import SwiftUI
 struct AIEnhancementView: View {
     @Bindable var store: StoreOf<AIEnhancementFeature>
     @State private var showExpandedPrompt = false
+    @State private var showExpandedVoicePrompt = false
     @State private var isHoveringModelSelect = false
     
     var body: some View {
@@ -49,6 +50,9 @@ struct AIEnhancementView: View {
                 
                 // Prompt Configuration Section
                 promptSection
+
+                // Voice Recognition Initial Prompt Section
+                voiceRecognitionPromptSection
             }
         }
         .formStyle(.grouped)
@@ -589,7 +593,104 @@ struct AIEnhancementView: View {
             }
         }
     }
-    
+
+    // Voice Recognition Initial Prompt Section
+    private var voiceRecognitionPromptSection: some View {
+        Section {
+            VStack(spacing: 0) {
+                // Header with edit button
+                HStack {
+                    Label {
+                        Text("Initial Prompt")
+                            .font(.subheadline)
+                    } icon: {
+                        Image(systemName: "mic.badge.plus")
+                    }
+
+                    Spacer()
+
+                    Button(showExpandedVoicePrompt ? "Done" : "Edit") {
+                        withAnimation(.spring(duration: 0.3)) {
+                            showExpandedVoicePrompt.toggle()
+                        }
+                    }
+                    .buttonStyle(DefaultButtonStyle())
+                    .foregroundColor(showExpandedVoicePrompt ? Color.primary : Color.accentColor)
+                    .font(.caption)
+                }
+                .padding(.bottom, 8)
+
+                if showExpandedVoicePrompt {
+                    // Expanded editor view
+                    VStack(spacing: 8) {
+                        // Editor
+                        TextEditor(text: Binding(
+                            get: { store.hexSettings.voiceRecognitionPrompt },
+                            set: { newValue in
+                                store.$hexSettings.withLock { $0.voiceRecognitionPrompt = newValue }
+                            }
+                        ))
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 100)
+                        .padding(4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                        )
+
+                        // Clear button
+                        Button("Clear") {
+                            store.$hexSettings.withLock { $0.voiceRecognitionPrompt = "" }
+                        }
+                        .buttonStyle(DefaultButtonStyle())
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(4)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                } else {
+                    // Collapsed preview or placeholder
+                    if store.hexSettings.voiceRecognitionPrompt.isEmpty {
+                        Text("No initial prompt set")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .italic()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.secondary.opacity(0.05))
+                            )
+                    } else {
+                        Text(store.hexSettings.voiceRecognitionPrompt)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .lineLimit(3)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.secondary.opacity(0.05))
+                            )
+                    }
+                }
+            }
+        } header: {
+            Text("Voice Recognition Prompt")
+        } footer: {
+            if !showExpandedVoicePrompt {
+                Text("Optional context that helps Whisper better understand what you're likely to say. This is applied directly to voice recognition, not AI enhancement.")
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .font(.caption)
+            } else {
+                Text("Enter context or keywords that help Whisper recognize your speech more accurately. For example: technical terms, names, or domain-specific vocabulary you frequently use.")
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .font(.caption)
+            }
+        }
+    }
+
     // Helper for bullet points
     private func bulletPoint(text: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {

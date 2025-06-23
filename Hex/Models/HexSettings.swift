@@ -2,6 +2,13 @@ import ComposableArchitecture
 import Dependencies
 import Foundation
 
+/// Model warm status tracking
+enum ModelWarmStatus: String, Codable, Equatable {
+    case cold = "cold"       // Model not loaded
+    case warming = "warming" // Model currently loading/prewarming
+    case warm = "warm"       // Model loaded and ready
+}
+
 // To add a new setting, add a new property to the struct, the CodingKeys enum, and the custom decoder
 struct HexSettings: Codable, Equatable {
 	var soundEffectsEnabled: Bool = true
@@ -18,6 +25,10 @@ struct HexSettings: Codable, Equatable {
 	var outputLanguage: String? = nil
 	var selectedMicrophoneID: String? = nil
     var disableAutoCapitalization: Bool = false // New setting for disabling auto-capitalization
+
+    // Model warm status tracking
+    var transcriptionModelWarmStatus: ModelWarmStatus = .cold
+    var aiModelWarmStatus: ModelWarmStatus = .cold
     // AI Enhancement options
     var useAIEnhancement: Bool = false
     var selectedAIModel: String = "gemma3"
@@ -27,6 +38,8 @@ struct HexSettings: Codable, Equatable {
     var aiProviderType: AIProviderType = .ollama
     var groqAPIKey: String = ""
     var selectedRemoteModel: String = "compound-beta-mini"
+    // Voice Recognition Initial Prompt
+    var voiceRecognitionPrompt: String = ""
 
 	// Define coding keys to match struct properties
 	enum CodingKeys: String, CodingKey {
@@ -51,6 +64,7 @@ struct HexSettings: Codable, Equatable {
         case aiProviderType
         case groqAPIKey
         case selectedRemoteModel
+        case voiceRecognitionPrompt
 	}
 
 	init(
@@ -74,7 +88,8 @@ struct HexSettings: Codable, Equatable {
         aiEnhancementTemperature: Double = 0.3,
         aiProviderType: AIProviderType = .ollama,
         groqAPIKey: String = "",
-        selectedRemoteModel: String = "compound-beta-mini"
+        selectedRemoteModel: String = "compound-beta-mini",
+        voiceRecognitionPrompt: String = ""
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
@@ -97,6 +112,7 @@ struct HexSettings: Codable, Equatable {
         self.aiProviderType = aiProviderType
         self.groqAPIKey = groqAPIKey
         self.selectedRemoteModel = selectedRemoteModel
+        self.voiceRecognitionPrompt = voiceRecognitionPrompt
 	}
 
 	// Custom decoder that handles missing fields
@@ -137,6 +153,8 @@ struct HexSettings: Codable, Equatable {
         aiProviderType = try container.decodeIfPresent(AIProviderType.self, forKey: .aiProviderType) ?? .ollama
         groqAPIKey = try container.decodeIfPresent(String.self, forKey: .groqAPIKey) ?? ""
         selectedRemoteModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteModel) ?? "compound-beta-mini"
+        // Voice Recognition Initial Prompt
+        voiceRecognitionPrompt = try container.decodeIfPresent(String.self, forKey: .voiceRecognitionPrompt) ?? ""
 	}
 }
 

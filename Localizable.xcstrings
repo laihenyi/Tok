@@ -61,9 +61,6 @@
         }
       }
     },
-    "Become a Sponsor" : {
-
-    },
     "Browse Models" : {
 
     },
@@ -132,6 +129,9 @@
           }
         }
       }
+    },
+    "Clear" : {
+
     },
     "Close" : {
       "localizations" : {
@@ -309,6 +309,9 @@
     "Enter API Key" : {
 
     },
+    "Enter context or keywords that help Whisper recognize your speech more accurately. For example: technical terms, names, or domain-specific vocabulary you frequently use." : {
+
+    },
     "Error: %@" : {
 
     },
@@ -330,17 +333,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Zugelassen"
-          }
-        }
-      }
-    },
-    "Tok is open source" : {
-      "comment" : "In about section in settings.",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tok ist Open Source"
           }
         }
       }
@@ -376,6 +368,9 @@
           }
         }
       }
+    },
+    "Initial Prompt" : {
+
     },
     "Input Device" : {
 
@@ -421,6 +416,9 @@
     "Model Selection" : {
 
     },
+    "No initial prompt set" : {
+
+    },
     "No models found." : {
       "comment" : "Replacement text in transcription model section when no available models are found",
       "extractionState" : "stale",
@@ -460,6 +458,9 @@
           }
         }
       }
+    },
+    "Optional context that helps Whisper better understand what you're likely to say. This is applied directly to voice recognition, not AI enhancement." : {
+
     },
     "Output Language" : {
       "comment" : "transcription model setting for which language to use for text output.",
@@ -662,9 +663,6 @@
         }
       }
     },
-    "Support the developer" : {
-
-    },
     "System Default" : {
 
     },
@@ -676,6 +674,17 @@
     },
     "To set up Ollama:" : {
 
+    },
+    "Tok is open source" : {
+      "comment" : "In about section in settings.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tok ist Open Source"
+          }
+        }
+      }
     },
     "Transcription Model" : {
       "comment" : "Label for Transcription Model Section",
@@ -737,6 +746,9 @@
           }
         }
       }
+    },
+    "Voice Recognition Prompt" : {
+
     },
     "You're using a full keyboard shortcut. Double-tap is recommended." : {
 

@@ -63,31 +63,48 @@ struct PasteboardClientLive {
     private static var savedPasteboardName: String?
     
     // More efficient approach that uses NSPasteboard's built-in functionality
-    // Instead of copying all the data, we'll track the pasteboard state and create 
+    // Instead of copying all the data, we'll track the pasteboard state and create
     // a temporary pasteboard to hold the original data
     func savePasteboardState(pasteboard: NSPasteboard) -> NSPasteboard? {
         // If pasteboard is empty, nothing to save
         if pasteboard.pasteboardItems?.isEmpty ?? true {
             return nil
         }
-        
+
         // Generate a unique name for the backup pasteboard
-        let tempName = "com.kitlangton.Hex.backup.\(UUID().uuidString)"
+        let tempName = "xyz.2qs.Tok.backup.\(UUID().uuidString)"
         let backupPasteboard = NSPasteboard(name: .init(tempName))
-        
+
         // Clear the backup pasteboard and write all contents from original
         backupPasteboard.clearContents()
-        
-        // Copy all items to the backup pasteboard
-        // This is more efficient than manually copying each data item
+
+        // Copy all items to the backup pasteboard by recreating them
+        // We can't use writeObjects directly because NSPasteboardItem objects
+        // are already associated with the original pasteboard
         if let items = pasteboard.pasteboardItems {
-            backupPasteboard.writeObjects(items)
+            var newItems: [NSPasteboardItem] = []
+
+            for item in items {
+                let newItem = NSPasteboardItem()
+
+                // Copy all types and their data from the original item
+                for type in item.types {
+                    if let data = item.data(forType: type) {
+                        newItem.setData(data, forType: type)
+                    }
+                }
+
+                newItems.append(newItem)
+            }
+
+            // Write the new items to the backup pasteboard
+            backupPasteboard.writeObjects(newItems)
         }
-        
+
         // Save the current change count and name for later reference
         PasteboardClientLive.savedChangeCount = pasteboard.changeCount
         PasteboardClientLive.savedPasteboardName = tempName
-        
+
         return backupPasteboard
     }
 
@@ -95,15 +112,33 @@ struct PasteboardClientLive {
     func restorePasteboardFromBackup(mainPasteboard: NSPasteboard, backupPasteboard: NSPasteboard?) {
         // If no backup pasteboard, nothing to restore
         guard let backupPasteboard = backupPasteboard else { return }
-        
+
         // Clear the main pasteboard
         mainPasteboard.clearContents()
-        
-        // Copy all items from backup to main pasteboard
+
+        // Copy all items from backup to main pasteboard by recreating them
+        // We can't use writeObjects directly because NSPasteboardItem objects
+        // are already associated with the backup pasteboard
         if let items = backupPasteboard.pasteboardItems {
-            mainPasteboard.writeObjects(items)
+            var newItems: [NSPasteboardItem] = []
+
+            for item in items {
+                let newItem = NSPasteboardItem()
+
+                // Copy all types and their data from the original item
+                for type in item.types {
+                    if let data = item.data(forType: type) {
+                        newItem.setData(data, forType: type)
+                    }
+                }
+
+                newItems.append(newItem)
+            }
+
+            // Write the new items to the main pasteboard
+            mainPasteboard.writeObjects(newItems)
         }
-        
+
         // Release the temporary pasteboard by clearing it
         backupPasteboard.clearContents()
     }

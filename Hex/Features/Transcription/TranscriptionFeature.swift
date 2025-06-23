@@ -745,14 +745,27 @@ private extension TranscriptionFeature {
             chunkingStrategy: .vad
           )
           
-          // Add context prompt if available
+          // Combine context prompt (from image analysis) with voice recognition prompt (from settings)
+          var combinedPrompt = ""
+
+          // Add voice recognition prompt first (user-defined context)
+          if !settings.voiceRecognitionPrompt.isEmpty {
+            combinedPrompt += "<SYSTEM>" + settings.voiceRecognitionPrompt.trimmingCharacters(in: .whitespaces) + "</SYSTEM>"
+          }
+
+          // Add context prompt from image analysis if available
           if let prompt = contextPrompt, !prompt.isEmpty {
+            combinedPrompt += "<CONTEXT>" + prompt.trimmingCharacters(in: .whitespaces) + "</CONTEXT>"
+          }
+
+          // Apply combined prompt if we have any content
+          if !combinedPrompt.isEmpty {
             // Use the proper WhisperKit context prompt API
             if let tokenizer = await transcription.getTokenizer() {
-              decodeOptions.promptTokens = tokenizer.encode(text: " " + prompt.trimmingCharacters(in: .whitespaces))
+              decodeOptions.promptTokens = tokenizer.encode(text: " " + combinedPrompt)
                 .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
               decodeOptions.usePrefillPrompt = true
-              print("[TranscriptionFeature] Applied context prompt with \(decodeOptions.promptTokens?.count ?? 0) tokens")
+              print("[TranscriptionFeature] Applied combined prompt with \(decodeOptions.promptTokens?.count ?? 0) tokens: '\(combinedPrompt)'")
             }
           }
           
