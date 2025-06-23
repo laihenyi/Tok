@@ -264,9 +264,15 @@ struct TranscriptionFeature {
       // MARK: - HotKey Flow
 
       case .hotKeyPressed:
-        // If we're transcribing, send a cancel first. Then queue up a
-        // "startRecording" in 200ms if the user keeps holding the hotkey.
-        return handleHotKeyPressed(isTranscribing: state.isTranscribing)
+        // Ignore hotkey presses if we're already recording or transcribing to prevent
+        // accidental double-clicks from cancelling ongoing operations
+        guard !state.isRecording && !state.isTranscribing else {
+          print("🎙️ [WARNING] Hotkey press ignored - recording or transcription already in progress")
+          return .none
+        }
+        
+        // Otherwise, proceed with normal hotkey handling
+        return handleHotKeyPressed(isTranscribing: false)
 
       case .hotKeyReleased:
         // If we're currently recording, then stop. Otherwise, just cancel

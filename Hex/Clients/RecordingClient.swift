@@ -277,6 +277,9 @@ actor RecordingClientLive {
   private let recordingURL = FileManager.default.temporaryDirectory.appendingPathComponent("recording.wav")
   private let (meterStream, meterContinuation) = AsyncStream<Meter>.makeStream()
   private var meterTask: Task<Void, Never>?
+  
+  /// Tracks the current recording state to prevent overlapping operations
+  private var isRecording: Bool = false
     
   @Shared(.hexSettings) var hexSettings: HexSettings
 
@@ -520,8 +523,17 @@ actor RecordingClientLive {
   }
 
   func startRecording() async {
+    // Guard against starting a new recording while one is already in progress
+    guard !isRecording else {
+      print("🎙️ [WARNING] Recording start ignored - recording already in progress")
+      return
+    }
+    
     let startTime = Date()
     print("🎙️ [TIMING] Recording start requested at: \(startTime.timeIntervalSince1970)")
+
+    // Mark that we're starting a recording
+    isRecording = true
 
     // If audio is playing on the default output, pause it.
     if hexSettings.pauseMediaOnRecord {
@@ -649,10 +661,21 @@ actor RecordingClientLive {
       }
     } catch {
       print("Could not start recording: \(error)")
+      // Reset recording state if we failed to start
+      isRecording = false
     }
   }
 
   func stopRecording() async -> URL {
+    // Guard against multiple stop calls
+    guard isRecording else {
+      print("🎙️ [WARNING] Stop recording ignored - no recording in progress")
+      return recordingURL
+    }
+    
+    // Mark that we're no longer recording
+    isRecording = false
+    
     recorder?.stop()
     recorder = nil
     stopMeterTask()
