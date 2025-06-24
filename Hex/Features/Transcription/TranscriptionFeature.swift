@@ -221,6 +221,7 @@ struct TranscriptionFeature {
     case enhancementFeedback
     case streamTranscription
     case prewarm
+    case screenshotCapture
   }
 
   @Dependency(\.transcription) var transcription
@@ -662,7 +663,7 @@ private extension TranscriptionFeature {
       preventSystemSleep(&state)
     }
 
-    // Extract values for streaming transcription
+    // Extract required values used later in the async transcription sequence
     let model = state.hexSettings.selectedModel
     let language = state.hexSettings.outputLanguage
     let settings = state.hexSettings
@@ -684,24 +685,23 @@ private extension TranscriptionFeature {
         print("🎙️ [TIMING] recording.startRecording() completed in: \(String(format: "%.3f", recordingClientCallDuration))s")
       },
       .send(.startRecordingPulse),
-      // Capture screenshot and analyse image for context prompt (only if screen capture is enabled)
+      // Schedule screenshot capture 1s after recording starts (if enabled)
       .run { send in
-        guard settings.enableScreenCapture else {
-          print("[TranscriptionFeature] Screen capture disabled, skipping screenshot analysis")
-          return
-        }
-        
+        guard settings.enableScreenCapture else { return }
+        try await Task.sleep(for: .seconds(1))
+
+        guard !Task.isCancelled else { return }
+
         do {
-          print("[TranscriptionFeature] Capturing screenshot for context prompt…")
+          print("[TranscriptionFeature] Delayed screenshot capture starting…")
           let screenshotData = try await screenCapture.captureScreenshot()
           print("[TranscriptionFeature] Screenshot captured (\(screenshotData.count) bytes)")
-          // Use user-configurable model & prompt when available, otherwise sensible defaults
+
           let provider = providerTypeForImage
           let modelName = imageModel
           let imagePrompt = ""
 
           print("[TranscriptionFeature] Image analysis provider: \(provider.displayName), model: \(modelName)")
-          print("[TranscriptionFeature] Invoking AI image analysis…")
           let context = try await aiEnhancement.analyzeImage(
             screenshotData,
             modelName,
@@ -711,52 +711,35 @@ private extension TranscriptionFeature {
             imageAnalysisPrompt
           ) { _ in }
           print("[TranscriptionFeature] Image analysis returned context prompt: \"\(context)\"")
-          TokLogger.log("Image context prompt: \"\(context)\"")
           await send(.setContextPrompt(context))
         } catch {
           print("[TranscriptionFeature] Failed to capture/analyse screenshot: \(error)")
         }
-      },
+      }
+      .cancellable(id: CancelID.screenshotCapture),
       // Start streaming transcription for real-time feedback during recording
       .run { send in
         do {
-          // Create decoding options with context prompt support
-            let decodeOptions = DecodingOptions(
+          // Create decoding options without context prompt (prompt will be applied later for the final transcription)
+          let decodeOptions = DecodingOptions(
             language: language,
             detectLanguage: language == nil,
             chunkingStrategy: .vad
           )
-          
-          // NOTE: We intentionally do NOT pass the context prompt to the *streaming* decoder.
-          // Doing so caused the prompt text (derived from image analysis) to be included at the
-          // beginning of `streamingTranscription.currentText`, which clutters the real-time UI.
-          // The prompt is still applied later for the final, file-based transcription so accuracy
-          // is unchanged.
 
           print("Starting streaming transcription for real-time feedback…")
 
-          // Start microphone streaming. This returns immediately after the
-          // underlying AudioStreamTranscriber is booted.
           try await transcription.startStreamTranscription(model, decodeOptions, settings) { update in
-            print("[TranscriptionFeature] Stream callback received update: '\(update.currentText)'")
-            // Forward every update to the reducer. We stay on this task's
-            // lifetime, so the `send` closure stays valid.
+            // Forward every update to the reducer.
             Task { await send(.streamTranscriptionUpdate(update)) }
           }
 
-          // -----------------------------------------------------------------
-          // Keep this effect alive for the entire lifetime of the microphone
-          // stream.  It will be cancelled via the `.streamTranscription` id
-          // when recording stops or is discarded.
-          // -----------------------------------------------------------------
+          // Keep the effect alive for the lifetime of the microphone stream
           try await Task.never()
         } catch is CancellationError {
-          // Normal tear-down, nothing to log – `stopStreamTranscription()` is
-          // executed elsewhere.
+          // Normal cancellation
         } catch {
           print("Error starting streaming transcription for feedback: \(error)")
-          // Don't fail the recording if streaming fails, just continue without live feedback
-          // Reset the streaming state so UI doesn't get stuck
           await send(.streamTranscriptionUpdate(StreamTranscriptionUpdate(
             confirmedSegments: [],
             unconfirmedSegments: [],
@@ -796,6 +779,7 @@ private extension TranscriptionFeature {
       print("Recording was too short, discarding")
       return .merge(
         .cancel(id: CancelID.streamTranscription),
+        .cancel(id: CancelID.screenshotCapture),
         .run { _ in
           await transcription.stopStreamTranscription()
           _ = await recording.stopRecording()
@@ -807,19 +791,18 @@ private extension TranscriptionFeature {
     state.isTranscribing = true
     state.error = nil
     
-    // Extract all required state values to local variables to avoid capturing inout parameter
+    // Keep the context prompt (may be set by delayed screenshot capture earlier)
+    let contextPrompt = state.contextPrompt
     let model = state.hexSettings.selectedModel
     let language = state.hexSettings.outputLanguage
     let settings = state.hexSettings
-    let contextPrompt = state.contextPrompt
-    // streamingFallbackText already captured above before reset
-    // recordingStartTime captured in handleTranscriptionResult
     
     state.isPrewarming = true
     
     return .merge(
       .send(.stopRecordingPulse),
-      // Cancel streaming transcription effect first
+      // Cancel screenshot capture if it hasn't fired yet, then cancel streaming transcription
+      .cancel(id: CancelID.screenshotCapture),
       .cancel(id: CancelID.streamTranscription),
       // Then stop streaming transcription since recording ended
       .run { _ in
@@ -830,26 +813,26 @@ private extension TranscriptionFeature {
           await soundEffect.play(.stopRecording)
           let audioURL = await recording.stopRecording()
 
-          // Create transcription options with the selected language and context prompt
+          // Create transcription options with the selected language and any context prompt that may have been set earlier
           var decodeOptions = DecodingOptions(
             language: language,
             detectLanguage: language == nil,
             chunkingStrategy: .vad
           )
           
-          // Combine context prompt (from image analysis) with voice recognition prompt (from settings)
+          // Combine context prompt (possibly set by the delayed screenshot capture) with voice recognition prompt (from settings)
           var combinedPrompt = ""
-
+          
           // Add voice recognition prompt first (user-defined context)
           if !settings.voiceRecognitionPrompt.isEmpty {
-            combinedPrompt +=  settings.voiceRecognitionPrompt.trimmingCharacters(in: .whitespaces)
+            combinedPrompt += settings.voiceRecognitionPrompt.trimmingCharacters(in: .whitespaces)
           }
-
+          
           // Add context prompt from image analysis if available
           if let prompt = contextPrompt, !prompt.isEmpty {
-            combinedPrompt += prompt.trimmingCharacters(in: .whitespaces)
+            combinedPrompt += " " + prompt.trimmingCharacters(in: .whitespaces)
           }
-
+          
           // Apply combined prompt if we have any content
           if !combinedPrompt.isEmpty {
             // Use the proper WhisperKit context prompt API
@@ -1145,6 +1128,7 @@ private extension TranscriptionFeature {
       .cancel(id: CancelID.recordingFeedback),
       .cancel(id: CancelID.enhancementFeedback),
       .cancel(id: CancelID.streamTranscription),
+      .cancel(id: CancelID.screenshotCapture),
       // Stop streaming transcription after cancelling the effect
       .run { _ in
         await transcription.stopStreamTranscription()
