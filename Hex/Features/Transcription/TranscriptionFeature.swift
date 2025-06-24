@@ -712,6 +712,7 @@ private extension TranscriptionFeature {
             imageAnalysisPrompt
           ) { _ in }
           print("[TranscriptionFeature] Image analysis returned context prompt: \"\(context)\"")
+          TokLogger.log("Image context prompt: \"\(context)\"")
           await send(.setContextPrompt(context))
         } catch {
           print("[TranscriptionFeature] Failed to capture/analyse screenshot: \(error)")
@@ -875,6 +876,7 @@ private extension TranscriptionFeature {
           }
 
           print("Transcribed audio from URL: \(audioURL) to text: \(finalResult)")
+          TokLogger.log("Final transcription: \(finalResult)")
           await send(.transcriptionResult(finalResult))
         } catch {
           print("Error transcribing audio: \(error)")

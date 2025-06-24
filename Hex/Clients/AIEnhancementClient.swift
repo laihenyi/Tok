@@ -188,8 +188,23 @@ class AIEnhancementClientLive {
             print("[AIEnhancementClientLive] Successfully enhanced text: \"\(enhancedText.prefix(50))...\"")
             return enhancedText
         } catch {
+            // When using a remote provider (e.g. Groq) and we encounter a networking error
+            // we silently fall back to returning the *original* text so the application
+            // experience remains smooth when the user is offline.  For local providers
+            // (Ollama) we still surface the error so the UI can react accordingly.
+
             print("[AIEnhancementClientLive] Error enhancing text: \(error.localizedDescription)")
-            throw error
+
+            switch provider {
+            case .groq:
+                // Ensure progress shows as completed even though we skipped
+                progress.completedUnitCount = 100
+                progressCallback(progress)
+                TokLogger.log("AI Enhancement skipped due to network error – returning original text.")
+                return text
+            case .ollama:
+                throw error
+            }
         }
     }
     
@@ -320,6 +335,9 @@ class AIEnhancementClientLive {
             "system": "You are an AI that improves transcribed text while preserving meaning."
         ]
         
+        // Log the prompt that will be sent to the AI service
+        TokLogger.log("AI Enhancement prompt (model \(model)): \n\(fullPrompt)")
+        
         print("[AIEnhancementClientLive] Preparing request to Ollama with model: \(model), temp: \(temperature), max_tokens: \(maxTokens)")
         
         do {
@@ -388,6 +406,7 @@ class AIEnhancementClientLive {
                 
                 // Clean up the response - trim whitespace, remove thinking tags, and ensure it's not empty
                 let cleanedText = cleanThinkingTags(from: enhancedText).trimmingCharacters(in: .whitespacesAndNewlines)
+                TokLogger.log("AI Enhancement result: \(cleanedText)")
                 return cleanedText.isEmpty ? text : cleanedText
             } else {
                 print("[AIEnhancementClientLive] Error: Failed to parse Ollama response")

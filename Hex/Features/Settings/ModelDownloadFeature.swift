@@ -110,6 +110,9 @@ public struct ModelDownloadFeature {
         // Track which model generated a progress update to handle switching models
         public var activeDownloadID: UUID?
 
+        // Indicates whether the initial fetchModels request has completed (successfully or with fallback)
+        public var hasLoadedModels: Bool = false
+
 		// Convenience computed vars
 		var selectedModel: String { hexSettings.selectedModel }
 		var selectedModelIsDownloaded: Bool {
@@ -211,6 +214,7 @@ public struct ModelDownloadFeature {
 		case let .modelsLoaded(recommended, available):
 			state.recommendedModel = recommended
 			state.availableModels = IdentifiedArrayOf(uniqueElements: available)
+			state.hasLoadedModels = true
 			// Merge curated + download status
 			var curated = CuratedModelLoader.load()
 			for idx in curated.indices {
@@ -374,7 +378,7 @@ public struct ModelDownloadView: View {
 			}
 
 			// ── Model readiness warning ─────────────────────────────
-			if (!store.selectedModelIsDownloaded) || store.hexSettings.transcriptionModelWarmStatus != .warm {
+			if store.hasLoadedModels && ((!store.selectedModelIsDownloaded) || store.hexSettings.transcriptionModelWarmStatus != .warm) {
 				ModelWarningView(
 					isDownloaded: store.selectedModelIsDownloaded,
 					warmStatus: store.hexSettings.transcriptionModelWarmStatus
@@ -559,9 +563,14 @@ private struct FooterView: View {
 			}
 		} else {
 			HStack {
-				if let selected = store.availableModels.first(where: { $0.name == store.hexSettings.selectedModel }) {
-					HStack(spacing: 4) {
-						Text("Selected: \(selected.name)")
+				// Always show the currently selected model even if the availableModels list
+				// has not been loaded yet (e.g. while an online request is pending or failed).
+				// If we can find it in availableModels we use that reference, otherwise we
+				// fall back to the raw `selectedModel` string from settings.
+				HStack(spacing: 4) {
+					let selectedName = store.availableModels.first(where: { $0.name == store.hexSettings.selectedModel })?.name ?? store.hexSettings.selectedModel
+					if !selectedName.isEmpty {
+						Text("Selected: \(selectedName)")
 							.font(.caption)
 						ModelWarmStatusIndicator(status: store.hexSettings.transcriptionModelWarmStatus)
 					}

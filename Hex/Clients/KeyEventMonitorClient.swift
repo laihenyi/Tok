@@ -63,13 +63,15 @@ extension KeyEventMonitorClient: DependencyKey {
     let live = KeyEventMonitorClientLive()
     return KeyEventMonitorClient(
       listenForKeyPress: {
-        live.listenForKeyPress()
+        await live.listenForKeyPress()
       },
       handleKeyEvent: { handler in
-        live.handleKeyEvent(handler)
+        Task { @MainActor in
+          live.handleKeyEvent(handler)
+        }
       },
       startMonitoring: {
-        live.startMonitoring()
+        await live.startMonitoring()
       }
     )
   }
@@ -93,10 +95,16 @@ class KeyEventMonitorClientLive {
   }
 
   deinit {
-    self.stopMonitoring()
+    // Deinit can run on an arbitrary thread. Dispatch cleanup work to the main
+    // actor to respect actor isolation without requiring the experimental
+    // `isolated deinit` feature.
+    Task { @MainActor [weak self] in
+      self?.stopMonitoring()
+    }
   }
 
   /// Provide a stream of key events.
+  @MainActor
   func listenForKeyPress() -> AsyncThrowingStream<KeyEvent, Error> {
     AsyncThrowingStream { continuation in
       let uuid = UUID()
@@ -112,11 +120,14 @@ class KeyEventMonitorClientLive {
 
       // Cleanup on cancellation
       continuation.onTermination = { [weak self] _ in
-        self?.removeContinuation(uuid: uuid)
+        Task { @MainActor [weak self] in
+          self?.removeContinuation(uuid: uuid)
+        }
       }
     }
   }
 
+  @MainActor
   private func removeContinuation(uuid: UUID) {
     continuations[uuid] = nil
 
@@ -126,6 +137,7 @@ class KeyEventMonitorClientLive {
     }
   }
 
+  @MainActor
   func startMonitoring() {
     guard !isMonitoring else { return }
     isMonitoring = true
@@ -150,7 +162,9 @@ class KeyEventMonitorClientLive {
           }
 
           let keyEvent = KeyEvent(cgEvent: cgEvent, type: type)
-          let handled = hotKeyClientLive.processKeyEvent(keyEvent)
+          let handled: Bool = SafeSauce.performOnMainThread {
+            hotKeyClientLive.processKeyEvent(keyEvent)
+          }
 
           if handled {
             return nil
@@ -178,7 +192,7 @@ class KeyEventMonitorClientLive {
     logger.info("Started monitoring key events via CGEvent tap.")
   }
 
-  // TODO: Handle removing the handler from the continuations on deinit/cancellation
+  @MainActor
   func handleKeyEvent(_ handler: @escaping (KeyEvent) -> Bool) {
     let uuid = UUID()
     continuations[uuid] = handler
@@ -188,6 +202,7 @@ class KeyEventMonitorClientLive {
     }
   }
 
+  @MainActor
   private func stopMonitoring() {
     guard isMonitoring else { return }
     isMonitoring = false
@@ -205,6 +220,7 @@ class KeyEventMonitorClientLive {
     logger.info("Stopped monitoring key events via CGEvent tap.")
   }
 
+  @MainActor
   private func processKeyEvent(_ keyEvent: KeyEvent) -> Bool {
     var handled = false
 

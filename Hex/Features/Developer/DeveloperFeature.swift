@@ -1,5 +1,6 @@
 import ComposableArchitecture
 import SwiftUI
+import AppKit
 
 @Reducer
 struct DeveloperFeature {
@@ -10,6 +11,7 @@ struct DeveloperFeature {
 
     enum Action {
         case resetOnboarding
+        case openLogFile
     }
 
     var body: some ReducerOf<Self> {
@@ -18,6 +20,11 @@ struct DeveloperFeature {
             case .resetOnboarding:
                 state.$hexSettings.withLock { $0.hasCompletedOnboarding = false }
                 return .none
+
+            case .openLogFile:
+                return .run { _ in
+                    TokLogger.openLogFile()
+                }
             }
         }
     }
@@ -36,6 +43,19 @@ struct DeveloperView: View {
                 Text("Onboarding will be shown the next time you open the app.")
                     .font(.caption)
                     .foregroundColor(.secondary)
+            }
+
+            Section("Logs") {
+                Button("Open Log File") {
+                    store.send(.openLogFile)
+                }
+                .buttonStyle(.bordered)
+                let path = TokLogger.logFileURL.path
+                Text(path)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
         }
         .formStyle(.grouped)

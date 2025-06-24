@@ -242,7 +242,49 @@ actor TranscriptionClientLive {
 
   /// Lists all model variants available in the `argmaxinc/whisperkit-coreml` repository.
   func getAvailableModels() async throws -> [String] {
-    try await WhisperKit.fetchAvailableModels()
+    do {
+      // Primary path: fetch full list of models from Hugging Face
+      return try await WhisperKit.fetchAvailableModels()
+    } catch {
+      // Fallback: enumerate any models that are already downloaded locally so that
+      // previously-downloaded models remain selectable even when offline or when
+      // the Hugging Face API is unreachable.
+
+      // Path: <Application Support>/com.kitlangton.Hex/models/argmaxinc/whisperkit-coreml/*
+      let repoFolder = modelsBaseFolder
+        .appendingPathComponent("argmaxinc")
+        .appendingPathComponent("whisperkit-coreml", isDirectory: true)
+
+      let fm = FileManager.default
+
+      // Gracefully handle the case where the directory doesn't exist (no downloads yet)
+      guard let contents = try? fm.contentsOfDirectory(
+        at: repoFolder,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles]
+      ) else {
+        // If we cannot list the directory, rethrow the original network error so the caller
+        // can decide how to react.
+        throw error
+      }
+
+      // Filter for sub-directories that actually contain a valid downloaded model
+      var localModels: [String] = []
+      for url in contents {
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+          let name = url.lastPathComponent
+          let downloaded = await self.isModelDownloaded(name)
+          if downloaded {
+            localModels.append(name)
+          }
+        }
+      }
+
+      // Return whatever we found (may be empty). This guarantees that the caller always
+      // receives a list of *at least* the locally-cached models even when offline.
+      return localModels.sorted()
+    }
   }
 
   /// Prewarms a model by loading it into memory without transcribing anything.
@@ -629,7 +671,7 @@ actor TranscriptionClientLive {
         print("[TranscriptionClientLive] Stream transcription completed normally")
       } catch is CancellationError {
         print("[TranscriptionClientLive] Stream transcription was cancelled")
-      } catch {
+      } catch let error {
         print("[TranscriptionClientLive] Stream transcription error: \(error)")
         // Send a final update to indicate completion with error
         let finalUpdate = StreamTranscriptionUpdate(

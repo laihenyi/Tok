@@ -453,6 +453,9 @@
     "Live Transcription" : {
 
     },
+    "Logs" : {
+
+    },
     "Lower values produce more consistent, conservative improvements. Higher values allow more creative rewording." : {
 
     },
@@ -530,6 +533,9 @@
 
     },
     "Open Accessibility Settings" : {
+
+    },
+    "Open Log File" : {
 
     },
     "Open on Login" : {
