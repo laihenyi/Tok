@@ -43,6 +43,8 @@ struct HexSettings: Codable, Equatable {
     // Image Recognition Model settings
     var selectedImageModel: String = "llava:latest"
     var selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview"
+    // Image Analysis Prompt
+    var imageAnalysisPrompt: String = defaultImageAnalysisPrompt
 
 	// Define coding keys to match struct properties
 	enum CodingKeys: String, CodingKey {
@@ -72,6 +74,7 @@ struct HexSettings: Codable, Equatable {
         case transcriptionModelWarmStatus
         case selectedImageModel
         case selectedRemoteImageModel
+        case imageAnalysisPrompt
 	}
 
 	init(
@@ -100,7 +103,8 @@ struct HexSettings: Codable, Equatable {
         voiceRecognitionPrompt: String = "",
         transcriptionModelWarmStatus: ModelWarmStatus = .cold,
         selectedImageModel: String = "llava:latest",
-        selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview"
+        selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview",
+        imageAnalysisPrompt: String = defaultImageAnalysisPrompt
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
@@ -128,6 +132,7 @@ struct HexSettings: Codable, Equatable {
         self.transcriptionModelWarmStatus = transcriptionModelWarmStatus
         self.selectedImageModel = selectedImageModel
         self.selectedRemoteImageModel = selectedRemoteImageModel
+        self.imageAnalysisPrompt = imageAnalysisPrompt
 	}
 
 	// Custom decoder that handles missing fields
@@ -176,8 +181,24 @@ struct HexSettings: Codable, Equatable {
         // Image Recognition Model settings
         selectedImageModel = try container.decodeIfPresent(String.self, forKey: .selectedImageModel) ?? "llava:latest"
         selectedRemoteImageModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteImageModel) ?? "llava-v1.5-7b-4096-preview"
+        // Image Analysis Prompt
+        imageAnalysisPrompt = try container.decodeIfPresent(String.self, forKey: .imageAnalysisPrompt) ?? defaultImageAnalysisPrompt
 	}
 }
+
+/// Default prompt for image analysis
+let defaultImageAnalysisPrompt = """
+You are an AI assistant that analyzes screenshots to provide context for transcription.
+
+Your task is to:
+1. Describe what the user is currently working on based on the screenshot
+2. Identify any visible text, UI elements, applications, or content that might be relevant
+3. Respond in first person format (e.g., "I'm working on...")
+4. Keep your response concise and focused on context that would help improve speech-to-text accuracy
+5. If you see specific technical terms, names, or domain-specific vocabulary, mention them
+
+Provide a brief, contextual summary that would help a transcription system better understand what the user might be talking about.
+"""
 
 /// AI Provider types supported by the app
 enum AIProviderType: String, Codable, CaseIterable, Equatable {

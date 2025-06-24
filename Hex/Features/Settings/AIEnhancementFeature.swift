@@ -83,6 +83,7 @@ struct AIEnhancementFeature {
         case modelLoadingError(String)
         case setSelectedModel(String)
         case resetToDefaultPrompt
+        case resetToDefaultImagePrompt
         // Remote provider actions
         case setProviderType(AIProviderType)
         case setAPIKey(String)
@@ -176,6 +177,10 @@ struct AIEnhancementFeature {
                 
             case .resetToDefaultPrompt:
                 state.$hexSettings.withLock { $0.aiEnhancementPrompt = EnhancementOptions.defaultPrompt }
+                return .none
+                
+            case .resetToDefaultImagePrompt:
+                state.$hexSettings.withLock { $0.imageAnalysisPrompt = defaultImageAnalysisPrompt }
                 return .none
                 
             // Remote provider actions

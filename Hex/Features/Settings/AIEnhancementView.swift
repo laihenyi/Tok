@@ -12,6 +12,7 @@ struct AIEnhancementView: View {
     @Bindable var store: StoreOf<AIEnhancementFeature>
     @State private var showExpandedPrompt = false
     @State private var showExpandedVoicePrompt = false
+    @State private var showExpandedImagePrompt = false
     @State private var isHoveringModelSelect = false
     
     var body: some View {
@@ -51,6 +52,9 @@ struct AIEnhancementView: View {
                 // Image Recognition Model Selection Section (only show if screen capture is enabled)
                 if store.hexSettings.enableScreenCapture {
                     imageModelSelectionSection
+                    
+                    // Image Analysis Prompt Section (only show if screen capture is enabled)
+                    imageAnalysisPromptSection
                 }
 
                 // Temperature Control Section
@@ -931,6 +935,90 @@ struct AIEnhancementView: View {
             Text("When enabled, screenshots will be captured and analyzed to provide better transcription context. This requires screen recording permission.")
                 .foregroundColor(.secondary.opacity(0.7))
                 .font(.caption)
+        }
+    }
+    
+    // Image Analysis Prompt Section
+    private var imageAnalysisPromptSection: some View {
+        Section {
+            VStack(spacing: 0) {
+                // Header with edit button
+                HStack {
+                    Label {
+                        Text("Analysis Instructions")
+                            .font(.subheadline)
+                    } icon: {
+                        Image(systemName: "photo.badge.plus")
+                    }
+                    
+                    Spacer()
+                    
+                    Button(showExpandedImagePrompt ? "Done" : "Edit") {
+                        withAnimation(.spring(duration: 0.3)) {
+                            showExpandedImagePrompt.toggle()
+                        }
+                    }
+                    .buttonStyle(DefaultButtonStyle())
+                    .foregroundColor(showExpandedImagePrompt ? Color.primary : Color.accentColor)
+                    .font(.caption)
+                }
+                .padding(.bottom, 8)
+                
+                if showExpandedImagePrompt {
+                    // Expanded editor view
+                    VStack(spacing: 8) {
+                        // Editor
+                        TextEditor(text: Binding(
+                            get: { store.hexSettings.imageAnalysisPrompt },
+                            set: { newValue in
+                                store.$hexSettings.withLock { $0.imageAnalysisPrompt = newValue }
+                            }
+                        ))
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 120)
+                        .padding(4)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+                        )
+                        
+                        // Reset button
+                        Button("Reset to Default") {
+                            store.send(.resetToDefaultImagePrompt)
+                        }
+                        .buttonStyle(DefaultButtonStyle())
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(4)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                } else {
+                    // Collapsed preview
+                    Text(store.hexSettings.imageAnalysisPrompt)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(4)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.secondary.opacity(0.05))
+                        )
+                }
+            }
+        } header: {
+            Text("Image Analysis Prompt")
+        } footer: {
+            if !showExpandedImagePrompt {
+                Text("These instructions tell the AI how to analyze captured screenshots for better transcription context.")
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .font(.caption)
+            } else {
+                Text("Customize how the AI analyzes screenshots. This affects the context information that helps improve transcription accuracy.")
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .font(.caption)
+            }
         }
     }
 }

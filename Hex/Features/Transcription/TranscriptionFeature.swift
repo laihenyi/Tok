@@ -671,6 +671,7 @@ private extension TranscriptionFeature {
     let providerTypeForImage = state.hexSettings.aiProviderType
     let imageModel = providerTypeForImage == .ollama ? state.hexSettings.selectedImageModel : state.hexSettings.selectedRemoteImageModel
     let groqAPIKey = state.hexSettings.groqAPIKey
+    let imageAnalysisPrompt = state.hexSettings.imageAnalysisPrompt
 
     print("[TranscriptionFeature] Starting recording…")
 
@@ -698,7 +699,7 @@ private extension TranscriptionFeature {
           // Use user-configurable model & prompt when available, otherwise sensible defaults
           let provider = providerTypeForImage
           let modelName = imageModel
-          let imagePrompt = "You will be given a screenshot of the user's screen, please analyse the content and output a short summary of what the user is currently working on,"
+          let imagePrompt = ""
 
           print("[TranscriptionFeature] Image analysis provider: \(provider.displayName), model: \(modelName)")
           print("[TranscriptionFeature] Invoking AI image analysis…")
@@ -707,7 +708,8 @@ private extension TranscriptionFeature {
             modelName,
             imagePrompt,
             provider,
-            provider == .groq ? groqAPIKey : nil
+            provider == .groq ? groqAPIKey : nil,
+            imageAnalysisPrompt
           ) { _ in }
           print("[TranscriptionFeature] Image analysis returned context prompt: \"\(context)\"")
           await send(.setContextPrompt(context))

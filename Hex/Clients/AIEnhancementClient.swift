@@ -38,9 +38,10 @@ struct AIEnhancementClient {
     ///   - prompt: A natural-language instruction describing what the model should return.
     ///   - provider: The provider to route the request to (local Ollama or a remote service).
     ///   - apiKey: Optional API-key for remote providers.
+    ///   - systemPrompt: The system prompt that defines how the AI should analyze images.
     ///   - progressCallback: Reports fractional completion (0–1).
     /// - Returns: The model's textual response, trimmed of whitespace.
-    var analyzeImage: @Sendable (Data, String, String, AIProviderType, String?, @escaping (Progress) -> Void) async throws -> String = { _, _, _, _, _, _ in "" }
+    var analyzeImage: @Sendable (Data, String, String, AIProviderType, String?, String, @escaping (Progress) -> Void) async throws -> String = { _, _, _, _, _, _, _ in "" }
 }
 
 /// Enhancement options for AI processing
@@ -72,6 +73,8 @@ struct EnhancementOptions {
     7. DO NOT remove any information from the original text
     
     Focus only on improving readability while preserving the exact meaning.
+
+    Respond **only** with the edited text, no explanation, no preamble.
     """
     
     /// Default enhancement options for transcribed text
@@ -119,7 +122,7 @@ extension AIEnhancementClient: DependencyKey {
             getAvailableModels: { try await live.getAvailableModels() },
             getRemoteModels: { try await live.getRemoteModels(provider: $0, apiKey: $1) },
             testRemoteConnection: { await live.testRemoteConnection(provider: $0, apiKey: $1) },
-            analyzeImage: { try await live.analyzeImage(imageData: $0, model: $1, prompt: $2, provider: $3, apiKey: $4, progressCallback: $5) }
+            analyzeImage: { try await live.analyzeImage(imageData: $0, model: $1, prompt: $2, provider: $3, apiKey: $4, systemPrompt: $5, progressCallback: $6) }
         )
     }
 }
@@ -659,9 +662,10 @@ class AIEnhancementClientLive {
     ///   - prompt: A natural-language instruction describing what the model should return.
     ///   - provider: The provider to route the request to (local Ollama or a remote service).
     ///   - apiKey: Optional API-key for remote providers.
+    ///   - systemPrompt: The system prompt that defines how the AI should analyze images.
     ///   - progressCallback: Reports fractional completion (0–1).
     /// - Returns: The model's textual response, trimmed of whitespace.
-    func analyzeImage(imageData: Data, model: String, prompt: String, provider: AIProviderType, apiKey: String?, progressCallback: @escaping (Progress) -> Void) async throws -> String {
+    func analyzeImage(imageData: Data, model: String, prompt: String, provider: AIProviderType, apiKey: String?, systemPrompt: String, progressCallback: @escaping (Progress) -> Void) async throws -> String {
         print("[AIEnhancementClient] analyzeImage called. Provider: \(provider.displayName), Model: \(model), Prompt (first 60): \(prompt.prefix(60))…  Image bytes: \(imageData.count)")
         guard !imageData.isEmpty else {
             throw NSError(domain: "AIEnhancementClient", code: -10, userInfo: [NSLocalizedDescriptionKey: "Screenshot data is empty"])
@@ -701,7 +705,7 @@ class AIEnhancementClientLive {
                     ]
                 ],
                 "stream": false,
-                "system": "You are an AI assistant that summarises what the user is currently working on based on a screenshot."
+                "system": systemPrompt
             ]
 
             do {
@@ -760,6 +764,10 @@ class AIEnhancementClientLive {
 
             // Build messages according to OpenAI vision format
             let messages: [[String: Any]] = [
+                [
+                    "role": "system",
+                    "content": systemPrompt
+                ],
                 [
                     "role": "user",
                     "content": [

@@ -53,6 +53,9 @@
     "Allow capturing screenshots for AI image analysis and enhanced context understanding" : {
 
     },
+    "Analysis Instructions" : {
+
+    },
     "Are you sure you want to delete all transcripts? This action cannot be undone." : {
       "comment" : "Delete transcript history confirm",
       "localizations" : {
@@ -181,6 +184,9 @@
 
     },
     "Creativity" : {
+
+    },
+    "Customize how the AI analyzes screenshots. This affects the context information that helps improve transcription accuracy." : {
 
     },
     "Delete" : {
@@ -380,6 +386,9 @@
           }
         }
       }
+    },
+    "Image Analysis Prompt" : {
+
     },
     "Image Recognition" : {
 
@@ -695,6 +704,9 @@
 
     },
     "Test Connection" : {
+
+    },
+    "These instructions tell the AI how to analyze captured screenshots for better transcription context." : {
 
     },
     "These instructions tell the AI how to improve your transcribed text." : {
