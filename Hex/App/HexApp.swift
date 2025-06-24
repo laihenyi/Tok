@@ -17,6 +17,12 @@ struct HexApp: App {
 			Button("Settings...") {
 				appDelegate.presentSettingsView()
 			}.keyboardShortcut(",")
+
+			Divider()
+
+			Button("Quit") {
+				NSApplication.shared.terminate(nil)
+			}.keyboardShortcut("q")
 		} label: {
 			let image: NSImage = {
 				let ratio = $0.size.height / $0.size.width
