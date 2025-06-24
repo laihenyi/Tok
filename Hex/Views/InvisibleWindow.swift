@@ -22,7 +22,8 @@ class InvisibleWindow: NSPanel {
     let screen = NSScreen.main ?? NSScreen.screens[0]
     let styleMask: NSWindow.StyleMask = [.fullSizeContentView, .borderless, .utilityWindow, .nonactivatingPanel]
 
-    super.init(contentRect: screen.frame,
+    // Use visibleFrame to exclude menu bar and dock areas
+    super.init(contentRect: screen.visibleFrame,
                styleMask: styleMask,
                backing: .buffered,
                defer: false)
@@ -62,7 +63,8 @@ class InvisibleWindow: NSPanel {
   private func updateToScreenWithMouse() {
     let mouseLocation = NSEvent.mouseLocation
     guard let screenWithMouse = NSScreen.screens.first(where: { $0.frame.contains(mouseLocation) }) else { return }
-    setFrame(screenWithMouse.frame, display: true)
+    // Use visibleFrame to exclude menu bar and dock areas
+    setFrame(screenWithMouse.visibleFrame, display: true)
   }
 
   @objc private func screenDidChange(_: Notification) {
