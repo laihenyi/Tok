@@ -842,12 +842,12 @@ private extension TranscriptionFeature {
 
           // Add voice recognition prompt first (user-defined context)
           if !settings.voiceRecognitionPrompt.isEmpty {
-            combinedPrompt += "<SYSTEM>" + settings.voiceRecognitionPrompt.trimmingCharacters(in: .whitespaces) + "</SYSTEM>"
+            combinedPrompt +=  settings.voiceRecognitionPrompt.trimmingCharacters(in: .whitespaces)
           }
 
           // Add context prompt from image analysis if available
           if let prompt = contextPrompt, !prompt.isEmpty {
-            combinedPrompt += "<CONTEXT>" + prompt.trimmingCharacters(in: .whitespaces) + "</CONTEXT>"
+            combinedPrompt += prompt.trimmingCharacters(in: .whitespaces)
           }
 
           // Apply combined prompt if we have any content

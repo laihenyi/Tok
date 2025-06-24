@@ -1,13 +1,17 @@
 ---
 description: 
 globs: 
+alwaysApply: false
 ---
-# Hex Overview
+# Tok Overview
 
-Hex is a macOS app that allows you to transcribe your voice into text with a global hotkey. 
-Hex will paste the transcription into your current app.
+Tok is a macOS app that allows you to transcribe your voice into text with a global hotkey. 
+Tok will paste the transcription into your current app.
 
 
 - Swift Composable Architecture
 - Swift 6
 - Swift Async/Await
+
+
+The name of the build schema is `Tok`

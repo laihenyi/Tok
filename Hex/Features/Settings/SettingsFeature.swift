@@ -348,9 +348,4 @@ private func checkAccessibilityPermission() -> PermissionStatus {
 }
 
 // MARK: - Permission Status
-
-enum PermissionStatus: Equatable {
-  case notDetermined
-  case granted
-  case denied
-}
+// PermissionStatus is now defined in Models/PermissionStatus.swift

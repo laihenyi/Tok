@@ -372,6 +372,15 @@ public struct ModelDownloadView: View {
 					CuratedList(store: store)
 				}
 			}
+
+			// ── Model readiness warning ─────────────────────────────
+			if (!store.selectedModelIsDownloaded) || store.hexSettings.transcriptionModelWarmStatus != .warm {
+				ModelWarningView(
+					isDownloaded: store.selectedModelIsDownloaded,
+					warmStatus: store.hexSettings.transcriptionModelWarmStatus
+				)
+			}
+
 			if let err = store.downloadError {
 				Text("Download Error: \(err)")
 					.foregroundColor(.red)
@@ -609,5 +618,39 @@ private struct ModelWarmStatusIndicator: View {
 			}
 		}
 		.font(.caption)
+	}
+}
+
+// MARK: – Warning Banner
+
+private struct ModelWarningView: View {
+	let isDownloaded: Bool
+	let warmStatus: ModelWarmStatus
+
+	var body: some View {
+		HStack(spacing: 6) {
+			Image(systemName: "exclamationmark.triangle.fill")
+				.foregroundColor(.orange)
+			Text(message)
+				.font(.caption)
+			Spacer()
+		}
+		.padding(8)
+		.background(Color.orange.opacity(0.1))
+		.cornerRadius(8)
+	}
+
+	private var message: String {
+		if !isDownloaded {
+			return "Selected model is not downloaded."
+		}
+		switch warmStatus {
+		case .cold:
+			return "Selected model is cold (not loaded)."
+		case .warming:
+			return "Selected model is warming up…"
+		case .warm:
+			return ""
+		}
 	}
 }

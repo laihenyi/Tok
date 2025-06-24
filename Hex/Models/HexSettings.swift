@@ -26,6 +26,7 @@ struct HexSettings: Codable, Equatable {
 	var selectedMicrophoneID: String? = nil
     var disableAutoCapitalization: Bool = false // New setting for disabling auto-capitalization
     var enableScreenCapture: Bool = false // New setting for enabling screen capture
+    var hasCompletedOnboarding: Bool = false // New setting for onboarding completion
 
     // Model warm status tracking (only for transcription models that need prewarming)
     var transcriptionModelWarmStatus: ModelWarmStatus = .cold
@@ -45,6 +46,8 @@ struct HexSettings: Codable, Equatable {
     var selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview"
     // Image Analysis Prompt
     var imageAnalysisPrompt: String = defaultImageAnalysisPrompt
+    // Developer options
+    var developerModeEnabled: Bool = false // Hidden developer mode flag
 
 	// Define coding keys to match struct properties
 	enum CodingKeys: String, CodingKey {
@@ -63,6 +66,7 @@ struct HexSettings: Codable, Equatable {
 		case selectedMicrophoneID
         case disableAutoCapitalization
         case enableScreenCapture
+        case hasCompletedOnboarding
         case useAIEnhancement
         case selectedAIModel
         case aiEnhancementPrompt
@@ -75,6 +79,7 @@ struct HexSettings: Codable, Equatable {
         case selectedImageModel
         case selectedRemoteImageModel
         case imageAnalysisPrompt
+        case developerModeEnabled
 	}
 
 	init(
@@ -93,6 +98,7 @@ struct HexSettings: Codable, Equatable {
 		selectedMicrophoneID: String? = nil,
         disableAutoCapitalization: Bool = false,
         enableScreenCapture: Bool = false,
+        hasCompletedOnboarding: Bool = false,
         useAIEnhancement: Bool = false,
         selectedAIModel: String = "gemma3",
         aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt,
@@ -104,7 +110,8 @@ struct HexSettings: Codable, Equatable {
         transcriptionModelWarmStatus: ModelWarmStatus = .cold,
         selectedImageModel: String = "llava:latest",
         selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview",
-        imageAnalysisPrompt: String = defaultImageAnalysisPrompt
+        imageAnalysisPrompt: String = defaultImageAnalysisPrompt,
+        developerModeEnabled: Bool = false
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
@@ -121,6 +128,7 @@ struct HexSettings: Codable, Equatable {
 		self.selectedMicrophoneID = selectedMicrophoneID
         self.disableAutoCapitalization = disableAutoCapitalization
         self.enableScreenCapture = enableScreenCapture
+        self.hasCompletedOnboarding = hasCompletedOnboarding
         self.useAIEnhancement = useAIEnhancement
         self.selectedAIModel = selectedAIModel
         self.aiEnhancementPrompt = aiEnhancementPrompt
@@ -133,6 +141,7 @@ struct HexSettings: Codable, Equatable {
         self.selectedImageModel = selectedImageModel
         self.selectedRemoteImageModel = selectedRemoteImageModel
         self.imageAnalysisPrompt = imageAnalysisPrompt
+        self.developerModeEnabled = developerModeEnabled
 	}
 
 	// Custom decoder that handles missing fields
@@ -165,6 +174,7 @@ struct HexSettings: Codable, Equatable {
         selectedMicrophoneID = try container.decodeIfPresent(String.self, forKey: .selectedMicrophoneID)
         disableAutoCapitalization = try container.decodeIfPresent(Bool.self, forKey: .disableAutoCapitalization) ?? false
         enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? false
+        hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         // AI Enhancement settings
         useAIEnhancement = try container.decodeIfPresent(Bool.self, forKey: .useAIEnhancement) ?? false
         selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? "gemma3"
@@ -183,6 +193,8 @@ struct HexSettings: Codable, Equatable {
         selectedRemoteImageModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteImageModel) ?? "llava-v1.5-7b-4096-preview"
         // Image Analysis Prompt
         imageAnalysisPrompt = try container.decodeIfPresent(String.self, forKey: .imageAnalysisPrompt) ?? defaultImageAnalysisPrompt
+        // Developer options
+        developerModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .developerModeEnabled) ?? false
 	}
 }
 

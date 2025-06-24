@@ -21,8 +21,6 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 
 		Task {
 			await soundEffect.preloadSounds()
-			// Warm up audio input device to reduce first recording delay
-			await recording.warmUpAudioInput()
 		}
 		print("HexAppDelegate did finish launching")
 
