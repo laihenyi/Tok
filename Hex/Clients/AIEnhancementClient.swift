@@ -753,6 +753,8 @@ class AIEnhancementClientLive {
                     progress.completedUnitCount = 100
                     progressCallback(progress)
                     print("[AIEnhancementClient] Analysis complete. Summary length: \(summary.count) chars")
+                    // Record the image recognition result in the persistent Tok log so users can review it later.
+                    TokLogger.log("Image recognition result: \(summary)")
                     return summary.trimmingCharacters(in: .whitespacesAndNewlines)
                 } else {
                     throw NSError(domain: "AIEnhancementClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "Unable to parse Ollama response"])
@@ -847,6 +849,8 @@ class AIEnhancementClientLive {
                 progress.completedUnitCount = 100
                 progressCallback(progress)
                 print("[AIEnhancementClient] Groq vision analysis complete. Summary length: \(content.count) chars")
+                // Record the image recognition result in the persistent Tok log so users can review it later.
+                TokLogger.log("Image recognition result: \(content)")
                 return cleanThinkingTags(from: content).trimmingCharacters(in: .whitespacesAndNewlines)
 
             } catch {
