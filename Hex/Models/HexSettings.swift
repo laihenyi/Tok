@@ -25,6 +25,7 @@ struct HexSettings: Codable, Equatable {
 	var outputLanguage: String? = nil
 	var selectedMicrophoneID: String? = nil
     var disableAutoCapitalization: Bool = false // New setting for disabling auto-capitalization
+    var enableScreenCapture: Bool = false // New setting for enabling screen capture
 
     // Model warm status tracking (only for transcription models that need prewarming)
     var transcriptionModelWarmStatus: ModelWarmStatus = .cold
@@ -59,6 +60,7 @@ struct HexSettings: Codable, Equatable {
 		case outputLanguage
 		case selectedMicrophoneID
         case disableAutoCapitalization
+        case enableScreenCapture
         case useAIEnhancement
         case selectedAIModel
         case aiEnhancementPrompt
@@ -84,9 +86,10 @@ struct HexSettings: Codable, Equatable {
 		minimumKeyTime: Double = 0.2,
 		copyToClipboard: Bool = true,
 		useDoubleTapOnly: Bool = false,
-		on outputLanguage: String? = nil,
+		outputLanguage: String? = nil,
 		selectedMicrophoneID: String? = nil,
         disableAutoCapitalization: Bool = false,
+        enableScreenCapture: Bool = false,
         useAIEnhancement: Bool = false,
         selectedAIModel: String = "gemma3",
         aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt,
@@ -113,6 +116,7 @@ struct HexSettings: Codable, Equatable {
 		self.outputLanguage = outputLanguage
 		self.selectedMicrophoneID = selectedMicrophoneID
         self.disableAutoCapitalization = disableAutoCapitalization
+        self.enableScreenCapture = enableScreenCapture
         self.useAIEnhancement = useAIEnhancement
         self.selectedAIModel = selectedAIModel
         self.aiEnhancementPrompt = aiEnhancementPrompt
@@ -155,6 +159,7 @@ struct HexSettings: Codable, Equatable {
 		outputLanguage = try container.decodeIfPresent(String.self, forKey: .outputLanguage)
         selectedMicrophoneID = try container.decodeIfPresent(String.self, forKey: .selectedMicrophoneID)
         disableAutoCapitalization = try container.decodeIfPresent(Bool.self, forKey: .disableAutoCapitalization) ?? false
+        enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? false
         // AI Enhancement settings
         useAIEnhancement = try container.decodeIfPresent(Bool.self, forKey: .useAIEnhancement) ?? false
         selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? "gemma3"

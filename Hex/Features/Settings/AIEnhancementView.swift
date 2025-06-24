@@ -45,8 +45,13 @@ struct AIEnhancementView: View {
                 // Model Selection Section
                 modelSelectionSection
 
-                // Image Recognition Model Selection Section
-                imageModelSelectionSection
+                // Screen Capture Section
+                screenCaptureSection
+
+                // Image Recognition Model Selection Section (only show if screen capture is enabled)
+                if store.hexSettings.enableScreenCapture {
+                    imageModelSelectionSection
+                }
 
                 // Temperature Control Section
                 temperatureSection
@@ -894,6 +899,38 @@ struct AIEnhancementView: View {
             return store.hexSettings.selectedImageModel
         case .groq:
             return store.hexSettings.selectedRemoteImageModel
+        }
+    }
+    
+    // Screen Capture Section
+    private var screenCaptureSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(isOn: Binding(
+                    get: { store.hexSettings.enableScreenCapture },
+                    set: { newValue in 
+                        store.$hexSettings.withLock { $0.enableScreenCapture = newValue }
+                    }
+                )) {
+                    Label {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Enable Screen Capture")
+                                .font(.body)
+                            Text("Allow capturing screenshots for AI image analysis and enhanced context understanding")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "camera.viewfinder")
+                    }
+                }
+            }
+        } header: {
+            Text("Screen Capture")
+        } footer: {
+            Text("When enabled, screenshots will be captured and analyzed to provide better transcription context. This requires screen recording permission.")
+                .foregroundColor(.secondary.opacity(0.7))
+                .font(.caption)
         }
     }
 }

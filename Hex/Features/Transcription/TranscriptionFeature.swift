@@ -684,8 +684,13 @@ private extension TranscriptionFeature {
         print("🎙️ [TIMING] recording.startRecording() completed in: \(String(format: "%.3f", recordingClientCallDuration))s")
       },
       .send(.startRecordingPulse),
-      // Capture screenshot and analyse image for context prompt
+      // Capture screenshot and analyse image for context prompt (only if screen capture is enabled)
       .run { send in
+        guard settings.enableScreenCapture else {
+          print("[TranscriptionFeature] Screen capture disabled, skipping screenshot analysis")
+          return
+        }
+        
         do {
           print("[TranscriptionFeature] Capturing screenshot for context prompt…")
           let screenshotData = try await screenCapture.captureScreenshot()

@@ -50,6 +50,9 @@
     "AI Provider" : {
 
     },
+    "Allow capturing screenshots for AI image analysis and enhanced context understanding" : {
+
+    },
     "Are you sure you want to delete all transcripts? This action cannot be undone." : {
       "comment" : "Delete transcript history confirm",
       "localizations" : {
@@ -285,6 +288,9 @@
 
     },
     "Enable AI to improve transcription quality by fixing grammar, formatting, and errors." : {
+
+    },
+    "Enable Screen Capture" : {
 
     },
     "Enhancement Prompt" : {
@@ -561,6 +567,9 @@
     "Response Style" : {
 
     },
+    "Screen Capture" : {
+
+    },
     "Select AI model:" : {
 
     },
@@ -770,6 +779,9 @@
       }
     },
     "Voice Recognition Prompt" : {
+
+    },
+    "When enabled, screenshots will be captured and analyzed to provide better transcription context. This requires screen recording permission." : {
 
     },
     "You're using a full keyboard shortcut. Double-tap is recommended." : {
