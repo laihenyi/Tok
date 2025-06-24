@@ -273,7 +273,7 @@ public struct ModelDownloadFeature {
 				do {
 					try await transcription.prewarmModel(model) { progress in
 						Task { @MainActor in
-							await send(.prewarmProgress(progress.fractionCompleted))
+							send(.prewarmProgress(progress.fractionCompleted))
 						}
 					}
 					await send(.prewarmCompleted(.success(model)))
@@ -283,7 +283,7 @@ public struct ModelDownloadFeature {
 			}
 			.cancellable(id: CancelID.prewarm)
 
-		case let .prewarmProgress(progress):
+        case .prewarmProgress(_):
 			// Could update UI with prewarming progress if needed
 			return .none
 

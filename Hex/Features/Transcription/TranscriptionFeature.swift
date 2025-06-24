@@ -441,7 +441,7 @@ struct TranscriptionFeature {
             print("[TranscriptionFeature] Starting prewarming for model: \(selectedModel)")
             try await transcription.prewarmModel(selectedModel) { progress in
               Task { @MainActor in
-                await send(.prewarmProgress(progress.fractionCompleted))
+                send(.prewarmProgress(progress.fractionCompleted))
               }
             }
             await send(.prewarmCompleted(.success(selectedModel)))
@@ -452,7 +452,7 @@ struct TranscriptionFeature {
         }
         .cancellable(id: CancelID.prewarm)
 
-      case let .prewarmProgress(progress):
+      case .prewarmProgress(_):
         // Progress updates are handled silently for now
         // Could be used to update UI if needed
         return .none
@@ -666,7 +666,6 @@ private extension TranscriptionFeature {
     let model = state.hexSettings.selectedModel
     let language = state.hexSettings.outputLanguage
     let settings = state.hexSettings
-    let contextPrompt = state.contextPrompt
     // Values for image analysis
     let providerTypeForImage = state.hexSettings.aiProviderType
     let imageModel = providerTypeForImage == .ollama ? state.hexSettings.selectedImageModel : state.hexSettings.selectedRemoteImageModel
@@ -722,7 +721,7 @@ private extension TranscriptionFeature {
       .run { send in
         do {
           // Create decoding options with context prompt support
-          var decodeOptions = DecodingOptions(
+            let decodeOptions = DecodingOptions(
             language: language,
             detectLanguage: language == nil,
             chunkingStrategy: .vad

@@ -583,12 +583,6 @@ actor TranscriptionClientLive {
     }
 
     print("[TranscriptionClientLive] Starting stream transcription with model: \(model)")
-    print("[TranscriptionClientLive] WhisperKit components available:")
-    print("  - audioEncoder: \(whisperKit.audioEncoder != nil)")
-    print("  - featureExtractor: \(whisperKit.featureExtractor != nil)")
-    print("  - segmentSeeker: \(whisperKit.segmentSeeker != nil)")
-    print("  - textDecoder: \(whisperKit.textDecoder != nil)")
-    print("  - audioProcessor: \(whisperKit.audioProcessor != nil)")
 
     // Create AudioStreamTranscriber with weak self reference to prevent crashes
     let streamTranscriber = AudioStreamTranscriber(
@@ -646,12 +640,8 @@ actor TranscriptionClientLive {
       
       print("[TranscriptionClientLive] Sending update with cleaned text: '\(update.currentText)'")
       
-      // Safely call the update callback with error handling
-      do {
-        updateCallback(update)
-      } catch {
-        print("[TranscriptionClientLive] Error in update callback: \(error)")
-      }
+      updateCallback(update)
+
     }
     
     self.audioStreamTranscriber = streamTranscriber
@@ -681,12 +671,7 @@ actor TranscriptionClientLive {
           isComplete: true
         )
 
-        // Safely call the update callback with error handling
-        do {
-          updateCallback(finalUpdate)
-        } catch {
-          print("[TranscriptionClientLive] Error in final update callback: \(error)")
-        }
+        updateCallback(finalUpdate)
         throw error
       }
 

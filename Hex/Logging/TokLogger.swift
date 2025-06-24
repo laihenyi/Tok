@@ -22,7 +22,6 @@ struct TokLogger {
         return f
     }()
 
-    /// Directory containing all Hex log files. Currently only a single `hex.log` file is used.
     private static let logsDirectoryURL: URL = {
         let base = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
         let dir = base.appendingPathComponent("Logs", isDirectory: true)
@@ -60,6 +59,7 @@ struct TokLogger {
                 }
             } catch {
                 // Silently ignore logging failures
+                print("Failed to write to log file: \(error)")
             }
         }
     }

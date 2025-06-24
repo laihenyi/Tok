@@ -215,13 +215,8 @@ struct PasteboardClientLive {
             // Add a small delay to allow system to process
             try? await Task.sleep(for: .milliseconds(100))
 
-            // Use a thread-safe approach to prevent _dispatch_assert_queue_fail
-            let vKeyCode: CGKeyCode
-            if Thread.isMainThread {
-                vKeyCode = Sauce.shared.keyCode(for: .v)
-            } else {
-                vKeyCode = DispatchQueue.main.sync { Sauce.shared.keyCode(for: .v) }
-            }
+            // Obtain the key code on the main actor to avoid blocking synchronous dispatches
+            let vKeyCode: CGKeyCode = await MainActor.run { Sauce.shared.keyCode(for: .v) }
             let cmdKeyCode: CGKeyCode = 55 // Command key
 
             // Create and post key events with small delays between
