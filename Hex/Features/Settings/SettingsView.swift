@@ -249,6 +249,21 @@ struct SettingsView: View {
 			} header: {
 				Text("General")
 			}
+
+			// --- History Section ---
+			Section {
+				Button {
+					store.send(.openHistory)
+				} label: {
+					Label("Open History", systemImage: "clock")
+				}
+			} header: {
+				Text("History")
+			} footer: {
+				Text("View and manage your past transcriptions.")
+					.font(.footnote)
+					.foregroundColor(.secondary)
+			}
 		}
 		.formStyle(.grouped)
 		.task {

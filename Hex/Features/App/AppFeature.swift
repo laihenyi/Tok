@@ -71,6 +71,9 @@ struct AppFeature {
         return .none
       case .transcription:
         return .none
+      case .settings(.openHistory):
+        state.activeTab = .history
+        return .none
       case .settings:
         return .none
       case .history:

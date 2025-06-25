@@ -520,6 +520,9 @@
         }
       }
     },
+    "OK" : {
+
+    },
     "Ollama Connected" : {
 
     },
@@ -533,6 +536,9 @@
 
     },
     "Open Accessibility Settings" : {
+
+    },
+    "Open History" : {
 
     },
     "Open Log File" : {
@@ -800,6 +806,9 @@
     "Test Connection" : {
 
     },
+    "The recording was long but the resulting transcription appears to be empty or incomplete. You can retry the transcription from the History tab in Settings." : {
+
+    },
     "These instructions tell the AI how to analyze captured screenshots for better transcription context." : {
 
     },
@@ -819,6 +828,9 @@
           }
         }
       }
+    },
+    "Transcription May Have Failed" : {
+
     },
     "Transcription Model" : {
       "comment" : "Label for Transcription Model Section",
@@ -875,6 +887,9 @@
           }
         }
       }
+    },
+    "View and manage your past transcriptions." : {
+
     },
     "Vision Model" : {
 

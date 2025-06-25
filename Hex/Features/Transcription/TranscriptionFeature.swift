@@ -163,6 +163,9 @@ struct TranscriptionFeature {
     // Prompt derived from screenshot analysis that is fed into Whisper for better recognition
     var contextPrompt: String? = nil
     
+    // Alert state – set to true when a transcription potentially failed
+    var showTranscriptionFailedAlert: Bool = false
+    
     @Shared(.hexSettings) var hexSettings: HexSettings
     @Shared(.transcriptionHistory) var transcriptionHistory: TranscriptionHistory
   }
@@ -209,6 +212,9 @@ struct TranscriptionFeature {
     case prewarmSelectedModel
     case prewarmProgress(Double)
     case prewarmCompleted(Result<String, Error>)
+
+    // Alert actions
+    case setTranscriptionFailedAlert(Bool)
   }
 
   enum CancelID {
@@ -477,6 +483,12 @@ struct TranscriptionFeature {
           return .none
         }
         return handleCancel(&state)
+
+      // MARK: - Alert Handling
+
+      case let .setTranscriptionFailedAlert(flag):
+        state.showTranscriptionFailedAlert = flag
+        return .none
       }
     }
   }
@@ -756,8 +768,15 @@ private extension TranscriptionFeature {
     state.isRecording = false
     state.isStreamingTranscription = false // Stop streaming immediately
 
-    // Capture streaming transcription text BEFORE resetting it for potential fallback use
-    let streamingFallbackText = state.streamingTranscription.currentText
+    // Capture *all* streaming text (confirmed + current + unconfirmed) BEFORE
+    // resetting it, otherwise we might lose the beginning of the sentence if
+    // Whisper started a new segment shortly before the user released the key.
+    let streamingFallbackText: String = {
+      let confirmed = state.streamingTranscription.confirmedSegments.map(\.text).joined(separator: " ")
+      let unconfirmed = state.streamingTranscription.unconfirmedSegments.map(\.text).joined(separator: " ")
+      let current = state.streamingTranscription.currentText
+      return ([confirmed, current, unconfirmed].filter { !$0.isEmpty }).joined(separator: " ")
+    }()
 
     // Reset streaming transcription state to ensure clean stop
     // This must be done early to ensure all code paths reset the streaming state
@@ -793,6 +812,7 @@ private extension TranscriptionFeature {
     
     // Keep the context prompt (may be set by delayed screenshot capture earlier)
     let contextPrompt = state.contextPrompt
+    let recordingDuration: TimeInterval = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
     let model = state.hexSettings.selectedModel
     let language = state.hexSettings.outputLanguage
     let settings = state.hexSettings
@@ -804,60 +824,114 @@ private extension TranscriptionFeature {
       // Cancel screenshot capture if it hasn't fired yet, then cancel streaming transcription
       .cancel(id: CancelID.screenshotCapture),
       .cancel(id: CancelID.streamTranscription),
-      // Then stop streaming transcription since recording ended
-      .run { _ in
-        await transcription.stopStreamTranscription()
-      },
+      // Then stop streaming transcription synchronously before beginning offline transcription
       .run { send in
+        // Ensure the real-time streaming engine is fully stopped before we
+        // start an offline transcription.  If we launch them concurrently,
+        // WhisperKit will cancel one of the operations which manifests as a
+        // `CancellationError`.
+        await transcription.stopStreamTranscription()
+
+        // Proceed with the remainder of the stop-recording workflow.
         do {
           await soundEffect.play(.stopRecording)
           let audioURL = await recording.stopRecording()
 
-          // Create transcription options with the selected language and any context prompt that may have been set earlier
-          var decodeOptions = DecodingOptions(
+          // Build decoding options
+          // 1) baseOptions (no prompt tokens) – identical to History view
+          let baseOptions = DecodingOptions(
             language: language,
             detectLanguage: language == nil,
             chunkingStrategy: .vad
           )
-          
-          // Combine context prompt (possibly set by the delayed screenshot capture) with voice recognition prompt (from settings)
+
+          // 2) With-prefill variant that optionally contains prompt tokens
+          var decodeOptionsWithPrefill = baseOptions
+
           var combinedPrompt = ""
-          
-          // Add voice recognition prompt first (user-defined context)
           if !settings.voiceRecognitionPrompt.isEmpty {
             combinedPrompt += settings.voiceRecognitionPrompt.trimmingCharacters(in: .whitespaces)
           }
-          
-          // Add context prompt from image analysis if available
           if let prompt = contextPrompt, !prompt.isEmpty {
             combinedPrompt += " " + prompt.trimmingCharacters(in: .whitespaces)
           }
-          
-          // Apply combined prompt if we have any content
-          if !combinedPrompt.isEmpty {
-            // Use the proper WhisperKit context prompt API
-            if let tokenizer = await transcription.getTokenizer() {
-              decodeOptions.promptTokens = tokenizer.encode(text: " " + combinedPrompt)
-                .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
-              decodeOptions.usePrefillPrompt = true
-              print("[TranscriptionFeature] Applied combined prompt with \(decodeOptions.promptTokens?.count ?? 0) tokens: '\(combinedPrompt)'")
+
+          if !combinedPrompt.isEmpty, let tokenizer = await transcription.getTokenizer() {
+            decodeOptionsWithPrefill.promptTokens = tokenizer.encode(text: " " + combinedPrompt)
+              .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+            decodeOptionsWithPrefill.usePrefillPrompt = false
+            print("[TranscriptionFeature] Applied combined prompt with \(decodeOptionsWithPrefill.promptTokens?.count ?? 0) tokens: '\(combinedPrompt)'")
+          }
+
+          // Transcription WITH prefill prompt
+          print("Transcribing recorded audio WITH prefill prompt…")
+          let resultWithPrefill = try await transcription.transcribe(
+            audioURL,
+            model,
+            decodeOptionsWithPrefill,
+            settings
+          ) { _ in }
+
+          print("Result WITH prefill prompt: \"\(resultWithPrefill)\"")
+
+          var resultWithoutPrefill = ""
+          // Transcription WITHOUT prefill prompt
+          if resultWithPrefill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            print("Result WITH prefill prompt is empty, transcribing WITHOUT prefill prompt…")
+            let decodeOptionsNoPrefill = baseOptions
+
+            // 1. Transcription WITHOUT prefill prompt (with one-shot retry if empty)
+            print("Transcribing recorded audio WITHOUT prefill prompt…")
+            resultWithoutPrefill = try await transcription.transcribe(
+              audioURL,
+              model,
+              decodeOptionsNoPrefill,
+              settings
+            ) { _ in }
+
+            print("Initial result WITHOUT prefill prompt: \"\(resultWithoutPrefill)\"")
+
+            if resultWithoutPrefill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                recordingDuration > 3 {
+              print("[TranscriptionFeature] Empty initial result for >3 s recording – retrying once after 500 ms…")
+              try await Task.sleep(for: .milliseconds(1000))
+
+              let retryResultNP = try await transcription.transcribe(
+                audioURL,
+                model,
+                decodeOptionsNoPrefill,
+                settings
+              ) { _ in }
+
+              print("[TranscriptionFeature] Retry result WITHOUT prefill: \"\(retryResultNP)\"")
+
+              if !retryResultNP.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                resultWithoutPrefill = retryResultNP
+              }
+              print("Final result WITHOUT prefill prompt (after optional retry): \"\(resultWithoutPrefill)\"")
             }
           }
-          
-          // Use traditional file-based transcription for accurate final result
-          print("Transcribing recorded audio file for final result...")
-          let result = try await transcription.transcribe(audioURL, model, decodeOptions, settings) { _ in }
 
-          // Check if transcription result is empty and use streaming fallback if available
-          let finalResult: String
-          if result.isEmpty && !streamingFallbackText.isEmpty {
-            print("[TranscriptionFeature] Transcription result is empty, using streamingTranscription.currentText as fallback: '\(streamingFallbackText)'")
-            finalResult = streamingFallbackText
+          // Decide preferred result (prefer prefill variant if non-empty)
+          let preferredResult: String
+          if !resultWithPrefill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            preferredResult = resultWithPrefill
+          } else if !resultWithoutPrefill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            preferredResult = resultWithoutPrefill
           } else {
-            finalResult = result
+            preferredResult = ""
           }
 
-          print("Transcribed audio from URL: \(audioURL) to text: \(finalResult)")
+          // Fallback to streaming text if both results are empty
+          let finalResult: String
+          if preferredResult.isEmpty && !streamingFallbackText.isEmpty {
+            print("[TranscriptionFeature] Both transcription variants are empty, using streaming fallback: '\(streamingFallbackText)'")
+            finalResult = streamingFallbackText
+          } else {
+            finalResult = preferredResult
+          }
+
+          print("Chosen transcription result: \"\(finalResult)\"")
           TokLogger.log("Final transcription: \(finalResult)")
           await send(.transcriptionResult(finalResult))
         } catch {
@@ -1060,6 +1134,12 @@ private extension TranscriptionFeature {
     transcriptionHistory: Shared<TranscriptionHistory>
   ) -> Effect<Action> {
     .run { send in
+      // Detect potential transcription failure (long recording but short/empty text)
+      let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+      if duration >= 10 && trimmed.count < 10 {
+        await send(.setTranscriptionFailedAlert(true))
+      }
+
       do {
         let originalURL = await recording.stopRecording()
 
@@ -1218,6 +1298,24 @@ struct TranscriptionView: View {
     )
     .task {
       await store.send(.task).finish()
+    }
+    // Alert for potential failed transcription
+    .alert(
+      "Transcription May Have Failed",
+      isPresented: Binding(
+        get: { store.showTranscriptionFailedAlert },
+        set: { newValue in
+          if !newValue {
+            store.send(.setTranscriptionFailedAlert(false))
+          }
+        }
+      )
+    ) {
+      Button("OK", role: .cancel) {
+        store.send(.setTranscriptionFailedAlert(false))
+      }
+    } message: {
+      Text("The recording was long but the resulting transcription appears to be empty or incomplete. You can retry the transcription from the History tab in Settings.")
     }
   }
 }

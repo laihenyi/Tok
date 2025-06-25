@@ -508,24 +508,31 @@ struct StreamingTranscriptionTooltip: View {
     print("[StreamingTranscriptionTooltip] confirmedText: '\(confirmedText)'")
     print("[StreamingTranscriptionTooltip] unconfirmedText: '\(unconfirmedText)'")
     
-    var result: String
-    // Prioritize showing actual text content over "Listening..."
-    if !streaming.currentText.isEmpty {
-      result = streaming.currentText
-    } else if !confirmedText.isEmpty && !unconfirmedText.isEmpty {
-      result = "\(confirmedText) \(unconfirmedText)..."
-    } else if !confirmedText.isEmpty {
-      result = confirmedText
-    } else if !unconfirmedText.isEmpty {
-      result = "\(unconfirmedText)..."
-    } else {
-      result = "Listening..."
+    // Build a single string that keeps everything we've heard so far so we don't
+    // "lose" earlier words once Whisper starts a new segment.
+    var parts: [String] = []
+
+    // 1. All confirmed words are always included.
+    if !confirmedText.isEmpty {
+      parts.append(confirmedText)
     }
 
-    result = transcriptionClient.cleanWhisperTokens(result)
-    
-    print("[StreamingTranscriptionTooltip] Final displayText: '\(result)'")
-    return result
+    // 2. Include the current in-flight text if we have any, otherwise fall back
+    //    to the unconfirmed buffer so the user still sees something while
+    //    Whisper is thinking.
+    if !streaming.currentText.isEmpty {
+      parts.append(streaming.currentText)
+    } else if !unconfirmedText.isEmpty {
+      parts.append("\(unconfirmedText)...")
+    }
+
+    // If we have nothing at all yet, show a placeholder.
+    guard !parts.isEmpty else { return "Listening..." }
+
+    let combined = transcriptionClient.cleanWhisperTokens(parts.joined(separator: " "))
+
+    print("[StreamingTranscriptionTooltip] Final displayText: '\(combined)'")
+    return combined
   }
 
   // Heuristic font-size scaling based on the length of the text that needs to be displayed.

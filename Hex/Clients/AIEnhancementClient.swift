@@ -807,7 +807,6 @@ class AIEnhancementClientLive {
             let requestDict: [String: Any] = [
                 "model": model,
                 "messages": messages,
-                "max_completion_tokens": 512,
                 "temperature": 0.2,
                 "stream": false
             ]

@@ -66,6 +66,9 @@ struct SettingsFeature {
     
     // AI Enhancement
     case aiEnhancement(AIEnhancementFeature.Action)
+
+    // Navigation
+    case openHistory
   }
 
   @Dependency(\.keyEventMonitor) var keyEventMonitor
@@ -308,6 +311,10 @@ struct SettingsFeature {
         
       case let .availableInputDevicesLoaded(devices):
         state.availableInputDevices = devices
+        return .none
+
+      // Navigation
+      case .openHistory:
         return .none
       }
     }
