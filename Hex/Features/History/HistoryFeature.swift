@@ -2,6 +2,7 @@ import AVFoundation
 import ComposableArchitecture
 import Dependencies
 import SwiftUI
+import WhisperKit
 
 // MARK: - Models
 
@@ -72,6 +73,7 @@ struct HistoryFeature {
 		var playingTranscriptID: UUID?
 		var audioPlayer: AVAudioPlayer?
 		var audioPlayerController: AudioPlayerController?
+		@Shared(.hexSettings) var hexSettings: HexSettings
 	}
 
 	enum Action {
@@ -82,9 +84,12 @@ struct HistoryFeature {
 		case deleteAllTranscripts
 		case confirmDeleteAll
 		case playbackFinished
+		case retranscribeTranscript(UUID)
 	}
 
 	@Dependency(\.pasteboard) var pasteboard
+	@Dependency(\.transcription) var transcription
+	@Dependency(\.soundEffects) var soundEffect
 
 	var body: some ReducerOf<Self> {
 		Reduce { state, action in
@@ -190,6 +195,55 @@ struct HistoryFeature {
 						try? FileManager.default.removeItem(at: transcript.audioPath)
 					}
 				}
+
+			case let .retranscribeTranscript(id):
+				// Stop any playback when retranscribing
+				state.audioPlayerController?.stop()
+				state.audioPlayer = nil
+				state.audioPlayerController = nil
+				state.playingTranscriptID = nil
+
+				guard let original = state.transcriptionHistory.history.first(where: { $0.id == id }) else {
+					return .none
+				}
+
+				let model = state.hexSettings.selectedModel
+				let language = state.hexSettings.outputLanguage
+				let settings = state.hexSettings
+				let transcriptionHistory = state.$transcriptionHistory
+
+				return .run { _ in
+					do {
+						let options = DecodingOptions(
+							language: language,
+							detectLanguage: language == nil,
+							chunkingStrategy: .vad
+						)
+						// Perform transcription
+						let result = try await transcription.transcribe(original.audioPath, model, options, settings) { _ in }
+
+						// Skip if result empty
+						guard !result.isEmpty else { return }
+
+						// Create new transcript referencing same audio file
+						let newTranscript = Transcript(
+							timestamp: Date(),
+							text: result,
+							audioPath: original.audioPath,
+							duration: original.duration
+						)
+
+						transcriptionHistory.withLock { history in
+							history.history.insert(newTranscript, at: 0)
+						}
+
+						// Paste and play sound
+						await pasteboard.paste(result)
+						await soundEffect.play(.pasteTranscript)
+					} catch {
+						print("Error re-transcribing audio: \(error)")
+					}
+				}
 			}
 		}
 	}
@@ -201,6 +255,7 @@ struct TranscriptView: View {
 	let onPlay: () -> Void
 	let onCopy: () -> Void
 	let onDelete: () -> Void
+	let onRetranscribe: () -> Void
 
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
@@ -247,6 +302,13 @@ struct TranscriptView: View {
 					.buttonStyle(.plain)
 					.foregroundStyle(isPlaying ? .blue : .secondary)
 					.help(isPlaying ? "Stop playback" : "Play audio")
+
+					Button(action: onRetranscribe) {
+						Image(systemName: "arrow.clockwise")
+					}
+					.buttonStyle(.plain)
+					.foregroundStyle(.secondary)
+					.help("Re-run transcription")
 
 					Button(action: onDelete) {
 						Image(systemName: "trash.fill")
@@ -301,7 +363,8 @@ struct TranscriptView: View {
 		isPlaying: false,
 		onPlay: {},
 		onCopy: {},
-		onDelete: {}
+		onDelete: {},
+		onRetranscribe: {}
 	)
 }
 
@@ -325,7 +388,8 @@ struct HistoryView: View {
 							isPlaying: store.playingTranscriptID == transcript.id,
 							onPlay: { store.send(.playTranscript(transcript.id)) },
 							onCopy: { store.send(.copyToClipboard(transcript.text)) },
-							onDelete: { store.send(.deleteTranscript(transcript.id)) }
+							onDelete: { store.send(.deleteTranscript(transcript.id)) },
+							onRetranscribe: { store.send(.retranscribeTranscript(transcript.id)) }
 						)
 					}
 				}
