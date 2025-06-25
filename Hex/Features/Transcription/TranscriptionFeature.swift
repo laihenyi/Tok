@@ -11,6 +11,8 @@ import SwiftUI
 import WhisperKit
 import IOKit
 import IOKit.pwr_mgt
+import Carbon
+import Sauce
 
 // MARK: - Progress Tracking Structures
 
@@ -237,6 +239,7 @@ struct TranscriptionFeature {
     case streamTranscription
     case prewarm
     case screenshotCapture
+    case hotKeyWatchdog
   }
 
   @Dependency(\.transcription) var transcription
@@ -583,7 +586,7 @@ private extension TranscriptionFeature {
           return hexSettings.useDoubleTapOnly || keyEvent.key != nil
 
         case .stopRecording:
-          Task { await send(.hotKeyReleased) }
+          Task { await send(TranscriptionFeature.Action.hotKeyReleased) }
           return false // or `true` if you want to intercept
 
         case .cancel:
@@ -631,16 +634,34 @@ private extension TranscriptionFeature {
     }
     .cancellable(id: CancelID.delayedRecord, cancelInFlight: true)
 
-    return .merge(maybeCancel, warmUp, delayedStart)
+    // Watchdog: while in press-and-hold, periodically verify the hotkey is still held.
+    let watchdog = Effect.run { send in
+      @Shared(.hexSettings) var settings: HexSettings
+
+      while !Task.isCancelled {
+        try await Task.sleep(for: .milliseconds(50))
+
+        let hotkey = settings.hotkey
+        if !Self.isHotKeyCurrentlyPressed(hotkey) {
+          await send(TranscriptionFeature.Action.hotKeyReleased)
+          break
+        }
+      }
+    }
+    .cancellable(id: CancelID.hotKeyWatchdog, cancelInFlight: true)
+
+    return .merge(maybeCancel, warmUp, delayedStart, watchdog)
   }
 
   func handleHotKeyReleased(isRecording: Bool) -> Effect<Action> {
+    let cancelWatchdog: Effect<Action> = .cancel(id: CancelID.hotKeyWatchdog)
+
     if isRecording {
       // We actually stop if we're currently recording
-      return .send(.stopRecording)
+      return .merge(.send(.stopRecording), cancelWatchdog)
     } else {
       // If not recording yet, just cancel the delayed start
-      return .cancel(id: CancelID.delayedRecord)
+      return .merge(.cancel(id: CancelID.delayedRecord), cancelWatchdog)
     }
   }
 }
@@ -954,12 +975,19 @@ private extension TranscriptionFeature {
     _ state: inout State,
     result: String
   ) -> Effect<Action> {
+    // Ignore empty (or whitespace-only) transcriptions altogether
+    let trimmedResult = result.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedResult.isEmpty else {
+      state.isTranscribing = false
+      state.isPrewarming = false
+      return .none
+    }
     // First check if we should use AI enhancement
     if state.hexSettings.useAIEnhancement {
       // Keep state.isTranscribing = true since we're still processing
       
       // Store the original transcription for error handling/fallback
-      state.pendingTranscription = result
+      state.pendingTranscription = trimmedResult
       
       // Extract values to avoid capturing inout parameter
       let providerType = state.hexSettings.aiProviderType
@@ -971,7 +999,7 @@ private extension TranscriptionFeature {
       let contextPrompt = state.contextPrompt
       
       return enhanceWithAI(
-        result: result,
+        result: trimmedResult,
         providerType: providerType,
         selectedAIModel: selectedAIModel,
         selectedRemoteModel: selectedRemoteModel,
@@ -985,7 +1013,7 @@ private extension TranscriptionFeature {
       state.isPrewarming = false
 
       // If empty text, nothing else to do
-      guard !result.isEmpty else {
+      guard !trimmedResult.isEmpty else {
         return .none
       }
 
@@ -994,7 +1022,7 @@ private extension TranscriptionFeature {
 
       // Continue with storing the final result in the background
       return finalizeRecordingAndStoreTranscript(
-        result: result,
+        result: trimmedResult,
         duration: duration,
         transcriptionHistory: state.$transcriptionHistory
       )
@@ -1014,9 +1042,12 @@ private extension TranscriptionFeature {
     groqAPIKey: String,
     contextPrompt: String?
   ) -> Effect<Action> {
+    // Trim whitespace so we don't send blank requests to the AI service
+    let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+
     // If empty text, nothing else to do
-    guard !result.isEmpty else {
-      return .send(.aiEnhancementResult(result)) // Just pass through empty text
+    guard !trimmed.isEmpty else {
+      return .send(.aiEnhancementResult(trimmed)) // Just pass through empty text
     }
     
     let options = EnhancementOptions(
@@ -1052,7 +1083,7 @@ private extension TranscriptionFeature {
           
           // Access the raw value directly to avoid argument label issues
           let enhanceMethod = aiEnhancement.enhance
-          let enhancedText = try await enhanceMethod(result, model, options, providerType, apiKey) { progress in
+          let enhancedText = try await enhanceMethod(trimmed, model, options, providerType, apiKey) { progress in
             // Optional: Could update UI with progress information here if needed
           }
           
@@ -1214,6 +1245,7 @@ private extension TranscriptionFeature {
       .cancel(id: CancelID.enhancementFeedback),
       .cancel(id: CancelID.streamTranscription),
       .cancel(id: CancelID.screenshotCapture),
+      .cancel(id: CancelID.hotKeyWatchdog),
       // Stop streaming transcription after cancelling the effect
       .run { _ in
         await transcription.stopStreamTranscription()
@@ -1322,5 +1354,40 @@ struct TranscriptionView: View {
     } message: {
       Text("The recording was long but the resulting transcription appears to be empty or incomplete. You can retry the transcription from the History tab in Settings.")
     }
+  }
+}
+
+// MARK: - HotKey Watchdog helpers
+
+private extension TranscriptionFeature {
+  /// Returns `true` iff the entire hotkey chord (key + modifiers) is currently pressed.
+  static func isHotKeyCurrentlyPressed(_ hotkey: HotKey) -> Bool {
+    // 1) Key component (if any)
+    if let key = hotkey.key {
+      let keyCode = SafeSauce.safeKeyCode(for: key)
+        if !CGEventSource.keyState(.combinedSessionState, key: keyCode) {
+        return false
+      }
+    }
+
+    // 2) Modifier component(s)
+    let flags = CGEventSource.flagsState(.combinedSessionState)
+
+    for mod in hotkey.modifiers.modifiers {
+      switch mod {
+      case .command:
+        if !flags.contains(.maskCommand) { return false }
+      case .option:
+        if !flags.contains(.maskAlternate) { return false }
+      case .shift:
+        if !flags.contains(.maskShift) { return false }
+      case .control:
+        if !flags.contains(.maskControl) { return false }
+      case .fn:
+        if !flags.contains(.maskSecondaryFn) { return false }
+      }
+    }
+
+    return true
   }
 }
