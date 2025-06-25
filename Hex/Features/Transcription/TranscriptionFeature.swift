@@ -117,13 +117,16 @@ struct StreamingTranscription: Equatable {
     confirmedSegments = update.confirmedSegments
     unconfirmedSegments = update.unconfirmedSegments
     
-    // Only update currentText if the new text is not empty, 
-    // to prevent empty updates from overwriting previous transcription
-    if !update.currentText.isEmpty {
+    // Buffer rule: only accept the new currentText if it is
+    // 1) non-empty AND
+    // 2) at least as long as the current text.
+    // This prevents the UI from flickering when Whisper temporarily
+    // emits shorter (or empty) partial hypotheses before extending them again.
+    if !update.currentText.isEmpty && update.currentText.count >= currentText.count {
       currentText = update.currentText
       print("[StreamingTranscription] Updated currentText to: '\(currentText)'")
     } else {
-      print("[StreamingTranscription] Skipping empty currentText update")
+      print("[StreamingTranscription] Skipping currentText update (buffer rule)")
     }
     
     if !isActive && !currentText.isEmpty {
@@ -385,29 +388,8 @@ struct TranscriptionFeature {
           return .none
         }
         
-        print("[TranscriptionFeature] Received stream update: '\(update.currentText)'")
-        print("[TranscriptionFeature] Before update - state.streamingTranscription.currentText: '\(state.streamingTranscription.currentText)'")
-        
-        // Manually update the streaming transcription state
-        state.streamingTranscription.confirmedSegments = update.confirmedSegments
-        state.streamingTranscription.unconfirmedSegments = update.unconfirmedSegments
-        
-        // Only update currentText if the new text is not empty
-        if !update.currentText.isEmpty {
-          state.streamingTranscription.currentText = update.currentText
-          print("[TranscriptionFeature] Updated currentText to: '\(state.streamingTranscription.currentText)'")
-        } else {
-          print("[TranscriptionFeature] Skipping empty currentText update")
-        }
-        
-        // Update active state
-        if !state.streamingTranscription.isActive && !state.streamingTranscription.currentText.isEmpty {
-          state.streamingTranscription.isActive = true
-          state.streamingTranscription.startTime = Date()
-          print("[TranscriptionFeature] Activated streaming transcription")
-        }
-        
-        print("[TranscriptionFeature] After update - state.streamingTranscription.currentText: '\(state.streamingTranscription.currentText)'")
+        // Delegate buffering logic to the helper on the StreamingTranscription struct
+        state.streamingTranscription.updateFromStream(update)
         return .none
 
       // MARK: - Context Prompt Actions
@@ -913,7 +895,7 @@ private extension TranscriptionFeature {
           }
 
           // Decide preferred result (prefer prefill variant if non-empty)
-          let preferredResult: String
+          var preferredResult: String
           if !resultWithPrefill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             preferredResult = resultWithPrefill
           } else if !resultWithoutPrefill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -922,7 +904,17 @@ private extension TranscriptionFeature {
             preferredResult = ""
           }
 
-          // Fallback to streaming text if both results are empty
+          // If the streamingFallbackText does not end with "thank you" (case-insensitive, with or without the trailing period),
+          // strip the same phrase from the preferredResult. We perform the comparison in lowercase so the check is case-insensitive.
+          let fallbackLower = streamingFallbackText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+          let hasThankYouSuffix = fallbackLower.hasSuffix("thank you.") || fallbackLower.hasSuffix("thank you")
+
+          if !hasThankYouSuffix {
+            // Remove both "Thank you." and "Thank you" from the preferredResult, ignoring case.
+            preferredResult = preferredResult.replacingOccurrences(of: "Thank you.", with: "", options: .caseInsensitive)
+            preferredResult = preferredResult.replacingOccurrences(of: "Thank you", with: "", options: .caseInsensitive)
+          }
+
           let finalResult: String
           if preferredResult.isEmpty && !streamingFallbackText.isEmpty {
             print("[TranscriptionFeature] Both transcription variants are empty, using streaming fallback: '\(streamingFallbackText)'")

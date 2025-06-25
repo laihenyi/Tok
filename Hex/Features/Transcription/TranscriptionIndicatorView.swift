@@ -31,6 +31,9 @@ struct TranscriptionIndicatorView: View {
   let enhanceBaseColor: Color = .green
   let streamingBaseColor: Color = .orange
 
+  // Access to cleanWhisperTokens for helper methods
+  @Dependency(\.transcription) private var transcriptionClient
+
   private var backgroundColor: Color {
     switch status {
     case .hidden: return Color.clear
@@ -112,16 +115,15 @@ struct TranscriptionIndicatorView: View {
   }
 
   var body: some View {
-    // Fast track for hidden state to avoid expensive calculations
+    // Fast track hidden state
     if status == .hidden {
       EmptyView()
     } else {
-      // Only do these calculations when actually visible
       let averagePower = min(1, meter.averagePower * 3)
-      let peakPower = min(1, meter.peakPower * 3)
-      
-      ZStack {
-        // Base capsule with all effects - avoid recreating for hidden state
+      let peakPower     = min(1, meter.peakPower     * 3)
+
+      // Build the reusable capsule w/ overlays once
+      let capsule = ZStack {
         CapsuleWithEffects(
           status: status,
           cornerRadius: cornerRadius,
@@ -135,51 +137,25 @@ struct TranscriptionIndicatorView: View {
           width: status == .recording ? expandedWidth : baseWidth,
           height: baseWidth
         )
-        // Combine these into a single animation for better performance
         .scaleEffect(status == .optionKeyPressed ? 0.95 : 1)
         .opacity(status == .hidden ? 0 : 1)
-        // Apply expensive effects conditionally
         .modifier(LightweightEffects(status: status, enhanceBaseColor: enhanceBaseColor))
-        // Only apply these effects during active animation states
-        .apply(needsShine: status == .transcribing || status == .enhancing, 
-               transcribeEffect: transcribeEffect, 
+        .apply(needsShine: status == .transcribing || status == .enhancing,
+               transcribeEffect: transcribeEffect,
                enhanceEffect: enhanceEffect)
-        // Add recording pulse effect
         .scaleEffect(showRecordingPulse && status == .recording ? 1.1 : 1.0)
         .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: showRecordingPulse)
         .compositingGroup()
-        // Efficient animation task
-        .task(id: status) {
-          // Only animate if we're in a state that needs animation
-          guard status == .transcribing || status == .enhancing else { return }
-          
-          // Use longer delay to reduce CPU usage with split sleep pattern for better cancellation
-          while (status == .transcribing || status == .enhancing), !Task.isCancelled {
-            try? await Task.sleep(for: .milliseconds(250))
-            if Task.isCancelled { break }
-            
-            // Update the appropriate counter based on current status
-            if status == .transcribing {
-              transcribeEffect += 1
-            } else if status == .enhancing {
-              enhanceEffect += 1
-            }
-            
-            try? await Task.sleep(for: .milliseconds(250))
-          }
-        }
-        
-        // Recording progress overlay
-        if status == .recording, let progress = recordingProgress {
+
+        // Overlays
+        if (status == .recording || status == .streamingTranscription), let progress = recordingProgress {
           RecordingProgressOverlay(progress: progress)
         }
-        
-        // Enhancement progress overlay
         if status == .enhancing, let progress = enhancementProgress {
           EnhancementProgressOverlay(progress: progress)
         }
-      
-        // Show tooltip for prewarming
+
+        // Tooltip overlays positioned above capsule
         if status == .prewarming {
           VStack(spacing: 4) {
             Text("Model prewarming...")
@@ -196,32 +172,106 @@ struct TranscriptionIndicatorView: View {
           .transition(.opacity)
           .zIndex(2)
         }
-        
-        // Show tooltip for recording progress
+
         if status == .recording, let progress = recordingProgress {
           RecordingStatusTooltip(progress: progress)
             .offset(y: -32)
             .transition(.opacity)
             .zIndex(2)
         }
-        
-        // Show tooltip for enhancement progress
-        if status == .enhancing, let progress = enhancementProgress {
-          EnhancementStatusTooltip(progress: progress)
-            .offset(y: -32)
-            .transition(.opacity)
-            .zIndex(2)
+      }
+
+      // Layout based on status
+      Group {
+        switch status {
+        case .streamingTranscription:
+          if let streaming = streamingTranscription {
+            VStack(alignment: .center, spacing: 6) {
+              // First row: capsule + waveform + duration inside one StatusBar
+              StatusBar {
+                capsule
+                VoiceWaveView(power: min(1, averagePower * 3))
+                  .frame(width: 160, height: 16)
+                  .clipShape(RoundedRectangle(cornerRadius: 0))
+                Text(durationText(for: streaming))
+                  .font(.system(size: 12, weight: .medium))
+                  .foregroundColor(.white)
+                  .frame(minWidth: 42, alignment: .center)
+              }
+              // Live transcription text underneath
+              Text(displayText(for: streaming))
+                .font(.system(size: dynamicFontSize(for: streaming), weight: .medium))
+                .foregroundColor(.white)
+                .multilineTextAlignment(.center)
+                .lineLimit(5)
+                .minimumScaleFactor(0.5)
+                .frame(maxWidth: 420)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                  RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.black.opacity(0.9))
+                )
+            }
+          }
+        case .enhancing:
+          if let progress = enhancementProgress {
+            StatusBar {
+              capsule
+              Text(progress.message)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(.white)
+            }
+          }
+        default:
+          capsule
         }
-        
-        // Show tooltip for streaming transcription
-        if status == .streamingTranscription, let streaming = streamingTranscription {
-          StreamingTranscriptionTooltip(streaming: streaming)
-            .offset(y: -40)
-            .transition(.opacity)
-            .zIndex(2)
+      }
+      .task(id: status) {
+        guard status == .transcribing || status == .enhancing else { return }
+        while (status == .transcribing || status == .enhancing), !Task.isCancelled {
+          try? await Task.sleep(for: .milliseconds(250))
+          if Task.isCancelled { break }
+          if status == .transcribing { transcribeEffect += 1 }
+          else if status == .enhancing { enhanceEffect += 1 }
+          try? await Task.sleep(for: .milliseconds(250))
         }
       }
       .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.7), value: status)
+    }
+  }
+
+  // Helper methods for streaming text/duration/font size
+  private func durationText(for streaming: StreamingTranscription) -> String {
+    let start = streaming.startTime ?? Date()
+    let seconds = Int(Date().timeIntervalSince(start))
+    return "\(seconds)s"
+  }
+
+  private func displayText(for streaming: StreamingTranscription) -> String {
+    let confirmedText = streaming.confirmedSegments.map(\.text).joined(separator: " ")
+    let unconfirmedText = streaming.unconfirmedSegments.map(\.text).joined(separator: " ")
+    var parts: [String] = []
+    if !confirmedText.isEmpty { parts.append(confirmedText) }
+    if !streaming.currentText.isEmpty {
+      parts.append(streaming.currentText)
+    } else if !unconfirmedText.isEmpty {
+      parts.append("\(unconfirmedText)...")
+    }
+    guard !parts.isEmpty else { return "Listening..." }
+    return transcriptionClient.cleanWhisperTokens(parts.joined(separator: " "))
+  }
+
+  private func dynamicFontSize(for streaming: StreamingTranscription) -> CGFloat {
+    let base: CGFloat = 15
+    let length = displayText(for: streaming).count
+    switch length {
+    case 0..<100:   return base
+    case 100..<160: return base - 1
+    case 160..<220: return base - 2
+    case 220..<280: return base - 3
+    case 280..<350: return base - 4
+    default:        return max(base - 5, 10)
     }
   }
 }
@@ -364,8 +414,8 @@ struct RecordingProgressOverlay: View {
   var body: some View {
     // Simple progress indicator based on recording quality
     Circle()
-      .fill(qualityColor.opacity(0.3))
-      .frame(width: 4, height: 4)
+      .fill(qualityColor.opacity(0.8))
+      .frame(width: 3, height: 3)
       .scaleEffect(progress.recordingQuality == .excellent ? 1.5 : 1.0)
       .animation(.easeInOut(duration: 0.5), value: progress.recordingQuality)
   }
@@ -449,104 +499,167 @@ struct EnhancementStatusTooltip: View {
   let progress: EnhancementProgress
   
   var body: some View {
-    VStack(spacing: 2) {
+    StatusBar(backgroundOpacity: 0.8, cornerRadius: 4) {
       Text(progress.message)
         .font(.system(size: 10, weight: .medium))
         .foregroundColor(.white)
-      
-      if let estimatedTime = progress.estimatedTimeRemaining {
-        Text("~\(Int(estimatedTime))s")
-          .font(.system(size: 9, weight: .regular))
-          .foregroundColor(.white.opacity(0.8))
-      }
     }
-    .padding(.horizontal, 6)
-    .padding(.vertical, 3)
-    .background(
-      RoundedRectangle(cornerRadius: 4)
-        .fill(Color.black.opacity(0.8))
-    )
   }
 }
 
 struct StreamingTranscriptionTooltip: View {
   let streaming: StreamingTranscription
+  let averagePower: Double
+  
   @Dependency(\.transcription) var transcriptionClient
+  @State private var now: Date = Date()
+  // Reduced height to make waveform more compact and leave room for overlays
+  private let boxSize = CGSize(width: 160, height: 16)
   
   var body: some View {
-    VStack(spacing: 4) {
-      Text("Live Transcription")
-        .font(.system(size: 12, weight: .medium))
-        .foregroundColor(.white.opacity(0.85))
-      
-      // Dynamically adjust font size so longer passages remain readable within the 5-line limit
+    VStack(alignment: .center, spacing: 6) {
+      // Waveform + duration bar
+      StatusBar {
+        // Voice waveform visualisation
+        VoiceWaveView(power: min(1, averagePower * 3))
+          .frame(width: boxSize.width, height: boxSize.height)
+          .clipShape(RoundedRectangle(cornerRadius: 0))
+
+        // Elapsed duration label
+        Text(durationText)
+          .font(.system(size: 12, weight: .medium))
+          .foregroundColor(.white)
+          .frame(minWidth: 42, alignment: .center)
+      }
+
+      // Live transcription text box
       Text(displayText)
         .font(.system(size: dynamicFontSize, weight: .medium))
         .foregroundColor(.white)
         .multilineTextAlignment(.center)
         .lineLimit(5)
-        // If text still overflows, shrink each line further as needed
         .minimumScaleFactor(0.5)
+        .frame(maxWidth: 420)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+          RoundedRectangle(cornerRadius: 12)
+            .fill(Color.black.opacity(0.9))
+        )
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 6)
-    // Increase the maximum width so longer text can wrap within a larger container
-    .frame(maxWidth: 420)
-    .background(
-      RoundedRectangle(cornerRadius: 6)
-        .fill(Color.black.opacity(0.9))
-    )
+    .task {
+      while !Task.isCancelled {
+        now = Date()
+        try? await Task.sleep(for: .seconds(1))
+      }
+    }
   }
   
+  private var durationText: String {
+    guard let start = streaming.startTime else { return "0s" }
+    let seconds = Int(now.timeIntervalSince(start))
+    return "\(seconds)s"
+  }
+  
+  // Build combined live transcription text similar to previous implementation
   private var displayText: String {
-    // Show the current text, with unconfirmed segments in a lighter style
     let confirmedText = streaming.confirmedSegments.map(\.text).joined(separator: " ")
     let unconfirmedText = streaming.unconfirmedSegments.map(\.text).joined(separator: " ")
     
-    print("[StreamingTranscriptionTooltip] Computing displayText...")
-    print("[StreamingTranscriptionTooltip] streaming.currentText: '\(streaming.currentText)'")
-    print("[StreamingTranscriptionTooltip] confirmedText: '\(confirmedText)'")
-    print("[StreamingTranscriptionTooltip] unconfirmedText: '\(unconfirmedText)'")
-    
-    // Build a single string that keeps everything we've heard so far so we don't
-    // "lose" earlier words once Whisper starts a new segment.
     var parts: [String] = []
-
-    // 1. All confirmed words are always included.
-    if !confirmedText.isEmpty {
-      parts.append(confirmedText)
-    }
-
-    // 2. Include the current in-flight text if we have any, otherwise fall back
-    //    to the unconfirmed buffer so the user still sees something while
-    //    Whisper is thinking.
+    if !confirmedText.isEmpty { parts.append(confirmedText) }
     if !streaming.currentText.isEmpty {
       parts.append(streaming.currentText)
     } else if !unconfirmedText.isEmpty {
       parts.append("\(unconfirmedText)...")
     }
-
-    // If we have nothing at all yet, show a placeholder.
     guard !parts.isEmpty else { return "Listening..." }
-
     let combined = transcriptionClient.cleanWhisperTokens(parts.joined(separator: " "))
-
-    print("[StreamingTranscriptionTooltip] Final displayText: '\(combined)'")
     return combined
   }
-
-  // Heuristic font-size scaling based on the length of the text that needs to be displayed.
+  
   private var dynamicFontSize: CGFloat {
     let base: CGFloat = 15
     let length = displayText.count
     switch length {
-    case 0..<100:   return base          // short sentences
-    case 100..<160: return base - 1      // moderately long
-    case 160..<220: return base - 2      // getting longer
+    case 0..<100:   return base
+    case 100..<160: return base - 1
+    case 160..<220: return base - 2
     case 220..<280: return base - 3
     case 280..<350: return base - 4
-    default:        return max(base - 5, 10) // very long
+    default:        return max(base - 5, 10)
     }
+  }
+}
+
+// Dynamic bar waveform view – renders sliding vertical bars whose heights reflect recent mic levels.
+struct VoiceWaveView: View {
+  /// Normalized average power for the latest frame (0…1)
+  var power: Double
+  
+  /// Rolling history of recent power samples (most-recent last)
+  @State private var history: [Double] = []
+  private let maxSamples = 40               // number of bars visible
+  private let barWidth: CGFloat = 3
+  private let spacing: CGFloat = 2
+
+  var body: some View {
+    GeometryReader { geo in
+      let maxHeight = geo.size.height
+      HStack(alignment: .bottom, spacing: spacing) {
+        ForEach(history.indices, id: \.self) { idx in
+          let value = history[idx]
+          Capsule()
+            .fill(Color.white.opacity(idx == history.count - 1 ? 0.95 : 0.7))
+            .frame(width: barWidth,
+                   height: max(2, CGFloat(value) * maxHeight))
+        }
+      }
+      // Right-align so newest bar appears at the far right, sliding older bars left.
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+    }
+    // Push new sample whenever "power" changes.
+    .onChange(of: power) { newValue in
+      let clamped = max(0, min(newValue, 1))
+      history.append(clamped)
+      if history.count > maxSamples {
+        history.removeFirst(history.count - maxSamples)
+      }
+    }
+    // Smooth linear animation for bar movement.
+    .animation(.linear(duration: 0.05), value: history)
+  }
+}
+
+// MARK: - Shared Status Bar Component
+
+/// A reusable horizontal pill-style status bar with consistent dark background styling.
+/// Supply arbitrary content (e.g. progress dots, waveform, time label) and it will
+/// automatically apply spacing, padding, and rounded-rectangle background.
+struct StatusBar<Content: View>: View {
+  var backgroundOpacity: Double = 0.85
+  var cornerRadius: CGFloat = 24
+
+  @ViewBuilder var content: Content
+
+  init(backgroundOpacity: Double = 0.85,
+       cornerRadius: CGFloat = 24,
+       @ViewBuilder content: () -> Content) {
+    self.backgroundOpacity = backgroundOpacity
+    self.cornerRadius = cornerRadius
+    self.content = content()
+  }
+
+  var body: some View {
+    HStack(spacing: 8) {
+      content
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 6)
+    .background(
+      RoundedRectangle(cornerRadius: cornerRadius)
+        .fill(Color.black.opacity(backgroundOpacity))
+    )
   }
 }
 

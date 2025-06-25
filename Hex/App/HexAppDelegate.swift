@@ -47,8 +47,7 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 		}
 		let transcriptionStore = HexApp.appStore.scope(state: \.transcription, action: \.transcription)
 		let transcriptionView = TranscriptionView(store: transcriptionStore)
-			.padding()
-			.padding(.top) // Add some top padding for better visual placement
+			// Removed extra top padding so status bar sticks to very top edge
 			.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 		invisibleWindow = InvisibleWindow.fromView(transcriptionView)
 		invisibleWindow?.makeKeyAndOrderFront(nil)

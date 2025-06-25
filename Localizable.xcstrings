@@ -31,9 +31,6 @@
     "• Start recording from any app" : {
 
     },
-    "~%llds" : {
-
-    },
     "About" : {
       "comment" : "Settings -> About Section headline",
       "localizations" : {
@@ -448,9 +445,6 @@
 
     },
     "Language Model" : {
-
-    },
-    "Live Transcription" : {
 
     },
     "Logs" : {
