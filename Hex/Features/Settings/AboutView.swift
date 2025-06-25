@@ -5,7 +5,6 @@ import Sparkle
 struct AboutView: View {
     @Bindable var store: StoreOf<SettingsFeature>
     @State var viewModel = CheckForUpdatesViewModel.shared
-    @State private var showingChangelog = false
     @State private var versionTapCount = 0
 
     var body: some View {

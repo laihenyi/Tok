@@ -14,7 +14,6 @@
 		47E05E0C2D44525B00D26DA6 /* DependenciesMacros in Frameworks */ = {isa = PBXBuildFile; productRef = 47E05E0B2D44525B00D26DA6 /* DependenciesMacros */; };
 		47E05E272D44555500D26DA6 /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = 47E05E262D44555500D26DA6 /* WhisperKit */; };
 		5AFD14702E0A2506009909E5 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 5AFD146F2E0A2506009909E5 /* Sparkle */; };
-		B5045C972D78DED500D0A119 /* MarkdownUI in Frameworks */ = {isa = PBXBuildFile; productRef = B5045C962D78DED500D0A119 /* MarkdownUI */; };
 		B53356002D7B8D4900E5F542 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = B53355FF2D7B8D4900E5F542 /* Localizable.xcstrings */; };
 /* End PBXBuildFile section */
 
@@ -78,7 +77,6 @@
 				47E05E272D44555500D26DA6 /* WhisperKit in Frameworks */,
 				5AFD14702E0A2506009909E5 /* Sparkle in Frameworks */,
 				47E05E0A2D44525B00D26DA6 /* Dependencies in Frameworks */,
-				B5045C972D78DED500D0A119 /* MarkdownUI in Frameworks */,
 				47E05E052D444EF800D26DA6 /* Sauce in Frameworks */,
 				4765045E2D45900200C7EA60 /* Pow in Frameworks */,
 				47E05E0C2D44525B00D26DA6 /* DependenciesMacros in Frameworks */,
@@ -176,7 +174,6 @@
 				47E05E0B2D44525B00D26DA6 /* DependenciesMacros */,
 				47E05E262D44555500D26DA6 /* WhisperKit */,
 				4765045D2D45900200C7EA60 /* Pow */,
-				B5045C962D78DED500D0A119 /* MarkdownUI */,
 				5AFD146F2E0A2506009909E5 /* Sparkle */,
 			);
 			productName = Tok;
@@ -217,7 +214,6 @@
 				47E05E082D44525B00D26DA6 /* XCRemoteSwiftPackageReference "swift-dependencies" */,
 				47E05E252D44555500D26DA6 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 				4765045C2D45900200C7EA60 /* XCRemoteSwiftPackageReference "Pow" */,
-				B5045C952D78DED500D0A119 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */,
 				5AFD146E2E0A2506009909E5 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -583,14 +579,6 @@
 				kind = branch;
 			};
 		};
-		B5045C952D78DED500D0A119 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/gonzalezreal/swift-markdown-ui";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.4.1;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -628,11 +616,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 5AFD146E2E0A2506009909E5 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
-		};
-		B5045C962D78DED500D0A119 /* MarkdownUI */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = B5045C952D78DED500D0A119 /* XCRemoteSwiftPackageReference "swift-markdown-ui" */;
-			productName = MarkdownUI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

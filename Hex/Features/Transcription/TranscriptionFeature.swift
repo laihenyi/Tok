@@ -142,7 +142,7 @@ struct StreamingTranscription: Equatable {
 @Reducer
 struct TranscriptionFeature {
   @ObservableState
-  struct State {
+  struct State: Equatable {
     var isRecording: Bool = false
     var isTranscribing: Bool = false
     var isPrewarming: Bool = false
@@ -171,6 +171,12 @@ struct TranscriptionFeature {
     
     @Shared(.hexSettings) var hexSettings: HexSettings
     @Shared(.transcriptionHistory) var transcriptionHistory: TranscriptionHistory
+
+    // Manual Equatable conformance – we only care about fields that drive the
+    // status-bar Pac-Man animation to avoid unnecessary view updates.
+    static func == (lhs: Self, rhs: Self) -> Bool {
+      lhs.isRecording == rhs.isRecording && lhs.meter == rhs.meter
+    }
   }
 
   enum Action {
@@ -365,15 +371,18 @@ struct TranscriptionFeature {
         
       case .startRecordingPulse:
         state.shouldShowRecordingPulse = true
-        return .run { send in
-          // Create a pulsing effect during recording
-          while !Task.isCancelled {
-            try await Task.sleep(for: .milliseconds(1000))
-            await send(.updateRecordingProgress)
-            try await Task.sleep(for: .milliseconds(500))
+        // Immediately update the recording progress so the UI shows a non-zero duration as soon as possible.
+        return .merge(
+          .send(.updateRecordingProgress),
+          .run { send in
+            // Continuously update the progress every 500 ms while recording.
+            while !Task.isCancelled {
+              try await Task.sleep(for: .milliseconds(500))
+              await send(.updateRecordingProgress)
+            }
           }
-        }
-        .cancellable(id: CancelID.recordingPulse)
+          .cancellable(id: CancelID.recordingPulse)
+        )
         
       case .stopRecordingPulse:
         state.shouldShowRecordingPulse = false
@@ -749,6 +758,8 @@ private extension TranscriptionFeature {
   func handleStopRecording(_ state: inout State) -> Effect<Action> {
     state.isRecording = false
     state.isStreamingTranscription = false // Stop streaming immediately
+    // Reset meter to baseline values so UI (e.g., Pac-Man icon) returns to its resting state.
+    state.meter = .init(averagePower: 0, peakPower: 0)
 
     // Capture *all* streaming text (confirmed + current + unconfirmed) BEFORE
     // resetting it, otherwise we might lose the beginning of the sentence if
@@ -1188,6 +1199,8 @@ private extension TranscriptionFeature {
     state.shouldShowRecordingPulse = false
     state.isStreamingTranscription = false
     
+    // Reset meter and progress states so UI returns to idle state
+    state.meter = .init(averagePower: 0, peakPower: 0)
     // Reset progress states
     state.recordingProgress = RecordingProgress()
     state.enhancementProgress.updateStage(.idle)

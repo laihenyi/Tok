@@ -29,7 +29,7 @@ struct TranscriptionIndicatorView: View {
 
   let transcribeBaseColor: Color = .blue
   let enhanceBaseColor: Color = .green
-  let streamingBaseColor: Color = .orange
+  let streamingBaseColor: Color = .green
 
   // Access to cleanWhisperTokens for helper methods
   @Dependency(\.transcription) private var transcriptionClient
@@ -38,7 +38,7 @@ struct TranscriptionIndicatorView: View {
     switch status {
     case .hidden: return Color.clear
     case .optionKeyPressed: return Color.black
-    case .recording: return .red.mix(with: .black, by: 0.5).mix(with: .red, by: meter.averagePower * 3)
+    case .recording: return .green.mix(with: .black, by: 0.5).mix(with: .green, by: meter.averagePower * 3)
     case .transcribing: return transcribeBaseColor.mix(with: .black, by: 0.5)
     case .streamingTranscription: return streamingBaseColor.mix(with: .black, by: 0.5)
     case .prewarming: return transcribeBaseColor.mix(with: .black, by: 0.5)
@@ -50,7 +50,7 @@ struct TranscriptionIndicatorView: View {
     switch status {
     case .hidden: return Color.clear
     case .optionKeyPressed: return Color.black
-    case .recording: return Color.red.mix(with: .white, by: 0.1).opacity(0.6)
+    case .recording: return Color.green.mix(with: .white, by: 0.1).opacity(0.6)
     case .transcribing: return transcribeBaseColor.mix(with: .white, by: 0.1).opacity(0.6)
     case .streamingTranscription: return streamingBaseColor.mix(with: .white, by: 0.1).opacity(0.6)
     case .prewarming: return transcribeBaseColor.mix(with: .white, by: 0.1).opacity(0.6)
@@ -62,7 +62,7 @@ struct TranscriptionIndicatorView: View {
     switch status {
     case .hidden: return Color.clear
     case .optionKeyPressed: return Color.clear
-    case .recording: return Color.red
+    case .recording: return Color.green
     case .transcribing: return transcribeBaseColor
     case .streamingTranscription: return streamingBaseColor
     case .prewarming: return transcribeBaseColor
@@ -74,45 +74,8 @@ struct TranscriptionIndicatorView: View {
   private let baseWidth: CGFloat = 16
   private let expandedWidth: CGFloat = 56
 
-  var isHidden: Bool {
-    status == .hidden
-  }
-
   @State var transcribeEffect = 0
   @State var enhanceEffect = 0
-
-  // Memoize these calculations to prevent recalculating on every render
-  private func recordingOpacity(for power: Double, threshold: Double = 0.1) -> Double {
-    guard status == .recording else { return 0 }
-    return power < threshold ? power / threshold : 1
-  }
-
-  // Cache shadow colors based on status and power
-  @ViewBuilder
-  private func shadowEffect(averagePower: Double) -> some View {
-    switch status {
-    case .recording:
-      EmptyView()
-        .shadow(color: .red.opacity(averagePower), radius: 4)
-        .shadow(color: .red.opacity(averagePower * 0.5), radius: 8)
-    case .streamingTranscription:
-      EmptyView()
-        .shadow(color: streamingBaseColor.opacity(0.7), radius: 4)
-        .shadow(color: streamingBaseColor.opacity(0.4), radius: 8)
-    case .enhancing:
-      EmptyView()
-        .shadow(color: enhanceBaseColor.opacity(0.7), radius: 4)
-        .shadow(color: enhanceBaseColor.opacity(0.4), radius: 8)
-    case .transcribing, .prewarming:
-      EmptyView()
-        .shadow(color: transcribeBaseColor.opacity(0.7), radius: 4)
-        .shadow(color: transcribeBaseColor.opacity(0.4), radius: 8)
-    default:
-      EmptyView()
-        .shadow(color: .red.opacity(0), radius: 4)
-        .shadow(color: .red.opacity(0), radius: 8)
-    }
-  }
 
   var body: some View {
     // Fast track hidden state
@@ -148,7 +111,7 @@ struct TranscriptionIndicatorView: View {
         .compositingGroup()
 
         // Overlays
-        if (status == .recording || status == .streamingTranscription), let progress = recordingProgress {
+        if status == .recording, let progress = recordingProgress {
           RecordingProgressOverlay(progress: progress)
         }
         if status == .enhancing, let progress = enhancementProgress {
@@ -202,10 +165,10 @@ struct TranscriptionIndicatorView: View {
               Text(displayText(for: streaming))
                 .font(.system(size: dynamicFontSize(for: streaming), weight: .medium))
                 .foregroundColor(.white)
-                .multilineTextAlignment(.center)
+                .multilineTextAlignment(.leading)
                 .lineLimit(5)
                 .minimumScaleFactor(0.5)
-                .frame(maxWidth: 420)
+                .frame(minWidth: 160, maxWidth: 420, alignment: .leading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(
@@ -222,6 +185,13 @@ struct TranscriptionIndicatorView: View {
                 .font(.system(size: 10, weight: .medium))
                 .foregroundColor(.white)
             }
+          }
+        case .transcribing:
+          StatusBar {
+            capsule
+            Text("Transcribing")
+              .font(.system(size: 10, weight: .medium))
+              .foregroundColor(.white)
           }
         default:
           capsule
@@ -297,7 +267,7 @@ struct CapsuleWithEffects: View {
   @ViewBuilder private var innerOverlays: some View {
     if status == .recording {
       RoundedRectangle(cornerRadius: cornerRadius)
-        .fill(Color.red.opacity(recordingOpacity))
+        .fill(recordingOverlayColor.opacity(recordingOpacity))
         .blur(radius: 2)
         .blendMode(.screen)
         .padding(6)
@@ -330,9 +300,10 @@ struct CapsuleWithEffects: View {
     // Precalculate shadow colors
     switch status {
     case .recording:
-      self.primaryShadowColor = .red.opacity(averagePower)
-      self.secondaryShadowColor = .red.opacity(averagePower * 0.5)
-    case .enhancing:
+      let color = averagePower >= 0.25 ? Color.green : Color.red
+      self.primaryShadowColor = color.opacity(averagePower)
+      self.secondaryShadowColor = color.opacity(averagePower * 0.5)
+    case .enhancing, .streamingTranscription:
       self.primaryShadowColor = Color.green.opacity(0.7)
       self.secondaryShadowColor = Color.green.opacity(0.4)
     case .transcribing, .prewarming:
@@ -342,6 +313,13 @@ struct CapsuleWithEffects: View {
       self.primaryShadowColor = .red.opacity(0)
       self.secondaryShadowColor = .red.opacity(0)
     }
+  }
+  
+  // Dynamic overlay colour that turns green when mic input is sufficiently loud.
+  private var recordingOverlayColor: Color {
+    guard status == .recording else { return .clear }
+    let threshold: Double = 0.25
+    return averagePower >= threshold ? .green : .red
   }
   
   var body: some View {
@@ -362,7 +340,7 @@ struct CapsuleWithEffects: View {
       if status == .recording {
         GeometryReader { proxy in
           RoundedRectangle(cornerRadius: cornerRadius)
-            .fill(Color.red.opacity(peakOverlayOpacity))
+            .fill(recordingOverlayColor.opacity(peakOverlayOpacity))
             .frame(width: max(proxy.size.width * (peakPower + 0.6), 0), height: proxy.size.height, alignment: .center)
             .frame(maxWidth: .infinity, alignment: .center)
             .blur(radius: 4)
@@ -385,8 +363,16 @@ struct LightweightEffects: ViewModifier {
   var enhanceBaseColor: Color
   
   func body(content: Content) -> some View {
+    let glowColor: Color = {
+      switch status {
+      case .enhancing: return enhanceBaseColor.opacity(0.4)
+      case .recording: return Color.green.opacity(0.4)
+      default: return Color.red.opacity(0.4)
+      }
+    }()
+
     content.changeEffect(
-      .glow(color: status == .enhancing ? enhanceBaseColor.opacity(0.4) : .red.opacity(0.4), radius: 6),
+      .glow(color: glowColor, radius: 6),
       value: status
     )
   }
@@ -415,7 +401,7 @@ struct RecordingProgressOverlay: View {
     // Simple progress indicator based on recording quality
     Circle()
       .fill(qualityColor.opacity(0.8))
-      .frame(width: 3, height: 3)
+      .frame(width: 6, height: 6)
       .scaleEffect(progress.recordingQuality == .excellent ? 1.5 : 1.0)
       .animation(.easeInOut(duration: 0.5), value: progress.recordingQuality)
   }
@@ -439,7 +425,7 @@ struct EnhancementProgressOverlay: View {
       ForEach(0..<3, id: \.self) { index in
         Circle()
           .fill(Color.white.opacity(0.8))
-          .frame(width: 3, height: 3)
+          .frame(width: 2, height: 2)
           .scaleEffect(animationIndex == index ? 1.3 : 0.8)
           .animation(.easeInOut(duration: 0.6).repeatForever(), value: animationIndex)
       }
@@ -495,103 +481,6 @@ struct RecordingStatusTooltip: View {
   }
 }
 
-struct EnhancementStatusTooltip: View {
-  let progress: EnhancementProgress
-  
-  var body: some View {
-    StatusBar(backgroundOpacity: 0.8, cornerRadius: 4) {
-      Text(progress.message)
-        .font(.system(size: 10, weight: .medium))
-        .foregroundColor(.white)
-    }
-  }
-}
-
-struct StreamingTranscriptionTooltip: View {
-  let streaming: StreamingTranscription
-  let averagePower: Double
-  
-  @Dependency(\.transcription) var transcriptionClient
-  @State private var now: Date = Date()
-  // Reduced height to make waveform more compact and leave room for overlays
-  private let boxSize = CGSize(width: 160, height: 16)
-  
-  var body: some View {
-    VStack(alignment: .center, spacing: 6) {
-      // Waveform + duration bar
-      StatusBar {
-        // Voice waveform visualisation
-        VoiceWaveView(power: min(1, averagePower * 3))
-          .frame(width: boxSize.width, height: boxSize.height)
-          .clipShape(RoundedRectangle(cornerRadius: 0))
-
-        // Elapsed duration label
-        Text(durationText)
-          .font(.system(size: 12, weight: .medium))
-          .foregroundColor(.white)
-          .frame(minWidth: 42, alignment: .center)
-      }
-
-      // Live transcription text box
-      Text(displayText)
-        .font(.system(size: dynamicFontSize, weight: .medium))
-        .foregroundColor(.white)
-        .multilineTextAlignment(.center)
-        .lineLimit(5)
-        .minimumScaleFactor(0.5)
-        .frame(maxWidth: 420)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-          RoundedRectangle(cornerRadius: 12)
-            .fill(Color.black.opacity(0.9))
-        )
-    }
-    .task {
-      while !Task.isCancelled {
-        now = Date()
-        try? await Task.sleep(for: .seconds(1))
-      }
-    }
-  }
-  
-  private var durationText: String {
-    guard let start = streaming.startTime else { return "0s" }
-    let seconds = Int(now.timeIntervalSince(start))
-    return "\(seconds)s"
-  }
-  
-  // Build combined live transcription text similar to previous implementation
-  private var displayText: String {
-    let confirmedText = streaming.confirmedSegments.map(\.text).joined(separator: " ")
-    let unconfirmedText = streaming.unconfirmedSegments.map(\.text).joined(separator: " ")
-    
-    var parts: [String] = []
-    if !confirmedText.isEmpty { parts.append(confirmedText) }
-    if !streaming.currentText.isEmpty {
-      parts.append(streaming.currentText)
-    } else if !unconfirmedText.isEmpty {
-      parts.append("\(unconfirmedText)...")
-    }
-    guard !parts.isEmpty else { return "Listening..." }
-    let combined = transcriptionClient.cleanWhisperTokens(parts.joined(separator: " "))
-    return combined
-  }
-  
-  private var dynamicFontSize: CGFloat {
-    let base: CGFloat = 15
-    let length = displayText.count
-    switch length {
-    case 0..<100:   return base
-    case 100..<160: return base - 1
-    case 160..<220: return base - 2
-    case 220..<280: return base - 3
-    case 280..<350: return base - 4
-    default:        return max(base - 5, 10)
-    }
-  }
-}
-
 // Dynamic bar waveform view – renders sliding vertical bars whose heights reflect recent mic levels.
 struct VoiceWaveView: View {
   /// Normalized average power for the latest frame (0…1)
@@ -619,7 +508,7 @@ struct VoiceWaveView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
     }
     // Push new sample whenever "power" changes.
-    .onChange(of: power) { newValue in
+    .onChange(of: power) { _, newValue in
       let clamped = max(0, min(newValue, 1))
       history.append(clamped)
       if history.count > maxSamples {

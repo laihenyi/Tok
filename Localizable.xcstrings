@@ -122,6 +122,7 @@
       }
     },
     "Changelog" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -132,6 +133,7 @@
       }
     },
     "Changelog could not be loaded." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -173,6 +175,7 @@
 
     },
     "Close" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -822,6 +825,9 @@
           }
         }
       }
+    },
+    "Transcribing" : {
+
     },
     "Transcription May Have Failed" : {
 

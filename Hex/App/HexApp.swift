@@ -24,15 +24,20 @@ struct HexApp: App {
 				NSApplication.shared.terminate(nil)
 			}.keyboardShortcut("q")
 		} label: {
-			let image: NSImage = {
-				let ratio = $0.size.height / $0.size.width
-				$0.size.height = 18
-				$0.size.width = 18 / ratio
-				return $0
-			}(NSImage(named: "HexIcon")!)
-			Image(nsImage: image)
+			Label {
+				// no title text
+				EmptyView()
+			} icon: {
+				WithViewStore(HexApp.appStore, observe: { $0.transcription }) { viewStore in
+					PacmanBarIcon(
+						averagePower: viewStore.meter.averagePower,
+						peakPower: viewStore.meter.peakPower,
+						isRecording: viewStore.isRecording
+					)
+				}
+			}
+			.labelStyle(.iconOnly)
 		}
-
 
 		WindowGroup {}.defaultLaunchBehavior(.suppressed)
 			.commands {
