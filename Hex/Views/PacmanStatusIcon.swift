@@ -74,6 +74,8 @@ struct PacmanBarIcon: View {
             return
         }
         hosting.cacheDisplay(in: hosting.bounds, to: rep)
+        // Mark the raster as a 2× representation (36 × 36 px = 18 × 18 pt)
+        rep.size = NSSize(width: 18, height: 18)
         let img = NSImage(size: CGSize(width: 18, height: 18))
         img.addRepresentation(rep)
         img.isTemplate = true

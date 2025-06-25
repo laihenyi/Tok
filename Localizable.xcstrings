@@ -346,6 +346,7 @@
     },
     "Ensure Tok can access your microphone and system accessibility features." : {
       "comment" : "Footer for permissions section in settings",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -535,9 +536,6 @@
     "Open Accessibility Settings" : {
 
     },
-    "Open History" : {
-
-    },
     "Open Log File" : {
 
     },
@@ -565,9 +563,6 @@
           }
         }
       }
-    },
-    "Override the system default microphone with a specific input device. This setting will persist across sessions." : {
-
     },
     "Pause Media while Recording" : {
       "comment" : "Label for general setting whether to pause media while recording.",
@@ -887,9 +882,6 @@
           }
         }
       }
-    },
-    "View and manage your past transcriptions." : {
-
     },
     "Vision Model" : {
 

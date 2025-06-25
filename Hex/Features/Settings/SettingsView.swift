@@ -56,10 +56,6 @@ struct SettingsView: View {
 
 			} header: {
 				Text("Permissions")
-			} footer: {
-				Text("Ensure Tok can access your microphone and system accessibility features.")
-					.font(.footnote)
-					.foregroundColor(.secondary)
 			}
       
 			// --- Input Device Selection Section ---
@@ -98,10 +94,6 @@ struct SettingsView: View {
 					}
 				} header: {
 					Text("Microphone Selection")
-				} footer: {
-					Text("Override the system default microphone with a specific input device. This setting will persist across sessions.")
-						.font(.footnote)
-						.foregroundColor(.secondary)
 				}
 			}
 
@@ -248,21 +240,6 @@ struct SettingsView: View {
                 }
 			} header: {
 				Text("General")
-			}
-
-			// --- History Section ---
-			Section {
-				Button {
-					store.send(.openHistory)
-				} label: {
-					Label("Open History", systemImage: "clock")
-				}
-			} header: {
-				Text("History")
-			} footer: {
-				Text("View and manage your past transcriptions.")
-					.font(.footnote)
-					.foregroundColor(.secondary)
 			}
 		}
 		.formStyle(.grouped)
