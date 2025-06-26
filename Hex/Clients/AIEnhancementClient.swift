@@ -582,6 +582,8 @@ class AIEnhancementClientLive {
                 "content": (options.context != nil ? "<CONTEXT>\(options.context!)</CONTEXT>\n\n" : "") + "<RAW_TRANSCRIPTION>\(text)</RAW_TRANSCRIPTION>"
             ]
         ]
+
+        print("[AIEnhancementClientLive] Groq messages: \(messages)")
         
         // Build request parameters
         let temperature = max(0.1, min(1.0, options.temperature))

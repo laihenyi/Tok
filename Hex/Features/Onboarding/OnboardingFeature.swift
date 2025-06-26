@@ -71,6 +71,11 @@ struct OnboardingFeature {
     }
   }
   
+  @Dependency(\.recording) var recording
+  @Dependency(\.screenCapture) var screenCapture
+  @Dependency(\.keyEventMonitor) var keyEventMonitor
+  
+  @CasePathable
   enum Action: BindableAction {
     case binding(BindingAction<State>)
     case nextStep
@@ -92,14 +97,10 @@ struct OnboardingFeature {
     case modelDownload(ModelDownloadFeature.Action)
   }
   
-  @Dependency(\.recording) var recording
-  @Dependency(\.screenCapture) var screenCapture
-  @Dependency(\.keyEventMonitor) var keyEventMonitor
-  
   var body: some ReducerOf<Self> {
     BindingReducer()
     
-    Scope(state: \ .modelDownload, action: /Action.modelDownload) {
+    Scope(state: \.modelDownload, action: \.modelDownload) {
       ModelDownloadFeature()
     }
     

@@ -154,6 +154,8 @@ struct TranscriptionFeature {
     var meter: Meter = .init(averagePower: 0, peakPower: 0)
     var assertionID: IOPMAssertionID?
     var pendingTranscription: String? // Store original transcription for fallback
+    /// Stores the combined real-time (streaming) transcription so it can be provided to AI enhancement later.
+    var realTimeTranscription: String? = nil
     
     // Real-time feedback properties
     var recordingProgress: RecordingProgress = RecordingProgress()
@@ -792,6 +794,9 @@ private extension TranscriptionFeature {
       return ([confirmed, current, unconfirmed].filter { !$0.isEmpty }).joined(separator: " ")
     }()
 
+    // Persist the real-time transcription so we can feed it into the AI enhancement later.
+    state.realTimeTranscription = streamingFallbackText
+
     // Reset streaming transcription state to ensure clean stop
     // This must be done early to ensure all code paths reset the streaming state
     state.streamingTranscription.reset()
@@ -980,6 +985,7 @@ private extension TranscriptionFeature {
     guard !trimmedResult.isEmpty else {
       state.isTranscribing = false
       state.isPrewarming = false
+      state.realTimeTranscription = nil
       return .none
     }
     // First check if we should use AI enhancement
@@ -996,21 +1002,45 @@ private extension TranscriptionFeature {
       let promptText = state.hexSettings.aiEnhancementPrompt
       let temperature = state.hexSettings.aiEnhancementTemperature
       let groqAPIKey = state.hexSettings.groqAPIKey
-      let contextPrompt = state.contextPrompt
-      
+      let baseContextPrompt = state.contextPrompt
+      let realTimeText = state.realTimeTranscription
+
+      // Combine any existing context with the real-time transcription so the AI model
+      // can reference both when enhancing the final text.
+      var combinedContextComponents: [String] = []
+      if let ctx = baseContextPrompt, !ctx.isEmpty {
+        combinedContextComponents.append(ctx)
+      }
+      if let rt = realTimeText, !rt.isEmpty {
+        combinedContextComponents.append("REAL_TIME_TRANSCRIPTION:\n" + rt)
+      }
+      let combinedContext: String? = combinedContextComponents.isEmpty ? nil : combinedContextComponents.joined(separator: "\n\n")
+
+      // Add an instruction so the model respects the language of the real-time transcription.
+      var enhancedPrompt = promptText
+      let languageRule = "If the REAL_TIME_TRANSCRIPTION appears to be in a language other than English, your final improved text must be in that same language and must NOT be translated to English."
+      if enhancedPrompt.isEmpty {
+        enhancedPrompt = languageRule
+      } else {
+        enhancedPrompt += "\n\n" + languageRule
+      }
+
+      print("[TranscriptionFeature] Enhanced prompt: \(enhancedPrompt)")
+
       return enhanceWithAI(
         result: trimmedResult,
         providerType: providerType,
         selectedAIModel: selectedAIModel,
         selectedRemoteModel: selectedRemoteModel,
-        promptText: promptText,
+        promptText: enhancedPrompt,
         temperature: temperature,
         groqAPIKey: groqAPIKey,
-        contextPrompt: contextPrompt
+        contextPrompt: combinedContext
       )
     } else {
       state.isTranscribing = false
       state.isPrewarming = false
+      state.realTimeTranscription = nil
 
       // If empty text, nothing else to do
       guard !trimmedResult.isEmpty else {
@@ -1114,6 +1144,7 @@ private extension TranscriptionFeature {
     state.isPrewarming = false
     state.isEnhancing = false  // Reset the enhancing state
     state.pendingTranscription = nil  // Clear the pending transcription since enhancement succeeded
+    state.realTimeTranscription = nil  // Clear stored real-time transcription
 
     // If empty text, nothing else to do
     guard !result.isEmpty else {
@@ -1236,6 +1267,7 @@ private extension TranscriptionFeature {
     state.recordingProgress = RecordingProgress()
     state.enhancementProgress.updateStage(.idle)
     state.streamingTranscription.reset()
+    state.realTimeTranscription = nil
 
     return .merge(
       .cancel(id: CancelID.transcription),

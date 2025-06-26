@@ -121,8 +121,8 @@ struct OnboardingView: View {
   private var modelSelectionStep: some View {
     ModelDownloadView(
       store: store.scope(
-        state: \ .modelDownload,
-        action: OnboardingFeature.Action.modelDownload
+        state: \.modelDownload,
+        action: \.modelDownload
       )
     )
   }
