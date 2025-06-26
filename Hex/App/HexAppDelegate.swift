@@ -1,9 +1,11 @@
 import ComposableArchitecture
 import SwiftUI
+import AppKit
 
 class HexAppDelegate: NSObject, NSApplicationDelegate {
 	var invisibleWindow: InvisibleWindow?
 	var settingsWindow: NSWindow?
+	var karaokeWindow: NSWindow?
 	var statusItem: NSStatusItem!
 
 	@Dependency(\.soundEffects) var soundEffect
@@ -75,6 +77,41 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.toolbarStyle = NSWindow.ToolbarStyle.unified
 		NSApp.activate(ignoringOtherApps: true)
 		self.settingsWindow = settingsWindow
+	}
+
+	func presentKaraokeView() {
+		if let karaokeWindow = karaokeWindow {
+			karaokeWindow.makeKeyAndOrderFront(nil)
+			NSApp.activate(ignoringOtherApps: true)
+			return
+		}
+
+		let karaokeView = KaraokeView(store: Store(initialState: KaraokeFeature.State()) {
+			KaraokeFeature()
+		})
+		let karaokeWindow = NSWindow(
+			contentRect: .init(x: 0, y: 0, width: 800, height: 600),
+			styleMask: [.titled, .fullSizeContentView, .closable, .miniaturizable, .resizable],
+			backing: .buffered,
+			defer: false
+		)
+		karaokeWindow.title = "Live Transcript"
+		karaokeWindow.titleVisibility = .hidden
+		karaokeWindow.titlebarAppearsTransparent = true
+		if #available(macOS 11.0, *) {
+			karaokeWindow.titlebarSeparatorStyle = .none
+		}
+		karaokeWindow.contentView = NSHostingView(rootView: karaokeView)
+		karaokeWindow.level = .floating  // Higher than normal windows
+		karaokeWindow.makeKeyAndOrderFront(nil)
+		karaokeWindow.isReleasedWhenClosed = false
+		karaokeWindow.setFrameAutosaveName("KaraokeWindowFrame")
+		NSApp.activate(ignoringOtherApps: true)
+		self.karaokeWindow = karaokeWindow
+	}
+
+	func setKaraokeWindowLevel(_ level: NSWindow.Level) {
+		karaokeWindow?.level = level
 	}
 
 	@objc private func handleAppModeUpdate() {

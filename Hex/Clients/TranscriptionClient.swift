@@ -56,11 +56,15 @@ struct TranscriptionClient {
 
   /// Starts streaming transcription from microphone using AudioStreamTranscriber
   /// Returns updates via the callback with real-time transcription progress
-  var startStreamTranscription: @Sendable (String, DecodingOptions, HexSettings?, @escaping (StreamTranscriptionUpdate) -> Void) async throws -> Void
+  /// Optionally accepts previousTranscript for rolling context in streaming transcription
+  var startStreamTranscription: @Sendable (String, DecodingOptions, HexSettings?, String?, @escaping (StreamTranscriptionUpdate) -> Void) async throws -> Void
   
   /// Stops the current streaming transcription
   var stopStreamTranscription: @Sendable () async -> Void
-  
+
+  /// Resets any cached context or state to ensure clean isolation between different transcription modes
+  var resetContext: @Sendable () async -> Void
+
   /// Gets the tokenizer for the currently loaded model, if available
   var getTokenizer: @Sendable () async -> WhisperTokenizer?
 
@@ -79,8 +83,9 @@ extension TranscriptionClient: DependencyKey {
       getRecommendedModels: { await live.getRecommendedModels() },
       getAvailableModels: { try await live.getAvailableModels() },
       prewarmModel: { try await live.prewarmModel(variant: $0, progressCallback: $1) },
-      startStreamTranscription: { try await live.startStreamTranscription(model: $0, options: $1, settings: $2, updateCallback: $3) },
+      startStreamTranscription: { try await live.startStreamTranscription(model: $0, options: $1, settings: $2, previousTranscript: $3, updateCallback: $4) },
       stopStreamTranscription: { await live.stopStreamTranscription() },
+      resetContext: { await live.resetContext() },
       getTokenizer: { await live.getTokenizer() },
       cleanWhisperTokens: { live.cleanWhisperTokens(from: $0) }
     )
@@ -127,8 +132,8 @@ actor TranscriptionClientLive {
         appropriateFor: nil,
         create: true
       )
-      // Typically: .../Application Support/com.kitlangton.Hex
-      let ourAppFolder = appSupportURL.appendingPathComponent("com.kitlangton.Hex", isDirectory: true)
+      // Typically: .../Application Support/xyz.2qs.Tok
+      let ourAppFolder = appSupportURL.appendingPathComponent("xyz.2qs.Tok", isDirectory: true)
       // Inside there, store everything in /models
       let baseURL = ourAppFolder.appendingPathComponent("models", isDirectory: true)
       try FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
@@ -254,7 +259,7 @@ actor TranscriptionClientLive {
       // previously-downloaded models remain selectable even when offline or when
       // the Hugging Face API is unreachable.
 
-      // Path: <Application Support>/com.kitlangton.Hex/models/argmaxinc/whisperkit-coreml/*
+      // Path: <Application Support>/xyz.2qs.Tok/models/argmaxinc/whisperkit-coreml/*
       let repoFolder = modelsBaseFolder
         .appendingPathComponent("argmaxinc")
         .appendingPathComponent("whisperkit-coreml", isDirectory: true)
@@ -537,16 +542,8 @@ actor TranscriptionClientLive {
     
     // Remove Whisper special tokens
     let whisperTokenPatterns = [
-      "<\\|startoftranscript\\|>",
-      "<\\|endoftranscript\\|>",
-      "<\\|startoftext\\|>",
-      "<\\|endoftext\\|>",
-      "<\\|\\w{2}\\|>", // Language tokens like <|en|>, <|es|>, etc.
-      "<\\|transcribe\\|>",
-      "<\\|translate\\|>",
-      "<\\|nospeech\\|>",
-      "<\\|notimestamps\\|>",
-      "<\\|\\d+\\.\\d+\\|>", // Timestamp tokens like <|0.00|>, <|1.20|>
+      // lets remove all the <|...|> tokens
+      "<\\|[^>]+\\|>",
       "^\\s*", // Leading whitespace
       "\\s*$"  // Trailing whitespace
     ]
@@ -576,6 +573,7 @@ actor TranscriptionClientLive {
     model: String,
     options: DecodingOptions,
     settings: HexSettings? = nil,
+    previousTranscript: String? = nil,
     updateCallback: @escaping (StreamTranscriptionUpdate) -> Void
   ) async throws {
     // Stop any existing stream first - this is CRITICAL to prevent conflicts
@@ -620,15 +618,34 @@ actor TranscriptionClientLive {
     // Determine source for debugging
     let streamSource = settings != nil ? "KaraokeFeature" : "TranscriptionFeature"
     currentStreamSource = streamSource
-    
+
     print("[TranscriptionClientLive] Starting stream transcription with model: \(model) from source: \(streamSource)")
+
+    // Build decoding options with optional previous transcript context for streaming
+    var streamDecodeOptions = options
+
+    // Add previous transcript to prompt tokens if provided
+    if let previousTranscript = previousTranscript, !previousTranscript.trimmingCharacters(in: .whitespaces).isEmpty {
+      let trimmedPrevious = previousTranscript.trimmingCharacters(in: .whitespaces)
+      let previousTokens = tokenizer.encode(text: " " + trimmedPrevious)
+        .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+
+      // Append to existing prompt tokens if any, otherwise use the previous transcript tokens
+      if let existingTokens = streamDecodeOptions.promptTokens {
+        streamDecodeOptions.promptTokens = existingTokens + previousTokens
+        print("[TranscriptionClientLive] Appended previous transcript context (\(previousTokens.count) tokens) to existing prompt tokens (\(existingTokens.count) tokens) for \(streamSource): '\(trimmedPrevious)'")
+      } else {
+        streamDecodeOptions.promptTokens = previousTokens
+        print("[TranscriptionClientLive] Applied previous transcript context with \(previousTokens.count) tokens for \(streamSource): '\(trimmedPrevious)'")
+      }
+      streamDecodeOptions.usePrefillPrompt = false
+    } else {
+      print("[TranscriptionClientLive] No previous transcript context provided for \(streamSource)")
+    }
 
     // Create a deduplication mechanism to prevent duplicate updates
     var lastSentText = ""
     var lastSentSegmentCount = 0
-    var lastUpdateTime = Date()
-    // Use more aggressive throttling for live karaoke mode vs regular transcription
-    let throttleInterval: TimeInterval = streamSource == "KaraokeFeature" ? 0.05 : 0.1 // 50ms for karaoke, 100ms for regular
 
     // Create AudioStreamTranscriber with weak self reference to prevent crashes
     let streamTranscriber = AudioStreamTranscriber(
@@ -638,7 +655,7 @@ actor TranscriptionClientLive {
       textDecoder: whisperKit.textDecoder,
       tokenizer: tokenizer,
       audioProcessor: whisperKit.audioProcessor,
-      decodingOptions: options
+      decodingOptions: streamDecodeOptions
     ) { [weak self] oldState, newState in
       // Safely access self to prevent EXC_BAD_ACCESS
       guard let self = self else {
@@ -666,20 +683,8 @@ actor TranscriptionClientLive {
         return
       }
 
-      // Time-based throttling: skip if too little time has passed since last update
-      // UNLESS it's a new confirmed segment (which should always go through)
-      let currentTime = Date()
-      let timeSinceLastUpdate = currentTime.timeIntervalSince(lastUpdateTime)
-      let hasNewConfirmedSegment = newState.confirmedSegments.count > lastSentSegmentCount
-      
-      if !hasNewConfirmedSegment && timeSinceLastUpdate < throttleInterval {
-        print("[TranscriptionClientLive] Throttling update: '\(cleanedText)' (time since last: \(String(format: "%.3f", timeSinceLastUpdate))s)")
-        return
-      }
-
       lastSentText = cleanedText
       lastSentSegmentCount = newState.confirmedSegments.count
-      lastUpdateTime = currentTime
       
       print("[TranscriptionClientLive] Stream callback triggered - Raw text: '\(newState.currentText)'")
       print("[TranscriptionClientLive] Confirmed segments count: \(newState.confirmedSegments.count)")
@@ -787,7 +792,21 @@ actor TranscriptionClientLive {
     
     print("[TranscriptionClientLive] Stream transcription stopped completely, streaming now inactive")
   }
-  
+
+  /// Resets any cached context or state to ensure clean isolation between different transcription modes
+  func resetContext() async {
+    print("[TranscriptionClientLive] Resetting context and state for clean isolation")
+
+    // Stop any active streaming to ensure clean state
+    await stopStreamTranscription()
+
+    // Note: We don't unload the model here as that would be expensive and unnecessary
+    // The context isolation is handled by passing explicit previousTranscript parameters
+    // to transcription methods rather than relying on persistent model state
+
+    print("[TranscriptionClientLive] Context reset completed")
+  }
+
   /// Gets the tokenizer for the currently loaded model, if available
   func getTokenizer() async -> WhisperTokenizer? {
     return whisperKit?.tokenizer

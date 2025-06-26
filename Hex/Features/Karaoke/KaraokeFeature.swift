@@ -49,6 +49,9 @@ struct KaraokeFeature {
         /// Shared transcription history for saving finalized chunks
         @Shared(.transcriptionHistory) var transcriptionHistory: TranscriptionHistory
 
+        /// Shared flag indicating whether Karaoke is currently recording
+        @Shared(.isKaraokeRecording) var isKaraokeRecording: Bool = false
+
         public init() {}
     }
 
@@ -159,6 +162,8 @@ struct KaraokeFeature {
             case .startTapped:
                 guard !state.isTranscribing else { return .none }
                 state.isTranscribing = true
+                // Notify the rest of the app that Karaoke is now recording.
+                state.$isKaraokeRecording.withLock { $0 = true }
                 // Clear current lines and add initial separator
                 state.lines.removeAll()
                 state.lines.append(Line.sessionStart())
@@ -170,6 +175,7 @@ struct KaraokeFeature {
                     chunkingStrategy: .vad
                 )
                 let settings = state.hexSettings
+                let previousTranscript = state.lastFinalizedTranscription
 
                 // First, explicitly cancel any existing stream to prevent overlapping callbacks
                 let cancelPreviousEffect: Effect<Action> = .merge(
@@ -182,7 +188,7 @@ struct KaraokeFeature {
                 )
 
                 // 1) Start live (streaming) transcription
-                let streamEffect: Effect<Action> = .run { [transcription, model, options, settings] send in
+                let streamEffect: Effect<Action> = .run { [transcription, model, options, settings, previousTranscript] send in
                     // Ensure any existing stream is stopped to prevent conflicts
                     await transcription.stopStreamTranscription()
                     
@@ -193,7 +199,7 @@ struct KaraokeFeature {
                     let updates = AsyncStream<StreamTranscriptionUpdate> { continuation in
                         let task = Task {
                             do {
-                                try await transcription.startStreamTranscription(model, options, settings) { update in
+                                try await transcription.startStreamTranscription(model, options, settings, previousTranscript) { update in
                                     continuation.yield(update)
                                     // WhisperKit convention: final update has isComplete==true
                                     if update.isComplete {
@@ -262,6 +268,8 @@ struct KaraokeFeature {
             case .stopTapped:
                 guard state.isTranscribing else { return .none }
                 state.isTranscribing = false
+                // Karaoke recording stopped – reset the shared flag.
+                state.$isKaraokeRecording.withLock { $0 = false }
                 // Remove any remaining live text lines
                 state.lines.removeAll { $0.type == .liveText }
                 state.currentLiveText = ""
@@ -461,6 +469,12 @@ struct KaraokeFeature {
                     // Stop the current chunk recording and duplicate it so subsequent recording doesn't overwrite
                     let originalURL = await recording.stopRecording()
 
+                    // Give AVAudioRecorder a brief moment to finish flushing buffers to disk. Without this pause
+                    // the file may still be in the process of being finalised which can lead to the copied chunk
+                    // being zero-bytes or otherwise unreadable – especially when we restart the recorder almost
+                    // immediately afterwards.
+                    try? await Task.sleep(for: .milliseconds(150))
+
                     // Copy to a unique temp file for safe processing
                     let chunkURL: URL = {
                         let tempDir = FileManager.default.temporaryDirectory
@@ -581,9 +595,24 @@ struct KaraokeFeature {
                     }
                 }
                 
-                // Split and trim segments
-                let newSegments = text.split(separator: "\n")
-                    .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                // Split the enhanced text into individual sentences using ". " as the delimiter.
+                // This ensures each sentence appears on its own line in the karaoke view.
+                let newSegments: [String] = text
+                    // Replace any newline characters with spaces so they don't interfere with sentence splitting.
+                    .replacingOccurrences(of: "\n", with: " ")
+                    // Break into sentences by the ". " pattern.
+                    .components(separatedBy: ". ")
+                    // Restore the terminating period for segments that lost it during the split, unless the
+                    // segment already ends with a different punctuation mark.
+                    .map { segment -> String in
+                        let trimmed = segment.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return "" }
+                        if trimmed.hasSuffix(".") || trimmed.hasSuffix("?") || trimmed.hasSuffix("!") {
+                            return trimmed
+                        } else {
+                            return "\(trimmed)."
+                        }
+                    }
                     .filter { !$0.isEmpty }
 
                 if newSegments.isEmpty {
@@ -636,15 +665,16 @@ struct KaraokeFeature {
                     chunkingStrategy: .vad
                 )
                 let settings = state.hexSettings
+                let previousTranscript = state.lastFinalizedTranscription
 
-                return .run { [transcription, model, options, settings] send in
+                return .run { [transcription, model, options, settings, previousTranscript] send in
                     // Small delay to ensure previous finalize cleaned up resources
                     try? await Task.sleep(for: .milliseconds(100))
 
                     let updates = AsyncStream<StreamTranscriptionUpdate> { continuation in
                         let task = Task {
                             do {
-                                try await transcription.startStreamTranscription(model, options, settings) { update in
+                                try await transcription.startStreamTranscription(model, options, settings, previousTranscript) { update in
                                     continuation.yield(update)
                                     if update.isComplete { continuation.finish() }
                                 }
@@ -697,7 +727,11 @@ struct KaraokeFeature {
                 // Only act on space key with no modifiers
                 if event.modifiers.isEmpty, let key = event.key {
                     if key == .space || key.rawValue == "space" || key.rawValue == " " {
+                        // Cancel any pending silence timer to avoid double-finalisation
+                        state.isMonitoringSilence = false
+                        state.lastSpeechTime = nil
                         return .merge(
+                            .cancel(id: CancelID.silenceCheck),
                             .send(._finalizeTranscription),
                             .send(._requestAIResponse)
                         )
@@ -712,16 +746,46 @@ struct KaraokeFeature {
                 return .none
 
             case let ._saveTranscript(text, audioURL):
+                // Move the temporary chunk file into our permanent "Recordings" folder first
+                let finalURL: URL = {
+                    do {
+                        let fm = FileManager.default
+                        // Locate (or create) the app-specific Application Support/Recordings directory
+                        let supportDir = try fm.url(
+                            for: .applicationSupportDirectory,
+                            in: .userDomainMask,
+                            appropriateFor: nil,
+                            create: true
+                        )
+                        let ourAppFolder = supportDir.appendingPathComponent("xyz.2qs.Tok", isDirectory: true)
+                        let recordingsFolder = ourAppFolder.appendingPathComponent("Recordings", isDirectory: true)
+                        try fm.createDirectory(at: recordingsFolder, withIntermediateDirectories: true)
+
+                        // Use the original filename if unique, otherwise fall back to a UUID
+                        var destURL = recordingsFolder.appendingPathComponent(audioURL.lastPathComponent)
+                        if fm.fileExists(atPath: destURL.path) {
+                            destURL = recordingsFolder.appendingPathComponent("\(UUID().uuidString).wav")
+                        }
+
+                        // Move the temporary file to its new location. If move fails fall back to original URL.
+                        try fm.moveItem(at: audioURL, to: destURL)
+                        return destURL
+                    } catch {
+                        print("[KaraokeFeature] Failed to move audio file to Recordings folder: \(error). Using temporary URL instead.")
+                        return audioURL
+                    }
+                }()
+
                 // Compute duration using AVAudioPlayer to ensure metadata is ready
                 let durationSeconds: Double
                 do {
-                    let player = try AVAudioPlayer(contentsOf: audioURL)
+                    let player = try AVAudioPlayer(contentsOf: finalURL)
                     durationSeconds = player.duration
                 } catch {
                     durationSeconds = 0
                 }
 
-                let record = Transcript(timestamp: Date(), text: text, audioPath: audioURL, duration: durationSeconds)
+                let record = Transcript(timestamp: Date(), text: text, audioPath: finalURL, duration: durationSeconds)
                 state.$transcriptionHistory.withLock { history in
                     history.history.insert(record, at: 0)
                 }

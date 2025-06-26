@@ -85,6 +85,7 @@ struct HistoryFeature {
 		case confirmDeleteAll
 		case playbackFinished
 		case retranscribeTranscript(UUID)
+		case openRecordingsFolder
 	}
 
 	@Dependency(\.pasteboard) var pasteboard
@@ -244,6 +245,29 @@ struct HistoryFeature {
 						print("Error re-transcribing audio: \(error)")
 					}
 				}
+
+			case .openRecordingsFolder:
+				return .run { _ in
+					do {
+						let fm = FileManager.default
+						let supportDir = try fm.url(
+							for: .applicationSupportDirectory,
+							in: .userDomainMask,
+							appropriateFor: nil,
+							create: true
+						)
+						let ourAppFolder = supportDir.appendingPathComponent("xyz.2qs.Tok", isDirectory: true)
+						let recordingsFolder = ourAppFolder.appendingPathComponent("Recordings", isDirectory: true)
+
+						// Create the folder if it doesn't exist
+						try fm.createDirectory(at: recordingsFolder, withIntermediateDirectories: true)
+
+						// Open the folder in Finder
+						NSWorkspace.shared.open(recordingsFolder)
+					} catch {
+						print("Error opening recordings folder: \(error)")
+					}
+				}
 			}
 		}
 	}
@@ -396,8 +420,15 @@ struct HistoryView: View {
 				.padding()
 			}
 			.toolbar {
-				Button(role: .destructive, action: { showingDeleteConfirmation = true }) {
-					Label("Delete All", systemImage: "trash")
+				ToolbarItemGroup(placement: .primaryAction) {
+					Button(action: { store.send(.openRecordingsFolder) }) {
+						Label("Open Recordings Folder", systemImage: "folder")
+					}
+					.help("Open recordings folder in Finder")
+
+					Button(role: .destructive, action: { showingDeleteConfirmation = true }) {
+						Label("Delete All", systemImage: "trash")
+					}
 				}
 			}
 			.alert("Delete All Transcripts", isPresented: $showingDeleteConfirmation) {

@@ -323,7 +323,7 @@ public struct ModelDownloadFeature {
 				appropriateFor: nil,
 				create: true
 			)
-			.appendingPathComponent("com.kitlangton.Hex/models", isDirectory: true)
+			.appendingPathComponent("xyz.2qs.Tok/models", isDirectory: true)
 
 			if !fm.fileExists(atPath: base.path) {
 				try fm.createDirectory(at: base, withIntermediateDirectories: true)

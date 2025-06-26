@@ -285,15 +285,19 @@ struct TranscriptionFeature {
       // MARK: - HotKey Flow
 
       case .hotKeyPressed:
-        // Ignore hotkey presses if we're already recording or transcribing to prevent
-        // accidental double-clicks from cancelling ongoing operations
-        guard !state.isRecording && !state.isTranscribing else {
-          print("🎙️ [WARNING] Hotkey press ignored - recording or transcription already in progress")
+        // If we are *already recording* we ignore the hot-key because that would be a
+        // genuine duplicate press-and-hold.  However, if we are *only* transcribing
+        // (AI enhancement or offline transcription running) we interpret the hot-key
+        // as "cancel what you're doing and start a brand-new recording".
+
+        guard !state.isRecording else {
+          print("🎙️ [WARNING] Hotkey press ignored – recording already in progress")
           return .none
         }
-        
-        // Otherwise, proceed with normal hotkey handling
-        return handleHotKeyPressed(isTranscribing: false)
+
+        // Pass the current transcribing flag so `handleHotKeyPressed` can emit a
+        // `.cancel` first when necessary.
+        return handleHotKeyPressed(isTranscribing: state.isTranscribing)
 
       case .hotKeyReleased:
         // If we're currently recording, then stop. Otherwise, just cancel
@@ -551,12 +555,26 @@ private extension TranscriptionFeature {
     .run { send in
       var hotKeyProcessor: HotKeyProcessor = .init(hotkey: HotKey(key: nil, modifiers: [.option]))
       @Shared(.isSettingHotKey) var isSettingHotKey: Bool
+      @Shared(.isKaraokeRecording) var isKaraokeRecording: Bool
       @Shared(.hexSettings) var hexSettings: HexSettings
 
       // Handle incoming key events
       keyEventMonitor.handleKeyEvent { keyEvent in
-        // Skip if the user is currently setting a hotkey
+        // If the settings panel is capturing hotkeys, immediately ignore events.
         if isSettingHotKey {
+          return false
+        }
+
+        // While Karaoke is actively recording, we *ignore* incoming key events **and**
+        // reset our internal state machine so it starts from a clean slate once
+        // Karaoke stops.  This prevents the `hotKeyProcessor` from being left in a
+        // partial/dirty state (e.g. after receiving only key-down events while
+        // recording) that would otherwise block the next press-to-talk attempt.
+        if isKaraokeRecording {
+          hotKeyProcessor = HotKeyProcessor(
+            hotkey: hotKeyProcessor.hotkey,
+            useDoubleTapOnly: hotKeyProcessor.useDoubleTapOnly
+          )
           return false
         }
 
@@ -606,6 +624,12 @@ private extension TranscriptionFeature {
           return false
         }
       }
+
+      // Keep the effect alive for as long as the app runs so that the `send`
+      // closure captured above never escapes its lifetime.  Without this,
+      // the effect returned immediately after registering the handler and any
+      // subsequent attempts to `send` an action were silently discarded.
+      try await Task.never()
     }
   }
 }
@@ -755,7 +779,7 @@ private extension TranscriptionFeature {
 
           print("Starting streaming transcription for real-time feedback…")
 
-          try await transcription.startStreamTranscription(model, decodeOptions, settings) { update in
+          try await transcription.startStreamTranscription(model, decodeOptions, settings, nil) { update in
             // Forward every update to the reducer.
             Task { await send(.streamTranscriptionUpdate(update)) }
           }
@@ -1221,7 +1245,7 @@ private extension TranscriptionFeature {
           appropriateFor: nil,
           create: true
         )
-        let ourAppFolder = supportDir.appendingPathComponent("com.kitlangton.Hex", isDirectory: true)
+        let ourAppFolder = supportDir.appendingPathComponent("xyz.2qs.Tok", isDirectory: true)
         let recordingsFolder = ourAppFolder.appendingPathComponent("Recordings", isDirectory: true)
         try fm.createDirectory(at: recordingsFolder, withIntermediateDirectories: true)
 

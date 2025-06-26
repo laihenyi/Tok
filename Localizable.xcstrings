@@ -220,6 +220,12 @@
         }
       }
     },
+    "Copy" : {
+
+    },
+    "Copy all text" : {
+
+    },
     "Copy to clipboard" : {
       "comment" : "copy transcription from history.",
       "localizations" : {
@@ -583,6 +589,12 @@
         }
       }
     },
+    "Open Recordings Folder" : {
+
+    },
+    "Open recordings folder in Finder" : {
+
+    },
     "Optional context that helps Whisper better understand what you're likely to say. This is applied directly to voice recognition, not AI enhancement." : {
 
     },
@@ -621,6 +633,9 @@
           }
         }
       }
+    },
+    "Pin on top" : {
+
     },
     "Play audio" : {
       "comment" : "Help text for play button in history view.",
@@ -899,6 +914,9 @@
       }
     },
     "Try speaking with your hotkey pressed. Your transcription will appear below." : {
+
+    },
+    "Unpin from top" : {
 
     },
     "Use AI Enhancement" : {

@@ -56,10 +56,27 @@ struct PacmanBarIcon: View {
             .resizable()
             .renderingMode(.template)
             .frame(width: 18, height: 18)
-            .onAppear(perform: updateImage)
-            .onChange(of: mouthAngle) { _, _ in updateImage() }
-            .onChange(of: peakPower) { _, _ in updateImage() }
-            .onChange(of: isRecording) { _, _ in updateImage() }
+            .onAppear {
+                // Schedule state update outside the immediate view update cycle
+                DispatchQueue.main.async {
+                    updateImage()
+                }
+            }
+            .onChange(of: mouthAngle) { _, _ in
+                DispatchQueue.main.async {
+                    updateImage()
+                }
+            }
+            .onChange(of: peakPower) { _, _ in
+                DispatchQueue.main.async {
+                    updateImage()
+                }
+            }
+            .onChange(of: isRecording) { _, _ in
+                DispatchQueue.main.async {
+                    updateImage()
+                }
+            }
     }
     private func updateImage() {
         let size = CGSize(width: 36, height: 36)

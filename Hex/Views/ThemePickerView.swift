@@ -44,8 +44,11 @@ struct ThemePickerView: View {
             LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(options) { option in
                     Button {
-                        selectedText = option.text
-                        selectedBackground = option.background
+                        // Defer the binding updates to avoid "Publishing changes from within view updates"
+                        DispatchQueue.main.async {
+                            selectedText = option.text
+                            selectedBackground = option.background
+                        }
                         dismiss()
                     } label: {
                         Circle()

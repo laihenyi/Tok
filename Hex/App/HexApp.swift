@@ -17,7 +17,7 @@ struct HexApp: App {
 
 			// New: open Karaoke Live View
 			Button("Live Transcript") {
-				openWindow(id: "karaoke")
+				appDelegate.presentKaraokeView()
 			}
 			.keyboardShortcut("k", modifiers: [.option, .command])
 
@@ -57,14 +57,6 @@ struct HexApp: App {
 				}
 			}
 
-		// Karaoke Window Scene
-		WindowGroup("Live Transcript", id: "karaoke") {
-			KaraokeView(store: Store(initialState: KaraokeFeature.State()) {
-				KaraokeFeature()
-			})
-		}
-#if os(macOS)
-		.windowStyle(.hiddenTitleBar)
-#endif
+
 	}
 }

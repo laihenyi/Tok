@@ -1,5 +1,6 @@
 import SwiftUI
 import ComposableArchitecture
+import AppKit
 
 /// Window content for the live, karaoke-style transcription view.
 struct KaraokeView: View {
@@ -8,7 +9,9 @@ struct KaraokeView: View {
     // Persisted theme colours
     @AppStorage("karaokeHighlightColor") private var storedHighlightName: String = "pink"
     @AppStorage("karaokeBackgroundColor") private var storedBackgroundName: String = "black"
-    
+    // Persisted pinned status
+    @AppStorage("karaokeIsPinnedOnTop") private var isPinnedOnTop: Bool = false
+
     // Currently selected highlight colour for active lyrics
     @State private var highlightColor: Color = .pink
     @State private var backgroundColor: Color = .black
@@ -17,11 +20,34 @@ struct KaraokeView: View {
     /// Determines if the current background color is considered dark
     private var isDarkBackground: Bool {
         // Consider black and other dark colors as dark backgrounds
-        backgroundColor == .black || 
-        backgroundColor == .gray || 
+        backgroundColor == .black ||
+        backgroundColor == .gray ||
         backgroundColor.description.contains("dark") ||
         // For custom colors, check if they're closer to black than white
         (backgroundColor != .white && backgroundColor != .yellow && backgroundColor != .cyan && backgroundColor != .mint && backgroundColor != .pink)
+    }
+
+    /// Toggle the window's pin-on-top status
+    private func togglePinOnTop() {
+        isPinnedOnTop.toggle()
+
+        // Update window level through app delegate
+        if let appDelegate = NSApplication.shared.delegate as? HexAppDelegate {
+            appDelegate.setKaraokeWindowLevel(isPinnedOnTop ? .screenSaver : .floating)
+        }
+    }
+
+    /// Copy all transcription text to clipboard
+    private func copyAllText(viewStore: ViewStore<KaraokeFeature.State, KaraokeFeature.Action>) {
+        let allText = viewStore.lines
+            .filter { $0.type == .transcription || $0.type == .liveText }
+            .map { $0.text }
+            .joined(separator: " ")
+
+        if !allText.isEmpty {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(allText, forType: .string)
+        }
     }
 
     var body: some View {
@@ -34,53 +60,57 @@ struct KaraokeView: View {
                     backgroundColor.ignoresSafeArea()
                 }
 
-                VSplitView {
+                CustomVSplitView(
+                    dividerColor: Binding(
+                        get: { highlightColor.opacity(0.3) },
+                        set: { _ in }
+                    ),
+                    splitRatio: .constant(viewStore.splitRatio)
+                ) {
                     // MARK: – Upper transcription pane
-                    ZStack(alignment: .top) {
+                    ZStack(alignment: .topTrailing) {
                         // Scrollable list of lyric lines, newest at bottom
                         ScrollViewReader { proxy in
                             ScrollView {
                                 VStack(spacing: 8) {
                                     ForEach(viewStore.lines) { line in
                                         Group {
-                                                                                    switch line.type {
-                                        case .transcription:
-                                            Text(line.text)
-                                                .font(
-                                                    line.isHighlighted
-                                                        ? .system(size: 26, weight: .bold, design: .rounded)
-                                                        : .system(size: 24, weight: .regular, design: .rounded)
-                                                )
-                                                .multilineTextAlignment(.center)
-                                                .foregroundStyle(line.isHighlighted ? highlightColor : Color.secondary)
-                                                .animation(.easeInOut(duration: 0.3), value: line.isHighlighted)
-                                        
-                                        case .liveText:
-                                            Text(line.text)
-                                                .font(.system(size: 28, weight: .bold, design: .rounded))
-                                                .multilineTextAlignment(.center)
-                                                .foregroundStyle(highlightColor)
-                                                .opacity(line.isHighlighted ? 1.0 : 0.6)
-                                                .animation(.easeInOut(duration: 0.2), value: line.isHighlighted)
-                                                .overlay(
-                                                    // Add a subtle pulsing effect to indicate live text
-                                                    RoundedRectangle(cornerRadius: 6)
-                                                        .stroke(highlightColor.opacity(0.3), lineWidth: 1)
-                                                        .opacity(line.isHighlighted ? 1.0 : 0.0)
-                                                        .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: line.isHighlighted)
-                                                )
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 4)
-                                        
-                                        case .separator:
-                                            ChunkSeparatorView(timestamp: line.timestamp ?? Date(), highlightColor: highlightColor, status: line.processingStatus)
-                                        
-                                        case .sessionStart:
-                                            SessionBoundaryView(type: .start, timestamp: line.timestamp ?? Date(), highlightColor: highlightColor)
-                                        
-                                        case .sessionEnd:
-                                            SessionBoundaryView(type: .end, timestamp: line.timestamp ?? Date(), highlightColor: highlightColor)
-                                        }
+                                        switch line.type {
+                                            case .transcription:
+                                                Text(line.text)
+                                                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                                                    .multilineTextAlignment(.center)
+                                                    .foregroundStyle(highlightColor)
+                                                    .animation(.easeInOut(duration: 0.3), value: line.isHighlighted)
+                                                    .textSelection(.enabled)
+                                            
+                                            case .liveText:
+                                                Text(line.text)
+                                                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                                                    .multilineTextAlignment(.center)
+                                                    .foregroundStyle(highlightColor)
+                                                    .opacity(line.isHighlighted ? 1.0 : 0.6)
+                                                    .animation(.easeInOut(duration: 0.2), value: line.isHighlighted)
+                                                    .overlay(
+                                                        // Add a subtle pulsing effect to indicate live text
+                                                        RoundedRectangle(cornerRadius: 6)
+                                                            .stroke(highlightColor.opacity(0.3), lineWidth: 1)
+                                                            .opacity(line.isHighlighted ? 1.0 : 0.0)
+                                                            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: line.isHighlighted)
+                                                    )
+                                                    .padding(.horizontal, 8)
+                                                    .padding(.vertical, 4)
+                                                    .textSelection(.enabled)
+                                            
+                                            case .separator:
+                                                ChunkSeparatorView(timestamp: line.timestamp ?? Date(), highlightColor: highlightColor, status: line.processingStatus)
+                                            
+                                            case .sessionStart:
+                                                SessionBoundaryView(type: .start, timestamp: line.timestamp ?? Date(), highlightColor: highlightColor)
+                                            
+                                            case .sessionEnd:
+                                                SessionBoundaryView(type: .end, timestamp: line.timestamp ?? Date(), highlightColor: highlightColor)
+                                            }
                                         }
                                         .id(line.id)
                                     }
@@ -116,8 +146,25 @@ struct KaraokeView: View {
                                     .onDisappear { showingThemePicker = false }
                             }
 
+                            // Pin button
+                            Button(action: { togglePinOnTop() }) {
+                                Image(systemName: isPinnedOnTop ? "pin.fill" : "pin")
+                                    .foregroundColor(isPinnedOnTop ? highlightColor : .secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help(isPinnedOnTop ? "Unpin from top" : "Pin on top")
+
+                            // Copy all text button
+                            Button(action: { copyAllText(viewStore: viewStore) }) {
+                                Image(systemName: "doc.on.doc")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Copy all text")
+
                             Spacer()
 
+                            // Start / Stop button
                             if viewStore.isTranscribing {
                                 Button("Stop") { viewStore.send(.stopTapped) }
                                     .keyboardShortcut(.escape, modifiers: [])
@@ -126,11 +173,11 @@ struct KaraokeView: View {
                                     .keyboardShortcut(.space, modifiers: [])
                             }
                         }
-                        .padding([.top, .horizontal], 12)
+                        .padding([.top, .leading, .trailing], 12)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(backgroundColor == .black ? Color.clear : backgroundColor)
-
+                } bottom: {
                     // MARK: – Lower AI pane
                     VStack(alignment: .center, spacing: 8) {
                         Picker("", selection: viewStore.binding(get: { $0.selectedTab }, send: KaraokeFeature.Action.setSelectedTab)) {
@@ -151,24 +198,34 @@ struct KaraokeView: View {
                         } else {
                             ScrollView {
                                 Text(viewStore.aiResponse.isEmpty ? "" : viewStore.aiResponse)
-                                    .font(.system(size: 24, weight: .regular, design: .rounded))
+                                    .font(.system(size: 28, weight: .bold, design: .rounded))
                                     .foregroundColor(highlightColor)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding()
+                                    .textSelection(.enabled)
+                                    .contextMenu {
+                                        Button("Copy") {
+                                            NSPasteboard.general.clearContents()
+                                            NSPasteboard.general.setString(viewStore.aiResponse, forType: .string)
+                                        }
+                                    }
                             }
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(backgroundColor == .black ? Color.clear : backgroundColor)
                 }
             }
-            .navigationTitle("Live Transcript")
             .frame(minWidth: 500, minHeight: 400)
             .preferredColorScheme(isDarkBackground ? .dark : .light)
-            // Sync the in-memory colours with the persisted values
+            // Sync the in-memory colours with the persisted values and set window level
             .onAppear {
                 highlightColor = Color.themeColor(from: storedHighlightName)
                 backgroundColor = Color.themeColor(from: storedBackgroundName)
+
+                // Set window level based on stored pinned status
+                if let appDelegate = NSApplication.shared.delegate as? HexAppDelegate {
+                    appDelegate.setKaraokeWindowLevel(isPinnedOnTop ? .screenSaver : .floating)
+                }
             }
             // Persist any changes made by the user
             .onChange(of: highlightColor) { _, newValue in
@@ -177,6 +234,13 @@ struct KaraokeView: View {
             .onChange(of: backgroundColor) { _, newValue in
                 storedBackgroundName = newValue.themeName
             }
+            // Ensure recording stops and system-level hotkey is re-enabled when the window is closed
+            .onDisappear {
+                if viewStore.isTranscribing {
+                    viewStore.send(.stopTapped)
+                }
+            }
+            .ignoresSafeArea(.container, edges: .top)
         }
     }
 }

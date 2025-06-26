@@ -508,9 +508,12 @@ struct VoiceWaveView: View {
       // Right-align so newest bar appears at the far right, sliding older bars left.
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
     }
-    // Push new sample whenever "power" changes.
-    .onChange(of: power) { _, newValue in
-      let clamped = max(0, min(newValue, 1))
+    // Push new sample whenever "power" changes. Using `.task(id:)` ensures the state
+    // mutation happens in a fresh turn of the run loop, outside the current view
+    // update cycle, avoiding the "Publishing changes from within view updates" warning.
+    .task(id: power) {
+      // Clamp and append the sample asynchronously.
+      let clamped = max(0, min(power, 1))
       history.append(clamped)
       if history.count > maxSamples {
         history.removeFirst(history.count - maxSamples)
