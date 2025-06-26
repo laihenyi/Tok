@@ -63,12 +63,22 @@ struct PacmanBarIcon: View {
     }
     private func updateImage() {
         let size = CGSize(width: 36, height: 36)
-        let hosting = NSHostingView(rootView:
-            PacmanShape(mouthAngle: mouthAngle)
-                .stroke(Color.primary, lineWidth: 3)
-                .frame(width: size.width, height: size.height)
-        )
-        // Ensure the view has the correct bounds for offscreen rendering
+
+        // Choose a filled Pac-Man when recording ("talking") and an outlined
+        // Pac-Man when idle.
+        let rootView = ZStack {
+            if isRecording {
+                PacmanShape(mouthAngle: mouthAngle)
+                    .fill(Color.primary)
+            } else {
+                PacmanShape(mouthAngle: mouthAngle)
+                    .stroke(Color.primary, lineWidth: 3)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+
+        let hosting = NSHostingView(rootView: rootView)
+        // Ensure the view has the correct bounds for off-screen rendering
         hosting.frame = CGRect(origin: .zero, size: size)
         guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
             return
