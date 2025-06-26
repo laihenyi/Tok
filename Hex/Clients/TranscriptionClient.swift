@@ -33,7 +33,8 @@ struct TranscriptionClient {
   /// Transcribes an audio file at the specified `URL` using the named `model`.
   /// Reports transcription progress via `progressCallback`.
   /// Optionally accepts HexSettings for features like auto-capitalization.
-  var transcribe: @Sendable (URL, String, DecodingOptions, HexSettings?, @escaping (Progress) -> Void) async throws -> String
+  /// Optionally accepts previousTranscript for rolling context in chunked transcription.
+  var transcribe: @Sendable (URL, String, DecodingOptions, HexSettings?, String?, @escaping (Progress) -> Void) async throws -> String
 
   /// Ensures a model is downloaded (if missing) and loaded into memory, reporting progress via `progressCallback`.
   var downloadModel: @Sendable (String, @escaping (Progress) -> Void) async throws -> Void
@@ -71,7 +72,7 @@ extension TranscriptionClient: DependencyKey {
   static var liveValue: Self {
     let live = TranscriptionClientLive()
     return Self(
-      transcribe: { try await live.transcribe(url: $0, model: $1, options: $2, settings: $3, progressCallback: $4) },
+      transcribe: { try await live.transcribe(url: $0, model: $1, options: $2, settings: $3, previousTranscript: $4, progressCallback: $5) },
       downloadModel: { try await live.downloadAndLoadModel(variant: $0, progressCallback: $1) },
       deleteModel: { try await live.deleteModel(variant: $0) },
       isModelDownloaded: { await live.isModelDownloaded($0) },
@@ -113,6 +114,9 @@ actor TranscriptionClientLive {
 
   /// Flag to track if streaming transcription is currently active
   private var isStreamingActive: Bool = false
+
+  /// Track the source of the current stream to help debug conflicts
+  private var currentStreamSource: String?
 
   /// The base folder under which we store model data (e.g., ~/Library/Application Support/...).
   private lazy var modelsBaseFolder: URL = {
@@ -323,8 +327,10 @@ actor TranscriptionClientLive {
     model: String,
     options: DecodingOptions,
     settings: HexSettings? = nil,
+    previousTranscript: String? = nil,
     progressCallback: @escaping (Progress) -> Void
   ) async throws -> String {
+    
     // Load or switch to the required model if needed.
     print("[TranscriptionClientLive] transcribe - checking model: '\(model)' vs current: '\(currentModelName ?? "nil")', whisperKit: \(whisperKit != nil), isStreamingActive: \(isStreamingActive)")
 
@@ -352,8 +358,29 @@ actor TranscriptionClientLive {
       )
     }
 
+    // Build decoding options with optional previous transcript context
+    var decodeOptions = options
+    
+    // Add previous transcript to prompt tokens if provided
+    if let previousTranscript = previousTranscript, !previousTranscript.trimmingCharacters(in: .whitespaces).isEmpty,
+       let tokenizer = whisperKit.tokenizer {
+      let trimmedPrevious = previousTranscript.trimmingCharacters(in: .whitespaces)
+      let previousTokens = tokenizer.encode(text: " " + trimmedPrevious)
+        .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+      
+      // Append to existing prompt tokens if any, otherwise use the previous transcript tokens
+      if let existingTokens = decodeOptions.promptTokens {
+        decodeOptions.promptTokens = existingTokens + previousTokens
+        print("[TranscriptionClientLive] Appended previous transcript context (\(previousTokens.count) tokens) to existing prompt tokens (\(existingTokens.count) tokens): '\(trimmedPrevious)'")
+      } else {
+        decodeOptions.promptTokens = previousTokens
+        print("[TranscriptionClientLive] Applied previous transcript context with \(previousTokens.count) tokens: '\(trimmedPrevious)'")
+      }
+      decodeOptions.usePrefillPrompt = false
+    }
+
     // Perform the transcription.
-    let results = try await whisperKit.transcribe(audioPath: url.path, decodeOptions: options)
+    let results = try await whisperKit.transcribe(audioPath: url.path, decodeOptions: decodeOptions)
 
     // Concatenate results from all segments.
     var text = results.map(\.text).joined(separator: " ")
@@ -512,6 +539,8 @@ actor TranscriptionClientLive {
     let whisperTokenPatterns = [
       "<\\|startoftranscript\\|>",
       "<\\|endoftranscript\\|>",
+      "<\\|startoftext\\|>",
+      "<\\|endoftext\\|>",
       "<\\|\\w{2}\\|>", // Language tokens like <|en|>, <|es|>, etc.
       "<\\|transcribe\\|>",
       "<\\|translate\\|>",
@@ -549,8 +578,14 @@ actor TranscriptionClientLive {
     settings: HexSettings? = nil,
     updateCallback: @escaping (StreamTranscriptionUpdate) -> Void
   ) async throws {
-    // Stop any existing stream
+    // Stop any existing stream first - this is CRITICAL to prevent conflicts
+    if isStreamingActive {
+      print("[TranscriptionClientLive] WARNING: Stopping existing stream from \(currentStreamSource ?? "unknown") to start new stream")
+    }
     await stopStreamTranscription()
+
+    // Add a small delay to ensure cleanup is complete
+    try await Task.sleep(for: .milliseconds(100))
 
     // Load or switch to the required model if needed
     print("[TranscriptionClientLive] startStreamTranscription - checking model: '\(model)' vs current: '\(currentModelName ?? "nil")', whisperKit: \(whisperKit != nil)")
@@ -582,7 +617,18 @@ actor TranscriptionClientLive {
       )
     }
 
-    print("[TranscriptionClientLive] Starting stream transcription with model: \(model)")
+    // Determine source for debugging
+    let streamSource = settings != nil ? "KaraokeFeature" : "TranscriptionFeature"
+    currentStreamSource = streamSource
+    
+    print("[TranscriptionClientLive] Starting stream transcription with model: \(model) from source: \(streamSource)")
+
+    // Create a deduplication mechanism to prevent duplicate updates
+    var lastSentText = ""
+    var lastSentSegmentCount = 0
+    var lastUpdateTime = Date()
+    // Use more aggressive throttling for live karaoke mode vs regular transcription
+    let throttleInterval: TimeInterval = streamSource == "KaraokeFeature" ? 0.05 : 0.1 // 50ms for karaoke, 100ms for regular
 
     // Create AudioStreamTranscriber with weak self reference to prevent crashes
     let streamTranscriber = AudioStreamTranscriber(
@@ -603,11 +649,37 @@ actor TranscriptionClientLive {
       // Clean up raw Whisper tokens from the text
       let cleanedText = self.cleanWhisperTokens(from: newState.currentText)
       
-      // Skip empty/waiting updates to reduce noise, but allow real transcription through
-      if cleanedText.isEmpty || cleanedText == "Waiting for speech..." {
-        // Skip these updates silently to avoid log spam
+      // Skip empty/waiting updates to reduce noise, but allow updates that contain a *new* confirmed segment
+      if (cleanedText.isEmpty || cleanedText == "Waiting for speech...") && newState.confirmedSegments.count == lastSentSegmentCount {
+        // Only skip if both the text is empty *and* there's no new confirmed segment
         return
       }
+
+      // Deduplication: skip if this is the same text and segment count as last sent
+      // For KaraokeFeature, be more permissive to allow frequent live updates
+      let shouldSkipDuplicate = streamSource == "KaraokeFeature" ? 
+        (cleanedText == lastSentText && cleanedText.count > 10 && newState.confirmedSegments.count == lastSentSegmentCount) :
+        (cleanedText == lastSentText && newState.confirmedSegments.count == lastSentSegmentCount)
+      
+      if shouldSkipDuplicate {
+        print("[TranscriptionClientLive] Skipping duplicate update: '\(cleanedText)'")
+        return
+      }
+
+      // Time-based throttling: skip if too little time has passed since last update
+      // UNLESS it's a new confirmed segment (which should always go through)
+      let currentTime = Date()
+      let timeSinceLastUpdate = currentTime.timeIntervalSince(lastUpdateTime)
+      let hasNewConfirmedSegment = newState.confirmedSegments.count > lastSentSegmentCount
+      
+      if !hasNewConfirmedSegment && timeSinceLastUpdate < throttleInterval {
+        print("[TranscriptionClientLive] Throttling update: '\(cleanedText)' (time since last: \(String(format: "%.3f", timeSinceLastUpdate))s)")
+        return
+      }
+
+      lastSentText = cleanedText
+      lastSentSegmentCount = newState.confirmedSegments.count
+      lastUpdateTime = currentTime
       
       print("[TranscriptionClientLive] Stream callback triggered - Raw text: '\(newState.currentText)'")
       print("[TranscriptionClientLive] Confirmed segments count: \(newState.confirmedSegments.count)")
@@ -703,13 +775,16 @@ actor TranscriptionClientLive {
       }
     }
 
-    // Stop the audio stream transcriber
+    // Stop the audio stream transcriber with proper cleanup
     if let streamTranscriber = audioStreamTranscriber {
       await streamTranscriber.stopStreamTranscription()
       audioStreamTranscriber = nil
       print("[TranscriptionClientLive] AudioStreamTranscriber stopped and cleared")
     }
 
+    // Clear the current stream source
+    currentStreamSource = nil
+    
     print("[TranscriptionClientLive] Stream transcription stopped completely, streaming now inactive")
   }
   

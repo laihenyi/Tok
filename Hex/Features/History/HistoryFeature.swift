@@ -220,7 +220,7 @@ struct HistoryFeature {
 							chunkingStrategy: .vad
 						)
 						// Perform transcription
-						let result = try await transcription.transcribe(original.audioPath, model, options, settings) { _ in }
+						let result = try await transcription.transcribe(original.audioPath, model, options, settings, nil) { _ in }
 
 						// Skip if result empty
 						guard !result.isEmpty else { return }

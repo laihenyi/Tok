@@ -784,67 +784,68 @@ private extension TranscriptionFeature {
     // Reset meter to baseline values so UI (e.g., Pac-Man icon) returns to its resting state.
     state.meter = .init(averagePower: 0, peakPower: 0)
 
-    // Capture *all* streaming text (confirmed + current + unconfirmed) BEFORE
-    // resetting it, otherwise we might lose the beginning of the sentence if
-    // Whisper started a new segment shortly before the user released the key.
-    let streamingFallbackText: String = {
-      let confirmed = state.streamingTranscription.confirmedSegments.map(\.text).joined(separator: " ")
-      let unconfirmed = state.streamingTranscription.unconfirmedSegments.map(\.text).joined(separator: " ")
-      let current = state.streamingTranscription.currentText
-      return ([confirmed, current, unconfirmed].filter { !$0.isEmpty }).joined(separator: " ")
-    }()
+            // Capture *all* streaming text (confirmed + current + unconfirmed) BEFORE
+        // resetting it, otherwise we might lose the beginning of the sentence if
+        // Whisper started a new segment shortly before the user released the key.
+        let streamingFallbackText: String = {
+          let confirmed = state.streamingTranscription.confirmedSegments.map(\.text).joined(separator: " ")
+          let unconfirmed = state.streamingTranscription.unconfirmedSegments.map(\.text).joined(separator: " ")
+          let current = state.streamingTranscription.currentText
+          return ([confirmed, current, unconfirmed].filter { !$0.isEmpty }).joined(separator: " ")
+        }()
 
-    // Persist the real-time transcription so we can feed it into the AI enhancement later.
-    state.realTimeTranscription = streamingFallbackText
+        // Persist the real-time transcription so we can feed it into the AI enhancement later.
+        state.realTimeTranscription = streamingFallbackText
 
-    // Reset streaming transcription state to ensure clean stop
-    // This must be done early to ensure all code paths reset the streaming state
-    state.streamingTranscription.reset()
+        // Reset streaming transcription state to ensure clean stop
+        // This must be done early to ensure all code paths reset the streaming state
+        state.streamingTranscription.reset()
 
-    // Allow system to sleep again by releasing the power management assertion
-    // Always call this, even if the setting is off, to ensure we don't leak assertions
-    //  (e.g. if the setting was toggled off mid-recording)
-    reallowSystemSleep(&state)
+        // Allow system to sleep again by releasing the power management assertion
+        // Always call this, even if the setting is off, to ensure we don't leak assertions
+        //  (e.g. if the setting was toggled off mid-recording)
+        reallowSystemSleep(&state)
 
-    let durationIsLongEnough: Bool = {
-      guard let startTime = state.recordingStartTime else { return false }
-      return Date().timeIntervalSince(startTime) > state.hexSettings.minimumKeyTime
-    }()
+        let durationIsLongEnough: Bool = {
+          guard let startTime = state.recordingStartTime else { return false }
+          return Date().timeIntervalSince(startTime) > state.hexSettings.minimumKeyTime
+        }()
 
-    guard (durationIsLongEnough || state.hexSettings.hotkey.key != nil) else {
-      // If the user recorded for less than minimumKeyTime, just discard
-      // unless the hotkey includes a regular key, in which case, we can assume it was intentional
-      print("Recording was too short, discarding")
-      return .merge(
-        .cancel(id: CancelID.streamTranscription),
-        .cancel(id: CancelID.screenshotCapture),
-        .run { _ in
-          await transcription.stopStreamTranscription()
-          _ = await recording.stopRecording()
+        guard (durationIsLongEnough || state.hexSettings.hotkey.key != nil) else {
+          // If the user recorded for less than minimumKeyTime, just discard
+          // unless the hotkey includes a regular key, in which case, we can assume it was intentional
+          print("Recording was too short, discarding")
+          return .merge(
+            .cancel(id: CancelID.streamTranscription),
+            .cancel(id: CancelID.screenshotCapture),
+            .run { _ in
+              await transcription.stopStreamTranscription()
+              _ = await recording.stopRecording()
+            }
+          )
         }
-      )
-    }
 
-    // Otherwise, proceed to traditional transcription for final result
-    state.isTranscribing = true
-    state.error = nil
-    
-    // Keep the context prompt (may be set by delayed screenshot capture earlier)
-    let contextPrompt = state.contextPrompt
-    let recordingDuration: TimeInterval = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
-    let model = state.hexSettings.selectedModel
-    let language = state.hexSettings.outputLanguage
-    let settings = state.hexSettings
-    
-    state.isPrewarming = true
-    
-    return .merge(
-      .send(.stopRecordingPulse),
-      // Cancel screenshot capture if it hasn't fired yet, then cancel streaming transcription
-      .cancel(id: CancelID.screenshotCapture),
-      .cancel(id: CancelID.streamTranscription),
-      // Then stop streaming transcription synchronously before beginning offline transcription
-      .run { send in
+        // Otherwise, proceed to traditional transcription for final result
+        state.isTranscribing = true
+        state.error = nil
+        
+        // Keep the context prompt (may be set by delayed screenshot capture earlier)
+                let contextPrompt = state.contextPrompt
+        let previousTranscript = state.transcriptionHistory.history.first?.text ?? ""
+        let recordingDuration: TimeInterval = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
+        let model = state.hexSettings.selectedModel
+        let language = state.hexSettings.outputLanguage
+        let settings = state.hexSettings
+        
+        state.isPrewarming = true
+        
+        return .merge(
+          .send(.stopRecordingPulse),
+          // Cancel screenshot capture if it hasn't fired yet, then cancel streaming transcription
+          .cancel(id: CancelID.screenshotCapture),
+          .cancel(id: CancelID.streamTranscription),
+          // Then stop streaming transcription synchronously before beginning offline transcription
+          .run { [previousTranscript] send in
         // Ensure the real-time streaming engine is fully stopped before we
         // start an offline transcription.  If we launch them concurrently,
         // WhisperKit will cancel one of the operations which manifests as a
@@ -888,7 +889,8 @@ private extension TranscriptionFeature {
             audioURL,
             model,
             decodeOptionsWithPrefill,
-            settings
+            settings,
+            previousTranscript
           ) { _ in }
 
           print("Result WITH prefill prompt: \"\(resultWithPrefill)\"")
@@ -905,7 +907,8 @@ private extension TranscriptionFeature {
               audioURL,
               model,
               decodeOptionsNoPrefill,
-              settings
+              settings,
+              previousTranscript
             ) { _ in }
 
             print("Initial result WITHOUT prefill prompt: \"\(resultWithoutPrefill)\"")
@@ -919,7 +922,8 @@ private extension TranscriptionFeature {
                 audioURL,
                 model,
                 decodeOptionsNoPrefill,
-                settings
+                settings,
+                previousTranscript
               ) { _ in }
 
               print("[TranscriptionFeature] Retry result WITHOUT prefill: \"\(retryResultNP)\"")
@@ -1026,6 +1030,7 @@ private extension TranscriptionFeature {
       }
 
       print("[TranscriptionFeature] Enhanced prompt: \(enhancedPrompt)")
+      print("[TranscriptionFeature] Combined context: \(combinedContext)")
 
       return enhanceWithAI(
         result: trimmedResult,

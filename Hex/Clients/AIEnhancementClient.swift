@@ -185,7 +185,7 @@ class AIEnhancementClientLive {
             progress.completedUnitCount = 100
             progressCallback(progress)
             
-            print("[AIEnhancementClientLive] Successfully enhanced text: \"\(enhancedText.prefix(50))...\"")
+            print("[AIEnhancementClientLive] Successfully enhanced text: \"\(enhancedText.prefix(250))...\"")
             return enhancedText
         } catch {
             // When using a remote provider (e.g. Groq) and we encounter a networking error

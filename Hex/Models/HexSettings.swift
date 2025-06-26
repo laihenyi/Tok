@@ -10,7 +10,7 @@ enum ModelWarmStatus: String, Codable, Equatable {
 }
 
 // To add a new setting, add a new property to the struct, the CodingKeys enum, and the custom decoder
-struct HexSettings: Codable, Equatable {
+struct HexSettings: Codable, Equatable, Sendable {
 	var soundEffectsEnabled: Bool = true
 	var hotkey: HotKey = .init(key: nil, modifiers: [.option])
 	var openOnLogin: Bool = false
@@ -25,6 +25,11 @@ struct HexSettings: Codable, Equatable {
 	var outputLanguage: String? = nil
 	var selectedMicrophoneID: String? = nil
     var disableAutoCapitalization: Bool = false // New setting for disabling auto-capitalization
+    // Audio mixing settings for meetings
+    var enableAudioMixing: Bool = false // Enable mixing input and output audio
+    var selectedOutputDeviceID: String? = nil // Output device to capture audio from
+    var audioMixingInputGain: Double = 1.0 // Gain for microphone input (0.0 - 2.0)
+    var audioMixingOutputGain: Double = 1.0 // Gain for system output (0.0 - 2.0)
     var enableScreenCapture: Bool = false // New setting for enabling screen capture
     var hasCompletedOnboarding: Bool = false // New setting for onboarding completion
 
@@ -41,6 +46,8 @@ struct HexSettings: Codable, Equatable {
     var selectedRemoteModel: String = "compound-beta-mini"
     // Voice Recognition Initial Prompt
     var voiceRecognitionPrompt: String = ""
+    // Live response (karaoke) prompt
+    var liveResponsePrompt: String = ""
     // Image Recognition Model settings
     var selectedImageModel: String = "llava:latest"
     var selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview"
@@ -65,6 +72,10 @@ struct HexSettings: Codable, Equatable {
 		case outputLanguage
 		case selectedMicrophoneID
         case disableAutoCapitalization
+        case enableAudioMixing
+        case selectedOutputDeviceID
+        case audioMixingInputGain
+        case audioMixingOutputGain
         case enableScreenCapture
         case hasCompletedOnboarding
         case useAIEnhancement
@@ -75,6 +86,7 @@ struct HexSettings: Codable, Equatable {
         case groqAPIKey
         case selectedRemoteModel
         case voiceRecognitionPrompt
+        case liveResponsePrompt
         case transcriptionModelWarmStatus
         case selectedImageModel
         case selectedRemoteImageModel
@@ -97,6 +109,10 @@ struct HexSettings: Codable, Equatable {
 		outputLanguage: String? = nil,
 		selectedMicrophoneID: String? = nil,
         disableAutoCapitalization: Bool = false,
+        enableAudioMixing: Bool = false,
+        selectedOutputDeviceID: String? = nil,
+        audioMixingInputGain: Double = 1.0,
+        audioMixingOutputGain: Double = 1.0,
         enableScreenCapture: Bool = false,
         hasCompletedOnboarding: Bool = false,
         useAIEnhancement: Bool = false,
@@ -107,6 +123,7 @@ struct HexSettings: Codable, Equatable {
         groqAPIKey: String = "",
         selectedRemoteModel: String = "compound-beta-mini",
         voiceRecognitionPrompt: String = "",
+        liveResponsePrompt: String = "",
         transcriptionModelWarmStatus: ModelWarmStatus = .cold,
         selectedImageModel: String = "llava:latest",
         selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview",
@@ -127,6 +144,10 @@ struct HexSettings: Codable, Equatable {
 		self.outputLanguage = outputLanguage
 		self.selectedMicrophoneID = selectedMicrophoneID
         self.disableAutoCapitalization = disableAutoCapitalization
+        self.enableAudioMixing = enableAudioMixing
+        self.selectedOutputDeviceID = selectedOutputDeviceID
+        self.audioMixingInputGain = audioMixingInputGain
+        self.audioMixingOutputGain = audioMixingOutputGain
         self.enableScreenCapture = enableScreenCapture
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.useAIEnhancement = useAIEnhancement
@@ -137,6 +158,7 @@ struct HexSettings: Codable, Equatable {
         self.groqAPIKey = groqAPIKey
         self.selectedRemoteModel = selectedRemoteModel
         self.voiceRecognitionPrompt = voiceRecognitionPrompt
+        self.liveResponsePrompt = liveResponsePrompt
         self.transcriptionModelWarmStatus = transcriptionModelWarmStatus
         self.selectedImageModel = selectedImageModel
         self.selectedRemoteImageModel = selectedRemoteImageModel
@@ -173,6 +195,10 @@ struct HexSettings: Codable, Equatable {
 		outputLanguage = try container.decodeIfPresent(String.self, forKey: .outputLanguage)
         selectedMicrophoneID = try container.decodeIfPresent(String.self, forKey: .selectedMicrophoneID)
         disableAutoCapitalization = try container.decodeIfPresent(Bool.self, forKey: .disableAutoCapitalization) ?? false
+        enableAudioMixing = try container.decodeIfPresent(Bool.self, forKey: .enableAudioMixing) ?? false
+        selectedOutputDeviceID = try container.decodeIfPresent(String.self, forKey: .selectedOutputDeviceID)
+        audioMixingInputGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingInputGain) ?? 1.0
+        audioMixingOutputGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingOutputGain) ?? 1.0
         enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? false
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         // AI Enhancement settings
@@ -186,6 +212,7 @@ struct HexSettings: Codable, Equatable {
         selectedRemoteModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteModel) ?? "compound-beta-mini"
         // Voice Recognition Initial Prompt
         voiceRecognitionPrompt = try container.decodeIfPresent(String.self, forKey: .voiceRecognitionPrompt) ?? ""
+        liveResponsePrompt = try container.decodeIfPresent(String.self, forKey: .liveResponsePrompt) ?? ""
         // Model warm status tracking (only for transcription models)
         transcriptionModelWarmStatus = try container.decodeIfPresent(ModelWarmStatus.self, forKey: .transcriptionModelWarmStatus) ?? .cold
         // Image Recognition Model settings

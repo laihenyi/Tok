@@ -19,6 +19,12 @@ struct AudioInputDevice: Identifiable, Equatable {
   var name: String
 }
 
+/// Represents an audio output device
+struct AudioOutputDevice: Identifiable, Equatable {
+  var id: String
+  var name: String
+}
+
 @DependencyClient
 struct RecordingClient {
   var startRecording: @Sendable () async -> Void = {}
@@ -26,6 +32,7 @@ struct RecordingClient {
   var requestMicrophoneAccess: @Sendable () async -> Bool = { false }
   var observeAudioLevel: @Sendable () async -> AsyncStream<Meter> = { AsyncStream { _ in } }
   var getAvailableInputDevices: @Sendable () async -> [AudioInputDevice] = { [] }
+  var getAvailableOutputDevices: @Sendable () async -> [AudioOutputDevice] = { [] }
   var warmUpAudioInput: @Sendable () async -> Void = {}
 }
 
@@ -38,6 +45,7 @@ extension RecordingClient: DependencyKey {
       requestMicrophoneAccess: { await live.requestMicrophoneAccess() },
       observeAudioLevel: { await live.observeAudioLevel() },
       getAvailableInputDevices: { await live.getAvailableInputDevices() },
+      getAvailableOutputDevices: { await live.getAvailableOutputDevices() },
       warmUpAudioInput: { await live.warmUpAudioInput() }
     )
   }
@@ -278,6 +286,13 @@ actor RecordingClientLive {
   private let (meterStream, meterContinuation) = AsyncStream<Meter>.makeStream()
   private var meterTask: Task<Void, Never>?
   
+  // Audio mixing components for input/output mixing
+  private var audioEngine: AVAudioEngine?
+  private var inputNode: AVAudioInputNode?
+  private var outputTap: AVAudioNode?
+  private var mixerNode: AVAudioMixerNode?
+  private var audioFile: AVAudioFile?
+  
   /// Tracks the current recording state to prevent overlapping operations
   private var isRecording: Bool = false
     
@@ -290,9 +305,45 @@ actor RecordingClientLive {
   private var pausedPlayers: [String] = []
   
   // Cache to store already-processed device information
-  private var deviceCache: [AudioDeviceID: (hasInput: Bool, name: String?)] = [:]
+  private var deviceCache: [AudioDeviceID: (hasInput: Bool, name: String?, hasOutput: Bool?)] = [:]
   private var lastDeviceCheck = Date(timeIntervalSince1970: 0)
   
+  /// Gets all available output devices on the system
+  func getAvailableOutputDevices() async -> [AudioOutputDevice] {
+    // Reset cache if it's been more than 5 minutes since last full refresh
+    let now = Date()
+    if now.timeIntervalSince(lastDeviceCheck) > 300 {
+      deviceCache.removeAll()
+      lastDeviceCheck = now
+    }
+    
+    // Get all available audio devices
+    let devices = getAllAudioDevices()
+    var outputDevices: [AudioOutputDevice] = []
+    
+    // Filter to only output devices and convert to our model
+    for device in devices {
+      let hasOutput: Bool
+      let name: String?
+      
+      // Check cache first to avoid expensive Core Audio calls
+      if let cached = deviceCache[device] {
+        hasOutput = cached.hasOutput ?? false
+        name = cached.name
+      } else {
+        hasOutput = deviceHasOutput(deviceID: device)
+        name = hasOutput ? getDeviceName(deviceID: device) : nil
+        deviceCache[device] = (hasInput: deviceCache[device]?.hasInput ?? false, name: name, hasOutput: hasOutput)
+      }
+      
+      if hasOutput, let deviceName = name {
+        outputDevices.append(AudioOutputDevice(id: String(device), name: deviceName))
+      }
+    }
+    
+    return outputDevices
+  }
+
   /// Gets all available input devices on the system
   func getAvailableInputDevices() async -> [AudioInputDevice] {
     // Reset cache if it's been more than 5 minutes since last full refresh
@@ -318,7 +369,7 @@ actor RecordingClientLive {
       } else {
         hasInput = deviceHasInput(deviceID: device)
         name = hasInput ? getDeviceName(deviceID: device) : nil
-        deviceCache[device] = (hasInput, name)
+        deviceCache[device] = (hasInput, name, nil)
       }
       
       if hasInput, let deviceName = name {
@@ -452,6 +503,48 @@ actor RecordingClientLive {
     return buffersPointer.reduce(0) { $0 + Int($1.mNumberChannels) } > 0
   }
   
+  /// Check if device has output capabilities
+  private func deviceHasOutput(deviceID: AudioDeviceID) -> Bool {
+    var address = AudioObjectPropertyAddress(
+      mSelector: kAudioDevicePropertyStreamConfiguration,
+      mScope: kAudioDevicePropertyScopeOutput,
+      mElement: kAudioObjectPropertyElementMain
+    )
+    
+    var propertySize: UInt32 = 0
+    let status = AudioObjectGetPropertyDataSize(
+      deviceID,
+      &address,
+      0,
+      nil,
+      &propertySize
+    )
+    
+    if status != 0 {
+      return false
+    }
+    
+    let bufferList = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: Int(propertySize))
+    defer { bufferList.deallocate() }
+    
+    let getStatus = AudioObjectGetPropertyData(
+      deviceID,
+      &address,
+      0,
+      nil,
+      &propertySize,
+      bufferList
+    )
+    
+    if getStatus != 0 {
+      return false
+    }
+    
+    // Check if we have any output channels
+    let buffersPointer = UnsafeMutableAudioBufferListPointer(bufferList)
+    return buffersPointer.reduce(0) { $0 + Int($1.mNumberChannels) } > 0
+  }
+  
   /// Set device as the default input device
   private func setInputDevice(deviceID: AudioDeviceID) {
     var device = deviceID
@@ -528,6 +621,120 @@ actor RecordingClientLive {
       print("🎙️ [WARNING] Recording start ignored - recording already in progress")
       return
     }
+    
+    // Check if audio mixing is enabled
+    if hexSettings.enableAudioMixing {
+      await startMixedRecording()
+    } else {
+      await startSimpleRecording()
+    }
+  }
+  
+  /// Start recording with audio mixing (input + output)
+  private func startMixedRecording() async {
+    let startTime = Date()
+    print("🎙️ [TIMING] Mixed recording start requested at: \(startTime.timeIntervalSince1970)")
+    
+    // Mark that we're starting a recording
+    isRecording = true
+    
+    do {
+      // Initialize audio engine
+      audioEngine = AVAudioEngine()
+      guard let engine = audioEngine else { 
+        print("🎙️ [ERROR] Failed to create audio engine")
+        isRecording = false
+        return 
+      }
+      
+      // Get input node
+      inputNode = engine.inputNode
+      guard let input = inputNode else {
+        print("🎙️ [ERROR] Failed to get input node")
+        isRecording = false
+        return
+      }
+      
+      // Create mixer node for combining input and output
+      mixerNode = AVAudioMixerNode()
+      guard let mixer = mixerNode else {
+        print("🎙️ [ERROR] Failed to create mixer node")
+        isRecording = false
+        return
+      }
+      
+      engine.attach(mixer)
+      
+      // Set up audio format (16kHz mono for transcription)
+      let recordingFormat = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
+      let inputFormat = input.inputFormat(forBus: 0)
+      
+      // Connect input to mixer with gain
+      let inputGain = Float(hexSettings.audioMixingInputGain)
+      let inputGainNode = AVAudioMixerNode()
+      engine.attach(inputGainNode)
+      inputGainNode.outputVolume = inputGain
+      
+      engine.connect(input, to: inputGainNode, format: inputFormat)
+      engine.connect(inputGainNode, to: mixer, format: inputFormat)
+      
+      // TODO: Set up output device monitoring (requires additional permissions on macOS)
+      // For now, we'll focus on input recording with the infrastructure for output mixing
+      
+      // Set up recording file
+      let audioFile = try AVAudioFile(forWriting: recordingURL, settings: recordingFormat.settings)
+      self.audioFile = audioFile
+      
+      // Install tap on mixer to record mixed audio
+      mixer.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, time in
+        do {
+          try audioFile.write(from: buffer)
+          
+          // Calculate audio levels for metering
+          let channelData = buffer.floatChannelData?[0]
+          let frameLength = Int(buffer.frameLength)
+          
+          if let data = channelData, frameLength > 0 {
+            var sum: Float = 0
+            var peak: Float = 0
+            
+            for i in 0..<frameLength {
+              let sample = abs(data[i])
+              sum += sample * sample
+              peak = max(peak, sample)
+            }
+            
+            let averagePower = sqrt(sum / Float(frameLength))
+            let meter = Meter(averagePower: Double(averagePower), peakPower: Double(peak))
+            
+            Task { @MainActor in
+              self?.meterContinuation.yield(meter)
+            }
+          }
+        } catch {
+          print("🎙️ [ERROR] Failed to write audio buffer: \(error)")
+        }
+      }
+      
+      // Connect mixer to engine output
+      engine.connect(mixer, to: engine.mainMixerNode, format: recordingFormat)
+      
+      // Start the audio engine
+      try engine.start()
+      
+      let totalDuration = Date().timeIntervalSince(startTime)
+      print("🎙️ [TIMING] Total mixed recording start duration: \(String(format: "%.3f", totalDuration))s")
+      print("Mixed recording started.")
+      
+    } catch {
+      print("🎙️ [ERROR] Could not start mixed recording: \(error)")
+      await stopMixedRecording()
+      isRecording = false
+    }
+  }
+  
+  /// Start simple recording (microphone only)
+  private func startSimpleRecording() async {
     
     let startTime = Date()
     print("🎙️ [TIMING] Recording start requested at: \(startTime.timeIntervalSince1970)")
@@ -676,9 +883,15 @@ actor RecordingClientLive {
     // Mark that we're no longer recording
     isRecording = false
     
-    recorder?.stop()
-    recorder = nil
-    stopMeterTask()
+    // Stop based on recording mode
+    if hexSettings.enableAudioMixing {
+      await stopMixedRecording()
+    } else {
+      recorder?.stop()
+      recorder = nil
+      stopMeterTask()
+    }
+    
     print("Recording stopped.")
 
     // Resume media if we previously paused specific players
@@ -696,6 +909,29 @@ actor RecordingClientLive {
       print("Resuming previously paused media.")
     }
     return recordingURL
+  }
+  
+  /// Stop mixed recording and clean up audio engine
+  private func stopMixedRecording() async {
+    // Remove tap from mixer if it exists
+    if let mixer = mixerNode {
+      mixer.removeTap(onBus: 0)
+    }
+    
+    // Stop and reset audio engine
+    audioEngine?.stop()
+    audioEngine?.reset()
+    audioEngine = nil
+    
+    // Clean up nodes
+    inputNode = nil
+    outputTap = nil
+    mixerNode = nil
+    
+    // Close audio file
+    audioFile = nil
+    
+    print("Mixed recording stopped and cleaned up.")
   }
 
   func startMeterTask() {

@@ -9,10 +9,17 @@ struct HexApp: App {
 	}
 
 	@NSApplicationDelegateAdaptor(HexAppDelegate.self) var appDelegate
+	@Environment(\.openWindow) private var openWindow
 
 	var body: some Scene {
 		MenuBarExtra {
 			CheckForUpdatesView()
+
+			// New: open Karaoke Live View
+			Button("Live Transcript") {
+				openWindow(id: "karaoke")
+			}
+			.keyboardShortcut("k", modifiers: [.option, .command])
 
 			Button("Settings...") {
 				appDelegate.presentSettingsView()
@@ -49,5 +56,15 @@ struct HexApp: App {
 					}.keyboardShortcut(",")
 				}
 			}
+
+		// Karaoke Window Scene
+		WindowGroup("Live Transcript", id: "karaoke") {
+			KaraokeView(store: Store(initialState: KaraokeFeature.State()) {
+				KaraokeFeature()
+			})
+		}
+#if os(macOS)
+		.windowStyle(.hiddenTitleBar)
+#endif
 	}
 }

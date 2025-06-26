@@ -31,6 +31,9 @@
     "• Start recording from any app" : {
 
     },
+    "A" : {
+
+    },
     "About" : {
       "comment" : "Settings -> About Section headline",
       "localizations" : {
@@ -54,6 +57,12 @@
       }
     },
     "Accuracy" : {
+
+    },
+    "Adjust microphone volume in the mix" : {
+
+    },
+    "Adjust system audio volume in the mix" : {
 
     },
     "AI Enhancement" : {
@@ -81,6 +90,12 @@
           }
         }
       }
+    },
+    "Audio Mixing" : {
+
+    },
+    "Audio mixing captures both your microphone and system audio output. This is useful for transcribing meetings where you want to capture both your voice and other participants' audio." : {
+
     },
     "Available Microphones" : {
 
@@ -167,6 +182,9 @@
           }
         }
       }
+    },
+    "Choose theme colours" : {
+
     },
     "Clear" : {
 
@@ -338,10 +356,16 @@
     "Enable AI to improve transcription quality by fixing grammar, formatting, and errors." : {
 
     },
+    "Enable Audio Mixing" : {
+
+    },
     "Enable Screen Capture" : {
 
     },
     "Enhancement Prompt" : {
+
+    },
+    "Enhancing…" : {
 
     },
     "Ensure Tok can access your microphone and system accessibility features." : {
@@ -451,6 +475,9 @@
     "Language Model" : {
 
     },
+    "Live Transcript" : {
+
+    },
     "Logs" : {
 
     },
@@ -471,7 +498,13 @@
         }
       }
     },
+    "Microphone Gain: %.1f" : {
+
+    },
     "Microphone Selection" : {
+
+    },
+    "Mix microphone input with system output audio (for meetings)" : {
 
     },
     "Model" : {
@@ -553,6 +586,9 @@
     "Optional context that helps Whisper better understand what you're likely to say. This is applied directly to voice recognition, not AI enhancement." : {
 
     },
+    "Output Device" : {
+
+    },
     "Output Language" : {
       "comment" : "transcription model setting for which language to use for text output.",
       "localizations" : {
@@ -617,6 +653,9 @@
         }
       }
     },
+    "Prompt" : {
+
+    },
     "Quit" : {
 
     },
@@ -627,6 +666,9 @@
 
     },
     "Refresh available input devices" : {
+
+    },
+    "Refresh available output devices" : {
 
     },
     "Request Permission" : {
@@ -644,6 +686,9 @@
 
     },
     "Reset to Default" : {
+
+    },
+    "Response" : {
 
     },
     "Response Style" : {
@@ -671,6 +716,9 @@
           }
         }
       }
+    },
+    "Selected output device not connected. System default will be used." : {
+
     },
     "Selected: %@" : {
 
@@ -771,6 +819,9 @@
     "Speed" : {
 
     },
+    "Start" : {
+
+    },
     "Step %lld of %lld" : {
       "localizations" : {
         "en" : {
@@ -780,6 +831,9 @@
           }
         }
       }
+    },
+    "Stop" : {
+
     },
     "Stop playback" : {
       "comment" : "Help text for play button in history view.",
@@ -791,6 +845,9 @@
           }
         }
       }
+    },
+    "System Audio Gain: %.1f" : {
+
     },
     "System Default" : {
 
@@ -822,6 +879,9 @@
       }
     },
     "Transcribing" : {
+
+    },
+    "Transcribing…" : {
 
     },
     "Transcription May Have Failed" : {
