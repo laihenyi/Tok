@@ -15,7 +15,9 @@ struct AIEnhancementFeature {
     struct State: Equatable {
         @Shared(.hexSettings) var hexSettings: HexSettings
         
-        var isOllamaAvailable: Bool = false
+        // Availability for the currently selected local provider (Ollama or LM Studio)
+        var isLocalProviderAvailable: Bool = false
+
         var availableModels: [String] = []
         var availableRemoteModels: [RemoteAIModel] = []
         var isLoadingModels: Bool = false
@@ -47,7 +49,7 @@ struct AIEnhancementFeature {
         // Current selected models
         var currentSelectedModel: String {
             switch currentProvider {
-            case .ollama:
+            case .ollama, .lmstudio:
                 return hexSettings.selectedAIModel
             case .groq:
                 return hexSettings.selectedRemoteModel
@@ -56,7 +58,7 @@ struct AIEnhancementFeature {
 
         var currentSelectedImageModel: String {
             switch currentProvider {
-            case .ollama:
+            case .ollama, .lmstudio:
                 return hexSettings.selectedImageModel
             case .groq:
                 return hexSettings.selectedRemoteImageModel
@@ -66,7 +68,7 @@ struct AIEnhancementFeature {
         // API key for current provider (if applicable)
         var currentAPIKey: String {
             switch currentProvider {
-            case .ollama:
+            case .ollama, .lmstudio:
                 return ""
             case .groq:
                 return hexSettings.groqAPIKey
@@ -76,8 +78,8 @@ struct AIEnhancementFeature {
     
     enum Action {
         case task
-        case checkOllamaAvailability
-        case ollamaAvailabilityResult(Bool)
+        case checkAvailability(AIProviderType)
+        case availabilityResult(AIProviderType, Bool)
         case loadAvailableModels
         case modelsLoaded([String])
         case modelLoadingError(String)
@@ -111,25 +113,25 @@ struct AIEnhancementFeature {
                 // Check Ollama availability and load models for current provider
                 if state.currentProvider == .groq && !state.currentAPIKey.isEmpty {
                     return .merge(
-                        .send(.checkOllamaAvailability),
+                        .send(.checkAvailability(.groq)),
                         .send(.loadRemoteModels),
                         .send(.loadRemoteImageModels)
                     )
                 } else {
-                    return .send(.checkOllamaAvailability)
+                    return .send(.checkAvailability(state.currentProvider))
                 }
                 
-            case .checkOllamaAvailability:
-                return .run { send in
-                    let isAvailable = await aiEnhancement.isOllamaAvailable()
-                    await send(.ollamaAvailabilityResult(isAvailable))
+            case let .checkAvailability(provider):
+                return .run { [provider = provider, apiKey = state.currentAPIKey] send in
+                    let isAvailable = await aiEnhancement.checkProviderAvailability(provider, apiKey)
+                    await send(.availabilityResult(provider, isAvailable))
                 }
                 
-            case let .ollamaAvailabilityResult(isAvailable):
-                state.isOllamaAvailable = isAvailable
+            case let .availabilityResult(provider, isAvailable):
+                state.isLocalProviderAvailable = isAvailable
 
-                // If current provider is Ollama and it's available, load models
-                if isAvailable && state.currentProvider == .ollama {
+                // If the selected local provider is available, load its models
+                if isAvailable && provider.category == .local {
                     return .merge(
                         .send(.loadAvailableModels),
                         .send(.loadAvailableImageModels)
@@ -141,9 +143,9 @@ struct AIEnhancementFeature {
                 state.isLoadingModels = true
                 state.errorMessage = nil
                 
-                return .run { send in
+                return .run { [provider = state.currentProvider] send in
                     do {
-                        let models = try await aiEnhancement.getAvailableModels()
+                        let models = try await aiEnhancement.getLocalModels(provider)
                         await send(.modelsLoaded(models))
                     } catch {
                         await send(.modelLoadingError(error.localizedDescription))
@@ -192,7 +194,14 @@ struct AIEnhancementFeature {
                 // Load appropriate models based on provider
                 switch providerType {
                 case .ollama:
-                    if state.isOllamaAvailable {
+                    if state.isLocalProviderAvailable {
+                        return .merge(
+                            .send(.loadAvailableModels),
+                            .send(.loadAvailableImageModels)
+                        )
+                    }
+                case .lmstudio:
+                    if state.isLocalProviderAvailable {
                         return .merge(
                             .send(.loadAvailableModels),
                             .send(.loadAvailableImageModels)
@@ -214,6 +223,8 @@ struct AIEnhancementFeature {
                     break // Ollama doesn't use API keys
                 case .groq:
                     state.$hexSettings.withLock { $0.groqAPIKey = apiKey }
+                case .lmstudio:
+                    break
                 }
                 return .none
                 
@@ -240,7 +251,7 @@ struct AIEnhancementFeature {
                 return .none
                 
             case .loadRemoteModels:
-                guard state.currentProvider != .ollama else { return .none }
+                guard state.currentProvider.category == .remote else { return .none }
                 
                 state.isLoadingModels = true
                 state.errorMessage = nil
@@ -263,7 +274,7 @@ struct AIEnhancementFeature {
                     let currentModel = state.currentSelectedModel
                     if currentModel.isEmpty || !models.contains(where: { $0.id == currentModel }) {
                         // Try to find a default model or use the first one
-                        let defaultModel = models.first { $0.id.contains("compound-beta-mini") } ?? models.first
+                        let defaultModel = models.first { $0.id.contains("llama-3.3-70b-versatile") } ?? models.first
                         if let model = defaultModel {
                             state.$hexSettings.withLock { $0.selectedRemoteModel = model.id }
                         }
@@ -281,11 +292,10 @@ struct AIEnhancementFeature {
                 state.isLoadingImageModels = true
                 state.imageModelErrorMessage = nil
 
-                return .run { send in
+                return .run { [provider = state.currentProvider] send in
                     do {
-                        let models = try await aiEnhancement.getAvailableModels()
-                        // Filter for vision/image models (models that contain "llava", "vision", or "minicpm")
-                        let imageModels = models.filter { model in
+                        let modelsRaw = try await aiEnhancement.getLocalModels(provider)
+                        let imageModels = modelsRaw.filter { model in
                             model.lowercased().contains("gemma") ||
                             model.lowercased().contains("llava") ||
                             model.lowercased().contains("vl") ||
@@ -325,6 +335,9 @@ struct AIEnhancementFeature {
                 return .none
 
             case .loadRemoteImageModels:
+                // Only proceed for remote providers
+                guard state.currentProvider.category == .remote else { return .none }
+
                 state.isLoadingImageModels = true
                 state.imageModelErrorMessage = nil
 

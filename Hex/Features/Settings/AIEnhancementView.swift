@@ -33,8 +33,8 @@ struct AIEnhancementView: View {
                 // Provider Selection Section
                 providerSelectionSection
                 
-                // API Key Section (for remote providers)
-                if store.currentProvider != .ollama {
+                // API Key Section (only for remote providers)
+                if store.currentProvider.category == .remote {
                     apiKeySection
                 }
                 
@@ -160,10 +160,10 @@ struct AIEnhancementView: View {
     // Computed properties for dynamic content
     private var shouldShowConnectionStatus: Bool {
         switch store.currentProvider {
-        case .ollama:
-            return !store.isOllamaAvailable
         case .groq:
             return store.currentAPIKey.isEmpty || (store.connectionStatus?.contains("failed") == true)
+        default:
+            return !store.isLocalProviderAvailable
         }
     }
     
@@ -173,34 +173,38 @@ struct AIEnhancementView: View {
             return "Run AI models locally using Ollama. Requires Ollama to be installed and running."
         case .groq:
             return "Use Groq's fast inference API. Requires a Groq API key."
+        case .lmstudio:
+            return "Run AI models locally using LM Studio. Requires LM Studio server to be running."
+        default:
+            return "Run AI models locally using LM Studio. Requires LM Studio server to be running."
         }
     }
     
     private var apiKeyFooterText: String {
         switch store.currentProvider {
-        case .ollama:
-            return ""
         case .groq:
             return "Get your free API key from console.groq.com. Your key is stored securely on your device."
+        default:
+            return ""
         }
     }
     
     // Model selection helper properties
     private var canLoadModels: Bool {
         switch store.currentProvider {
-        case .ollama:
-            return store.isOllamaAvailable
         case .groq:
             return !store.currentAPIKey.isEmpty
+        default:
+            return store.isLocalProviderAvailable
         }
     }
     
     private var hasAvailableModels: Bool {
         switch store.currentProvider {
-        case .ollama:
-            return !store.availableModels.isEmpty
         case .groq:
             return !store.availableRemoteModels.isEmpty
+        default:
+            return !store.availableModels.isEmpty
         }
     }
     
@@ -210,6 +214,10 @@ struct AIEnhancementView: View {
             return "Ollama connection required to view models"
         case .groq:
             return "API key required to load models"
+        case .lmstudio:
+            return "LM Studio server must be running to view models"
+        default:
+            return "LM Studio server must be running to view models"
         }
     }
     
@@ -219,25 +227,29 @@ struct AIEnhancementView: View {
             return "No models found in Ollama"
         case .groq:
             return "No models available from Groq"
+        case .lmstudio:
+            return "No models found in LM Studio"
+        default:
+            return "No models found"
         }
     }
     
     private var modelSelectionFooterText: String {
         switch store.currentProvider {
-        case .ollama:
-            return "Smaller models are faster but less capable. Llama3 offers a good balance of speed and quality."
         case .groq:
-            return "Different models offer various capabilities and speeds. Compound-beta models are optimized for quality."
+            return "Different models offer various capabilities and speeds."
+        default:
+            return "Smaller models are faster but less capable."
         }
     }
 
     // Image model selection helper properties
     private var hasAvailableImageModels: Bool {
         switch store.currentProvider {
-        case .ollama:
-            return !store.availableImageModels.isEmpty
         case .groq:
             return !store.availableRemoteImageModels.isEmpty
+        default:
+            return !store.availableImageModels.isEmpty
         }
     }
 
@@ -247,6 +259,10 @@ struct AIEnhancementView: View {
             return "No vision models found in Ollama"
         case .groq:
             return "No vision models available from Groq"
+        case .lmstudio:
+            return "No vision models found in LM Studio"
+        default:
+            return "No vision models found"
         }
     }
 
@@ -256,6 +272,10 @@ struct AIEnhancementView: View {
             return "Vision models like LLaVA can analyze screenshots and images. Install vision models in Ollama to enable image recognition."
         case .groq:
             return "Vision models can analyze screenshots and images to provide context for your transcriptions."
+        case .lmstudio:
+            return "Vision models like LLaVA can analyze screenshots and images. Ensure the model is loaded in LM Studio."
+        default:
+            return "Vision models like LLaVA can analyze screenshots and images. Ensure the model is loaded in LM Studio."
         }
     }
     
@@ -305,7 +325,7 @@ struct AIEnhancementView: View {
                 .foregroundColor(Color.blue)
                 
                 Button {
-                    store.send(.checkOllamaAvailability)
+                    store.send(.checkAvailability(store.currentProvider))
                 } label: {
                     Label("Check Connection", systemImage: "arrow.clockwise")
                 }
@@ -334,7 +354,7 @@ struct AIEnhancementView: View {
                     // When enabling, check Ollama status
                     if newValue {
                         Task {
-                            await store.send(.checkOllamaAvailability).finish()
+                            await store.send(.checkAvailability(store.currentProvider)).finish()
                         }
                     }
                 }
@@ -344,7 +364,7 @@ struct AIEnhancementView: View {
             }
             
             // Connection status indicator (only show if AI enhancement is enabled and Ollama is available)
-            if store.hexSettings.useAIEnhancement && store.isOllamaAvailable {
+            if store.hexSettings.useAIEnhancement && store.isLocalProviderAvailable {
                 HStack(spacing: 4) {
                     Circle()
                         .fill(Color.green)
@@ -366,38 +386,15 @@ struct AIEnhancementView: View {
                 // Model selection header
                 HStack {
                     Label {
-                        Text("Language Model")
+                        Text("Text Model")
                             .font(.body)
                     } icon: {
                         Image(systemName: "brain")
                     }
                     
                     Spacer()
-                    
-                    // Refresh button for models
-                    Button {
-                        switch store.currentProvider {
-                        case .ollama:
-                            store.send(.loadAvailableModels)
-                        case .groq:
-                            store.send(.loadRemoteModels)
-                        }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.body)
-                    }
-                    .buttonStyle(DefaultButtonStyle())
-                    .disabled(store.isLoadingModels || !canLoadModels)
-                    .opacity(store.isLoadingModels ? 0.5 : 0.7)
-                }
-                
-                if store.isLoadingModels {
-                    // Show selected model while loading
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Select AI model:")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
+
+                    if store.isLoadingModels {
                         HStack {
                             Text(getCurrentSelectedModel().isEmpty ? "No model selected" : getCurrentSelectedModel())
                                 .font(.body)
@@ -406,62 +403,41 @@ struct AIEnhancementView: View {
                                 .scaleEffect(0.7)
                         }
                         .padding(.vertical, 2)
-                    }
-                } else if !canLoadModels {
-                    // Provider not available message
-                    Text(unavailableMessage)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .padding(.vertical, 4)
-                } else if let error = store.errorMessage {
-                    // Error message
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle")
-                            .foregroundColor(.red)
-                        Text("Error: \(error)")
-                            .font(.caption)
-                            .foregroundColor(.red)
-                            .lineLimit(2)
-                    }
-                    .padding(.vertical, 4)
-                } else if !hasAvailableModels {
-                    // No models available
-                    HStack(alignment: .center) {
-                        Text(noModelsMessage)
+                    } else if !canLoadModels {
+                        // Provider not available message
+                        Text(unavailableMessage)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
-                        if store.currentProvider == .ollama {
-                            Link("Browse Models", destination: URL(string: "https://ollama.com/library")!)
-                                .font(.subheadline)
-                                .foregroundColor(.blue)
+                            .padding(.vertical, 4)
+                    } else if let error = store.errorMessage {
+                        // Error message
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundColor(.red)
+                            Text("Error: \(error)")
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .lineLimit(2)
                         }
-                    }
-                    .padding(.vertical, 8)
-                } else {
-                    // Model picker
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Select AI model:")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        switch store.currentProvider {
-                        case .ollama:
-                            Picker("", selection: Binding(
-                                get: { store.hexSettings.selectedAIModel },
-                                set: { store.send(.setSelectedModel($0)) }
-                            )) {
-                                ForEach(store.availableModels, id: \.self) { model in
-                                    Text(model).tag(model)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 2)
+                        .padding(.vertical, 4)
+                    } else if !hasAvailableModels {
+                        // No models available
+                        HStack(alignment: .center) {
+                            Text(noModelsMessage)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
                             
+                            Spacer()
+                            
+                            if store.currentProvider == .ollama {
+                                Link("Browse Models", destination: URL(string: "https://ollama.com/library")!)
+                                    .font(.subheadline)
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    } else {
+                        switch store.currentProvider {
                         case .groq:
                             Picker("", selection: Binding(
                                 get: { store.hexSettings.selectedRemoteModel },
@@ -482,9 +458,39 @@ struct AIEnhancementView: View {
                             .labelsHidden()
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 2)
+                        default:
+                            Picker("", selection: Binding(
+                                get: { store.hexSettings.selectedAIModel },
+                                set: { store.send(.setSelectedModel($0)) }
+                            )) {
+                                ForEach(store.availableModels, id: \.self) { model in
+                                    Text(model).tag(model)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
                         }
                     }
+                    
+                    // Refresh button for models
+                    Button {
+                        switch store.currentProvider {
+                        case .groq:
+                            store.send(.loadRemoteModels)
+                        default:
+                            store.send(.loadAvailableModels)
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.body)
+                    }
+                    .buttonStyle(DefaultButtonStyle())
+                    .disabled(store.isLoadingModels || !canLoadModels)
+                    .opacity(store.isLoadingModels ? 0.5 : 0.7)
                 }
+
             }
         } header: {
             Text("Model Selection")
@@ -512,30 +518,8 @@ struct AIEnhancementView: View {
 
                     Spacer()
 
-                    // Refresh button for image models
-                    Button {
-                        switch store.currentProvider {
-                        case .ollama:
-                            store.send(.loadAvailableImageModels)
-                        case .groq:
-                            store.send(.loadRemoteImageModels)
-                        }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.body)
-                    }
-                    .buttonStyle(DefaultButtonStyle())
-                    .disabled(store.isLoadingImageModels || !canLoadModels)
-                    .opacity(store.isLoadingImageModels ? 0.5 : 0.7)
-                }
 
-                if store.isLoadingImageModels {
-                    // Show selected model while loading
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Select vision model:")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-
+                    if store.isLoadingImageModels {
                         HStack {
                             Text(getCurrentSelectedImageModel().isEmpty ? "No model selected" : getCurrentSelectedImageModel())
                                 .font(.body)
@@ -544,49 +528,55 @@ struct AIEnhancementView: View {
                                 .scaleEffect(0.7)
                         }
                         .padding(.vertical, 2)
-                    }
-                } else if !canLoadModels {
-                    // Provider not available message
-                    Text(unavailableMessage)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .padding(.vertical, 4)
-                } else if let error = store.imageModelErrorMessage {
-                    // Error message
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle")
-                            .foregroundColor(.red)
-                        Text("Error: \(error)")
-                            .font(.caption)
-                            .foregroundColor(.red)
-                            .lineLimit(2)
-                    }
-                    .padding(.vertical, 4)
-                } else if !hasAvailableImageModels {
-                    // No image models available
-                    HStack(alignment: .center) {
-                        Text(noImageModelsMessage)
+                    } else if !canLoadModels {
+                        // Provider not available message
+                        Text(unavailableMessage)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
-
-                        Spacer()
-
-                        if store.currentProvider == .ollama {
-                            Link("Browse Vision Models", destination: URL(string: "https://ollama.com/library?q=vision")!)
-                                .font(.subheadline)
-                                .foregroundColor(.blue)
+                            .padding(.vertical, 4)
+                    } else if let error = store.imageModelErrorMessage {
+                        // Error message
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundColor(.red)
+                            Text("Error: \(error)")
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .lineLimit(2)
                         }
-                    }
-                    .padding(.vertical, 8)
-                } else {
-                    // Image model picker
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Select vision model:")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                        .padding(.vertical, 4)
+                    } else if !hasAvailableImageModels {
+                        // No image models available
+                        HStack(alignment: .center) {
+                            Text(noImageModelsMessage)
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
 
+                            Spacer()
+
+                            if store.currentProvider == .ollama {
+                                Link("Browse Vision Models", destination: URL(string: "https://ollama.com/library?q=vision")!)
+                                    .font(.subheadline)
+                                    .foregroundColor(.blue)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    } else {
                         switch store.currentProvider {
-                        case .ollama:
+                        case .groq:
+                            Picker("", selection: Binding(
+                                get: { store.hexSettings.selectedRemoteImageModel },
+                                set: { store.send(.setSelectedRemoteImageModel($0)) }
+                            )) {
+                                ForEach(store.availableRemoteImageModels) { model in
+                                    Text(model.displayName).tag(model.id)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 2)
+                        default:
                             Picker("", selection: Binding(
                                 get: { store.hexSettings.selectedImageModel },
                                 set: { store.send(.setSelectedImageModel($0)) }
@@ -599,30 +589,26 @@ struct AIEnhancementView: View {
                             .labelsHidden()
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.vertical, 2)
-
-                        case .groq:
-                            Picker("", selection: Binding(
-                                get: { store.hexSettings.selectedRemoteImageModel },
-                                set: { store.send(.setSelectedRemoteImageModel($0)) }
-                            )) {
-                                ForEach(store.availableRemoteImageModels) { model in
-                                    VStack(alignment: .leading) {
-                                        Text(model.displayName)
-                                            .font(.body)
-                                        Text("by \(model.ownedBy) • Vision Model")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .tag(model.id)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 2)
                         }
                     }
+
+                    // Refresh button for image models
+                    Button {
+                        switch store.currentProvider {
+                        case .groq:
+                            store.send(.loadRemoteImageModels)
+                        default:
+                            store.send(.loadAvailableImageModels)
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.body)
+                    }
+                    .buttonStyle(DefaultButtonStyle())
+                    .disabled(store.isLoadingImageModels || !canLoadModels)
+                    .opacity(store.isLoadingImageModels ? 0.5 : 0.7)
                 }
+
             }
         } header: {
             Text("Image Recognition")
@@ -889,20 +875,20 @@ struct AIEnhancementView: View {
     // Helper to get currently selected model
     private func getCurrentSelectedModel() -> String {
         switch store.currentProvider {
-        case .ollama:
-            return store.hexSettings.selectedAIModel
         case .groq:
             return store.hexSettings.selectedRemoteModel
+        default:
+            return store.hexSettings.selectedAIModel
         }
     }
     
     // Helper to get currently selected image model
     private func getCurrentSelectedImageModel() -> String {
         switch store.currentProvider {
-        case .ollama:
-            return store.hexSettings.selectedImageModel
         case .groq:
             return store.hexSettings.selectedRemoteImageModel
+        default:
+            return store.hexSettings.selectedImageModel
         }
     }
     

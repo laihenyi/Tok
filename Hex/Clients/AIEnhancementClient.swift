@@ -19,17 +19,23 @@ struct AIEnhancementClient {
     /// Enhances the given text using the specified model.
     var enhance: @Sendable (String, String, EnhancementOptions, AIProviderType, String?, @escaping (Progress) -> Void) async throws -> String = { text, _, _, _, _, _ in text }
     
-    /// Checks if Ollama is installed and running on the system
-    var isOllamaAvailable: @Sendable () async -> Bool = { false }
+    /// Checks if LM Studio REST server is running and reachable
+    var isLMStudioAvailable: @Sendable () async -> Bool = { false }
     
     /// Gets a list of available models from Ollama
     var getAvailableModels: @Sendable () async throws -> [String] = { [] }
+    
+    /// Gets a list of available models from a local provider (Ollama or LM Studio)
+    var getLocalModels: @Sendable (AIProviderType) async throws -> [String] = { _ in [] }
     
     /// Gets a list of available models from a remote provider
     var getRemoteModels: @Sendable (AIProviderType, String) async throws -> [RemoteAIModel] = { _, _ in [] }
     
     /// Tests connection to a remote AI provider
     var testRemoteConnection: @Sendable (AIProviderType, String) async -> Bool = { _, _ in false }
+
+    /// Checks availability/reachability of any provider (local or remote). For remote providers pass API key.
+    var checkProviderAvailability: @Sendable (AIProviderType, String) async -> Bool = { _, _ in false }
 
     /// Analyzes a screenshot (PNG/JPEG data) with a VLM model and returns a short textual summary.
     /// - Parameters:
@@ -118,10 +124,12 @@ extension AIEnhancementClient: DependencyKey {
         let live = AIEnhancementClientLive()
         return Self(
             enhance: { try await live.enhance(text: $0, model: $1, options: $2, provider: $3, apiKey: $4, progressCallback: $5) },
-            isOllamaAvailable: { await live.isOllamaAvailable() },
+            isLMStudioAvailable: { await live.isLMStudioAvailable() },
             getAvailableModels: { try await live.getAvailableModels() },
+            getLocalModels: { try await live.getLocalModels(provider: $0) },
             getRemoteModels: { try await live.getRemoteModels(provider: $0, apiKey: $1) },
             testRemoteConnection: { await live.testRemoteConnection(provider: $0, apiKey: $1) },
+            checkProviderAvailability: { await live.checkProviderAvailability(provider: $0, apiKey: $1) },
             analyzeImage: { try await live.analyzeImage(imageData: $0, model: $1, prompt: $2, provider: $3, apiKey: $4, systemPrompt: $5, progressCallback: $6) }
         )
     }
@@ -170,6 +178,20 @@ class AIEnhancementClientLive {
                     progressCallback(progress)
                 }
                 
+            case .lmstudio:
+                // Verify LM Studio server is available
+                let isAvailable = await isLMStudioAvailable()
+                if !isAvailable {
+                    print("[AIEnhancementClientLive] LM Studio not available, cannot enhance text")
+                    throw NSError(domain: "AIEnhancementClient", code: -7,
+                                  userInfo: [NSLocalizedDescriptionKey: "LM Studio is not available. Please ensure the server is running (lms server start)."])
+                }
+
+                enhancedText = try await enhanceWithLMStudio(text: text, model: model, options: options) { fraction in
+                    progress.completedUnitCount = Int64(fraction * 100)
+                    progressCallback(progress)
+                }
+                
             case .groq:
                 guard let apiKey = apiKey, !apiKey.isEmpty else {
                     throw NSError(domain: "AIEnhancementClient", code: -6,
@@ -203,6 +225,8 @@ class AIEnhancementClientLive {
                 TokLogger.log("AI Enhancement skipped due to network error – returning original text.")
                 return text
             case .ollama:
+                throw error
+            case .lmstudio:
                 throw error
             }
         }
@@ -281,6 +305,18 @@ class AIEnhancementClientLive {
             print("[AIEnhancementClientLive] Error getting models: \(error.localizedDescription)")
             throw NSError(domain: "AIEnhancementClient", code: -3, 
                          userInfo: [NSLocalizedDescriptionKey: "Failed to connect to Ollama. Ensure it's running."])
+        }
+    }
+    
+    /// Gets a list of available models from a local provider (Ollama or LM Studio)
+    func getLocalModels(provider: AIProviderType) async throws -> [String] {
+        switch provider {
+        case .ollama:
+            return try await getAvailableModels()
+        case .lmstudio:
+            return try await getLMStudioModels().map { $0.id }
+        case .groq:
+            return []
         }
     }
     
@@ -443,6 +479,8 @@ class AIEnhancementClientLive {
             }
         case .groq:
             return try await getGroqModels(apiKey: apiKey)
+        case .lmstudio:
+            return try await getLMStudioModels()
         }
     }
     
@@ -453,6 +491,20 @@ class AIEnhancementClientLive {
             return await isOllamaAvailable()
         case .groq:
             return await testGroqConnection(apiKey: apiKey)
+        case .lmstudio:
+            return await isLMStudioAvailable()
+        }
+    }
+    
+    /// Checks availability/reachability of any provider (local or remote). For remote providers pass API key.
+    func checkProviderAvailability(provider: AIProviderType, apiKey: String) async -> Bool {
+        switch provider {
+        case .ollama:
+            return await isOllamaAvailable()
+        case .groq:
+            return await testGroqConnection(apiKey: apiKey)
+        case .lmstudio:
+            return await isLMStudioAvailable()
         }
     }
     
@@ -703,10 +755,7 @@ class AIEnhancementClientLive {
             guard await isOllamaAvailable() else {
                 throw NSError(domain: "AIEnhancementClient", code: -5, userInfo: [NSLocalizedDescriptionKey: "Ollama is not available. Please ensure it's running."])
             }
-
-            // Detect image format (PNG vs JPEG) by header bytes
-            let isPNG: Bool = imageData.starts(with: [0x89, 0x50, 0x4E, 0x47])
-            let mimeType = isPNG ? "image/png" : "image/jpeg"
+            
             let base64Image = imageData.base64EncodedString()
 
             // Build request
@@ -852,6 +901,214 @@ class AIEnhancementClientLive {
                 print("[AIEnhancementClient] Error during Groq image analysis: \(error)")
                 throw error
             }
+
+        case .lmstudio:
+            // Implement image analysis through LM Studio's OpenAI-compatible vision endpoint
+            // (same payload structure as Groq but without authentication)
+
+            // Detect image format (PNG vs JPEG) by header bytes
+            let isPNG: Bool = imageData.starts(with: [0x89, 0x50, 0x4E, 0x47])
+            let mimeType = isPNG ? "image/png" : "image/jpeg"
+            let base64Image = imageData.base64EncodedString()
+
+            let url = URL(string: "http://localhost:1234/api/v0/chat/completions")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 60.0
+
+            let messages: [[String: Any]] = [
+                ["role": "system", "content": systemPrompt],
+                [
+                    "role": "user",
+                    "content": [
+                        ["type": "text", "text": prompt],
+                        [
+                            "type": "image_url",
+                            "image_url": ["url": "data:\(mimeType);base64,\(base64Image)"]
+                        ]
+                    ]
+                ]
+            ]
+
+            let requestDict: [String: Any] = [
+                "model": model,
+                "messages": messages,
+                "temperature": 0.2,
+                "stream": false
+            ]
+
+            print("[AIEnhancementClient] LM Studio request dict: \(requestDict)")
+
+            do {
+                progress.completedUnitCount = 10
+                progressCallback(progress)
+
+                let data = try JSONSerialization.data(withJSONObject: requestDict)
+                request.httpBody = data
+
+                print("[AIEnhancementClient] Sending LM Studio vision request (model: \(model))…")
+
+                let (responseData, urlResponse) = try await URLSession.shared.data(for: request)
+
+                guard let httpResponse = urlResponse as? HTTPURLResponse else {
+                    throw NSError(domain: "AIEnhancementClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response from LM Studio API"])
+                }
+
+                if httpResponse.statusCode != 200 {
+                    let msg = String(data: responseData, encoding: .utf8) ?? "Unknown error"
+                    throw NSError(domain: "AIEnhancementClient", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "LM Studio error: \(msg)"])
+                }
+
+                progress.completedUnitCount = 80
+                progressCallback(progress)
+
+                struct LMStudioVisionResponse: Decodable {
+                    struct Choice: Decodable { struct Message: Decodable { let content: String }; let message: Message }
+                    let choices: [Choice]
+                }
+
+                let decoded = try JSONDecoder().decode(LMStudioVisionResponse.self, from: responseData)
+
+                guard let content = decoded.choices.first?.message.content else {
+                    throw NSError(domain: "AIEnhancementClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "No content in LM Studio response"])
+                }
+
+                progress.completedUnitCount = 100
+                progressCallback(progress)
+                TokLogger.log("Image recognition result: \(content)")
+                return cleanThinkingTags(from: content).trimmingCharacters(in: .whitespacesAndNewlines)
+
+            } catch {
+                print("[AIEnhancementClient] Error during LM Studio image analysis: \(error)")
+                throw error
+            }
+        }
+    }
+
+    // MARK: - LM Studio Implementation
+
+    /// Checks if LM Studio REST server is running on localhost:1234
+    func isLMStudioAvailable() async -> Bool {
+        do {
+            var request = URLRequest(url: URL(string: "http://localhost:1234/api/v0/models")!)
+            request.timeoutInterval = 5.0
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse {
+                return httpResponse.statusCode == 200
+            }
+            return false
+        } catch {
+            print("[AIEnhancementClientLive] LM Studio not available: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    /// Fetch list of models from LM Studio REST API
+    private func getLMStudioModels() async throws -> [RemoteAIModel] {
+        var request = URLRequest(url: URL(string: "http://localhost:1234/api/v0/models")!)
+        request.timeoutInterval = 10.0
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw NSError(domain: "AIEnhancementClient", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to fetch models from LM Studio"])
+        }
+
+        struct LMStudioModelsResponse: Decodable {
+            struct Model: Decodable {
+                let id: String
+                let type: String
+                let publisher: String?
+                let max_context_length: Int?
+                let state: String?
+            }
+            let data: [Model]
+        }
+
+        let decoded = try JSONDecoder().decode(LMStudioModelsResponse.self, from: data)
+
+        print("[AIEnhancementClient] LM Studio models: \(decoded.data)")
+
+        return decoded.data.map { model in
+            RemoteAIModel(
+                id: model.id,
+                name: model.id,
+                ownedBy: model.publisher ?? "Local",
+                contextWindow: model.max_context_length ?? 8192,
+                maxCompletionTokens: 4096,
+                active: (model.state ?? "loaded") != "not-loaded"
+            )
+        }.sorted { $0.displayName < $1.displayName }
+    }
+
+    /// Enhance text using LM Studio chat completions endpoint
+    private func enhanceWithLMStudio(text: String, model: String, options: EnhancementOptions, progressCallback: @escaping (Double) -> Void) async throws -> String {
+        progressCallback(0.1)
+
+        guard !model.isEmpty else {
+            throw NSError(domain: "AIEnhancementClient", code: -4, userInfo: [NSLocalizedDescriptionKey: "No model selected for enhancement"])
+        }
+
+        let url = URL(string: "http://localhost:1234/api/v0/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30.0
+
+        // Build messages array similar to Groq implementation
+        let userContent = (options.context != nil ? "<CONTEXT>\(options.context!)</CONTEXT>\n\n" : "") + "<RAW_TRANSCRIPTION>\(text)</RAW_TRANSCRIPTION>"
+
+        let messages: [[String: Any]] = [
+            ["role": "system", "content": options.prompt],
+            ["role": "user", "content": userContent]
+        ]
+
+        let temperature = max(0.1, min(1.0, options.temperature))
+        let maxTokens = max(100, min(8192, options.maxTokens))
+
+        let requestDict: [String: Any] = [
+            "messages": messages,
+            "model": model,
+            "temperature": temperature,
+            "max_tokens": maxTokens,
+            "stream": false
+        ]
+
+        do {
+            progressCallback(0.2)
+            let requestData = try JSONSerialization.data(withJSONObject: requestDict)
+            request.httpBody = requestData
+
+            print("[AIEnhancementClientLive] Sending request to LM Studio (model: \(model))")
+
+            let (responseData, urlResponse) = try await URLSession.shared.data(for: request)
+
+            progressCallback(0.8)
+
+            guard let httpResponse = urlResponse as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                let code = (urlResponse as? HTTPURLResponse)?.statusCode ?? -1
+                let msg = String(data: responseData, encoding: .utf8) ?? "Unknown error"
+                throw NSError(domain: "AIEnhancementClient", code: code, userInfo: [NSLocalizedDescriptionKey: "LM Studio error: \(msg)"])
+            }
+
+            struct LMStudioResponse: Codable {
+                struct Choice: Codable { struct Message: Codable { let content: String }; let message: Message }
+                let choices: [Choice]
+            }
+
+            let decoded = try JSONDecoder().decode(LMStudioResponse.self, from: responseData)
+            guard let firstChoice = decoded.choices.first else {
+                throw NSError(domain: "AIEnhancementClient", code: -2, userInfo: [NSLocalizedDescriptionKey: "No response from LM Studio"])
+            }
+
+            progressCallback(1.0)
+
+            let enhancedText = cleanThinkingTags(from: firstChoice.message.content).trimmingCharacters(in: .whitespacesAndNewlines)
+            return enhancedText.isEmpty ? text : enhancedText
+
+        } catch {
+            print("[AIEnhancementClientLive] Error enhancing text with LM Studio: \(error)")
+            throw error
         }
     }
 

@@ -121,7 +121,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         aiEnhancementTemperature: Double = 0.3,
         aiProviderType: AIProviderType = .ollama,
         groqAPIKey: String = "",
-        selectedRemoteModel: String = "compound-beta-mini",
+        selectedRemoteModel: String = "llama-3.3-70b-versatile",
         voiceRecognitionPrompt: String = "",
         liveResponsePrompt: String = "",
         transcriptionModelWarmStatus: ModelWarmStatus = .cold,
@@ -209,15 +209,15 @@ struct HexSettings: Codable, Equatable, Sendable {
         // Remote AI provider settings
         aiProviderType = try container.decodeIfPresent(AIProviderType.self, forKey: .aiProviderType) ?? .ollama
         groqAPIKey = try container.decodeIfPresent(String.self, forKey: .groqAPIKey) ?? ""
-        selectedRemoteModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteModel) ?? "compound-beta-mini"
+        selectedRemoteModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteModel) ?? "llama-3.3-70b-versatile"
         // Voice Recognition Initial Prompt
         voiceRecognitionPrompt = try container.decodeIfPresent(String.self, forKey: .voiceRecognitionPrompt) ?? ""
         liveResponsePrompt = try container.decodeIfPresent(String.self, forKey: .liveResponsePrompt) ?? ""
         // Model warm status tracking (only for transcription models)
         transcriptionModelWarmStatus = try container.decodeIfPresent(ModelWarmStatus.self, forKey: .transcriptionModelWarmStatus) ?? .cold
         // Image Recognition Model settings
-        selectedImageModel = try container.decodeIfPresent(String.self, forKey: .selectedImageModel) ?? "llava:latest"
-        selectedRemoteImageModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteImageModel) ?? "llava-v1.5-7b-4096-preview"
+        selectedImageModel = try container.decodeIfPresent(String.self, forKey: .selectedImageModel) ?? "gemma3"
+        selectedRemoteImageModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteImageModel) ?? "meta-llama/llama-4-maverick-17b-128e-instruct"
         // Image Analysis Prompt
         imageAnalysisPrompt = try container.decodeIfPresent(String.self, forKey: .imageAnalysisPrompt) ?? defaultImageAnalysisPrompt
         // Developer options
@@ -242,12 +242,16 @@ Provide a brief, contextual summary that would help a transcription system bette
 /// AI Provider types supported by the app
 enum AIProviderType: String, Codable, CaseIterable, Equatable {
     case ollama = "ollama"
+    /// Local LM Studio REST server (default port 1234)
+    case lmstudio = "lmstudio"
     case groq = "groq"
     
     var displayName: String {
         switch self {
         case .ollama:
             return "Ollama (Local)"
+        case .lmstudio:
+            return "LM Studio (Local)"
         case .groq:
             return "Groq (Remote)"
         }
@@ -257,10 +261,33 @@ enum AIProviderType: String, Codable, CaseIterable, Equatable {
         switch self {
         case .ollama:
             return "Run AI models locally using Ollama"
+        case .lmstudio:
+            return "Run AI models locally using LM Studio"
         case .groq:
             return "Use Groq's fast inference API"
         }
     }
+}
+
+/// High-level grouping of providers
+enum AIProviderCategory: String, Codable, CaseIterable, Equatable {
+    case local
+    case remote
+}
+
+extension AIProviderType {
+    /// Returns whether the provider is local (runs on-device) or remote (cloud).
+    var category: AIProviderCategory {
+        switch self {
+        case .ollama, .lmstudio:
+            return .local
+        case .groq:
+            return .remote
+        }
+    }
+
+    /// Convenience boolean
+    var isLocal: Bool { category == .local }
 }
 
 // Cache for HexSettings to reduce disk I/O

@@ -355,8 +355,8 @@ struct TranscriptionFeature {
         
       case .recheckOllamaAvailability:
         // Recheck if Ollama is available and update UI accordingly
-        return .run { send in
-          let isAvailable = await aiEnhancement.isOllamaAvailable()
+        return .run { [provider = state.hexSettings.aiProviderType, apiKey = state.hexSettings.groqAPIKey] send in
+          let isAvailable = await aiEnhancement.checkProviderAvailability(provider, apiKey)
           if !isAvailable {
             print("[TranscriptionFeature] Ollama is not available. AI enhancement is disabled.")
             // Update state to show error to the user
@@ -1054,8 +1054,6 @@ private extension TranscriptionFeature {
         enhancedPrompt += "\n\n" + languageRule
       }
 
-      print("[TranscriptionFeature] Enhanced prompt: \(enhancedPrompt)")
-      print("[TranscriptionFeature] Combined context: \(combinedContext)")
 
       return enhanceWithAI(
         result: trimmedResult,

@@ -21,6 +21,9 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 		// Reset model warm status to cold since models are unloaded when app closes
 		$hexSettings.withLock { $0.transcriptionModelWarmStatus = .cold }
 
+		// After reset model warm status, migrate legacy model folder
+		performLegacyModelSymlinkMigration()
+
 		Task {
 			await soundEffect.preloadSounds()
 		}
@@ -133,5 +136,54 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 	func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
 		presentSettingsView()
 		return true
+	}
+
+	/// Creates symbolic links from the legacy application support folder (com.kitlangton.Hex)
+	/// into the current folder (xyz.2qs.Tok) so that previously downloaded models remain
+	/// accessible after the bundle identifier change. This runs at launch and only creates
+	/// links for items that are missing in the new location.
+	private func performLegacyModelSymlinkMigration() {
+		let fm = FileManager.default
+		
+		do {
+			// Locate the user's Application Support directory
+			let appSupportURL = try fm.url(for: .applicationSupportDirectory,
+			                             in: .userDomainMask,
+			                             appropriateFor: nil,
+			                             create: false)
+			// Old: <Application Support>/com.kitlangton.Hex/models/argmaxinc/whisperkit-coreml/
+			let oldBase = appSupportURL
+				.appendingPathComponent("com.kitlangton.Hex", isDirectory: true)
+				.appendingPathComponent("models/argmaxinc/whisperkit-coreml", isDirectory: true)
+			// New: <Application Support>/xyz.2qs.Tok/models/argmaxinc/whisperkit-coreml/
+			let newBase = appSupportURL
+				.appendingPathComponent("xyz.2qs.Tok", isDirectory: true)
+				.appendingPathComponent("models/argmaxinc/whisperkit-coreml", isDirectory: true)
+			
+			// Nothing to migrate if the legacy path doesn't exist
+			guard fm.fileExists(atPath: oldBase.path) else { return }
+			
+			// Ensure the destination base directory exists
+			try fm.createDirectory(at: newBase, withIntermediateDirectories: true)
+			
+			// Enumerate all immediate children in the legacy folder (model variants)
+			let legacyContents = try fm.contentsOfDirectory(at: oldBase,
+			                                            includingPropertiesForKeys: nil,
+			                                            options: [.skipsHiddenFiles])
+			for oldItem in legacyContents {
+				let destination = newBase.appendingPathComponent(oldItem.lastPathComponent, isDirectory: true)
+				// Create a symlink only if the destination does not already exist
+				if !fm.fileExists(atPath: destination.path) {
+					do {
+						try fm.createSymbolicLink(at: destination, withDestinationURL: oldItem)
+						print("Created symlink: \(destination.path) → \(oldItem.path)")
+					} catch {
+						print("Failed to create symlink for \(oldItem.lastPathComponent): \(error)")
+					}
+				}
+			}
+		} catch {
+			print("Model folder migration error: \(error)")
+		}
 	}
 }

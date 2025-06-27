@@ -134,11 +134,6 @@ class ScreenCaptureClientLive {
             } ?? content.displays.first
             print("[ScreenCaptureClient] Found display for window: \(windowDisplay != nil)")
             
-            guard let display = windowDisplay else {
-                throw NSError(domain: "ScreenCaptureClient", code: -6,
-                             userInfo: [NSLocalizedDescriptionKey: "No display found for window"])
-            }
-            
             // Create a content filter that captures ONLY this window (display-independent)
             // Using the `desktopIndependentWindow` initializer ensures the
             // resulting image contains just the window's content, without

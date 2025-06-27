@@ -122,9 +122,6 @@
         }
       }
     },
-    "by %@ • Vision Model" : {
-
-    },
     "Cancel" : {
       "comment" : "Cancel deleting All Transcripts",
       "localizations" : {
@@ -478,9 +475,6 @@
     "Instructions" : {
 
     },
-    "Language Model" : {
-
-    },
     "Live Transcript" : {
 
     },
@@ -712,12 +706,6 @@
     "Screen Capture" : {
 
     },
-    "Select AI model:" : {
-
-    },
-    "Select vision model:" : {
-
-    },
     "Selected device not connected. System default will be used." : {
 
     },
@@ -868,6 +856,9 @@
 
     },
     "Test Connection" : {
+
+    },
+    "Text Model" : {
 
     },
     "The recording was long but the resulting transcription appears to be empty or incomplete. You can retry the transcription from the History tab in Settings." : {
