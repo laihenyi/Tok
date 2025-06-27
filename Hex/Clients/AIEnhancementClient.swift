@@ -719,12 +719,7 @@ class AIEnhancementClientLive {
             let requestDict: [String: Any] = [
                 "model": model,
                 "prompt": prompt,
-                "images": [
-                    [
-                        "type": mimeType,
-                        "data": base64Image
-                    ]
-                ],
+                "images": [ base64Image ],
                 "stream": false,
                 "system": systemPrompt
             ]
@@ -752,6 +747,7 @@ class AIEnhancementClientLive {
 
                 if let respDict = try JSONSerialization.jsonObject(with: responseData) as? [String: Any],
                    let summary = respDict["response"] as? String {
+                    print("[AIEnhancementClient] Ollama response: \(respDict)")
                     progress.completedUnitCount = 100
                     progressCallback(progress)
                     print("[AIEnhancementClient] Analysis complete. Summary length: \(summary.count) chars")

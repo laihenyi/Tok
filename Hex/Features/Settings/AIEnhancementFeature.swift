@@ -36,7 +36,7 @@ struct AIEnhancementFeature {
 
         // Computed property for convenient access to the default image model
         var defaultImageModel: String {
-            "llava:latest"
+            "gemma3"
         }
         
         // Current provider type
@@ -286,7 +286,9 @@ struct AIEnhancementFeature {
                         let models = try await aiEnhancement.getAvailableModels()
                         // Filter for vision/image models (models that contain "llava", "vision", or "minicpm")
                         let imageModels = models.filter { model in
+                            model.lowercased().contains("gemma") ||
                             model.lowercased().contains("llava") ||
+                            model.lowercased().contains("vl") ||
                             model.lowercased().contains("vision") ||
                             model.lowercased().contains("minicpm") ||
                             model.lowercased().contains("moondream")
@@ -331,8 +333,10 @@ struct AIEnhancementFeature {
                         let models = try await aiEnhancement.getRemoteModels(provider, apiKey)
                         // Filter for vision/image models
                         let imageModels = models.filter { model in
+                            model.id.lowercased().contains("gemma") ||
                             model.id.lowercased().contains("llama-4") ||
                             model.id.lowercased().contains("llava") ||
+                            model.id.lowercased().contains("vl") ||
                             model.id.lowercased().contains("vision") ||
                             model.id.lowercased().contains("minicpm") ||
                             model.id.lowercased().contains("moondream")

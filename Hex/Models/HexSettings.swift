@@ -43,14 +43,14 @@ struct HexSettings: Codable, Equatable, Sendable {
     // Remote AI provider settings
     var aiProviderType: AIProviderType = .ollama
     var groqAPIKey: String = ""
-    var selectedRemoteModel: String = "compound-beta-mini"
+    var selectedRemoteModel: String = "llama-3.3-70b-versatile"
     // Voice Recognition Initial Prompt
     var voiceRecognitionPrompt: String = ""
     // Live response (karaoke) prompt
     var liveResponsePrompt: String = ""
     // Image Recognition Model settings
-    var selectedImageModel: String = "llava:latest"
-    var selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview"
+    var selectedImageModel: String = "gemma3n"
+    var selectedRemoteImageModel: String = "meta-llama/llama-4-maverick-17b-128e-instruct"
     // Image Analysis Prompt
     var imageAnalysisPrompt: String = defaultImageAnalysisPrompt
     // Developer options
@@ -125,8 +125,8 @@ struct HexSettings: Codable, Equatable, Sendable {
         voiceRecognitionPrompt: String = "",
         liveResponsePrompt: String = "",
         transcriptionModelWarmStatus: ModelWarmStatus = .cold,
-        selectedImageModel: String = "llava:latest",
-        selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview",
+        selectedImageModel: String = "gemma3n",
+        selectedRemoteImageModel: String = "meta-llama/llama-4-maverick-17b-128e-instruct",
         imageAnalysisPrompt: String = defaultImageAnalysisPrompt,
         developerModeEnabled: Bool = false
 	) {
