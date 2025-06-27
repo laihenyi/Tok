@@ -153,6 +153,8 @@ struct KaraokeFeature {
         case audioMonitoring
         case silenceCheck
         case keyEvent
+        /// Debounce timer for scheduling AI response generation after confirmed lines are added
+        case aiDebounce
     }
 
     // MARK: Reducer body
@@ -184,7 +186,8 @@ struct KaraokeFeature {
                     .cancel(id: CancelID.finalize),
                     .cancel(id: CancelID.audioMonitoring),
                     .cancel(id: CancelID.silenceCheck),
-                    .cancel(id: CancelID.keyEvent)
+                    .cancel(id: CancelID.keyEvent),
+                    .cancel(id: CancelID.aiDebounce)
                 )
 
                 // 1) Start live (streaming) transcription
@@ -291,6 +294,7 @@ struct KaraokeFeature {
                     .cancel(id: CancelID.audioMonitoring),
                     .cancel(id: CancelID.silenceCheck),
                     .cancel(id: CancelID.keyEvent),
+                    .cancel(id: CancelID.aiDebounce),
 
                     // Then stop services
                     .run { _ in 
@@ -370,6 +374,15 @@ struct KaraokeFeature {
                         try? await clock.sleep(for: .milliseconds(100))
                         await send(._clearLiveText)
                     })
+
+                    // Debounce AI response request: wait 3 s after the most recent confirmed segment
+                    effects.append(
+                        .run { [clock] send in
+                            try? await clock.sleep(for: .seconds(3))
+                            await send(._requestAIResponse)
+                        }
+                        .cancellable(id: CancelID.aiDebounce, cancelInFlight: true)
+                    )
                 }
                 
                 return .merge(effects)
@@ -439,8 +452,7 @@ struct KaraokeFeature {
                     // Reset speech tracking for next chunk
                     state.lastSpeechTime = nil
                     return .merge(
-                        .send(._finalizeTranscription),
-                        .send(._requestAIResponse)
+                        .send(._finalizeTranscription)
                     )
                 }
                 
@@ -464,8 +476,31 @@ struct KaraokeFeature {
                 let settings = state.hexSettings
                 let previousTranscript = state.lastFinalizedTranscription
 
+                // Capture the real-time transcription (confirmed + live) since the last separator so we
+                // can feed it into the AI enhancement for additional context.
+                let realtimeTranscription: String = {
+                    // Walk backwards until we hit the most-recent separator or session start.
+                    var parts: [String] = []
+                    var idx = state.lines.count - 1
+                    while idx >= 0 {
+                        let line = state.lines[idx]
+                        if line.type == .separator || line.type == .sessionStart {
+                            break
+                        }
+                        if line.type == .transcription || line.type == .liveText {
+                            let trimmed = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !trimmed.isEmpty {
+                                parts.append(trimmed)
+                            }
+                        }
+                        idx -= 1
+                    }
+                    // Reverse to restore chronological order.
+                    return parts.reversed().joined(separator: " ")
+                }()
+
                 // Effect that does the heavy non-streaming transcription + enhancement
-                let finalizeEffect: Effect<Action> = .run { [transcription, recording, aiEnhancement, screenCapture, settings, model, options, previousTranscript] send in
+                let finalizeEffect: Effect<Action> = .run { [transcription, recording, aiEnhancement, screenCapture, settings, model, options, previousTranscript, realtimeTranscription] send in
                     // Stop the current chunk recording and duplicate it so subsequent recording doesn't overwrite
                     let originalURL = await recording.stopRecording()
 
@@ -522,7 +557,7 @@ struct KaraokeFeature {
                             contextSummary = nil
                         }
 
-                        // 3) Build context: screenshot summary + previous chunk transcript (if available)
+                        // 3) Build context: screenshot summary + previous chunk transcript + real-time transcription (if available)
                         var combinedContext: String? = nil
                         if let summary = contextSummary, !summary.isEmpty {
                             combinedContext = summary
@@ -534,11 +569,31 @@ struct KaraokeFeature {
                                 combinedContext = "Previous chunk:\n\(previousTranscript)"
                             }
                         }
+                        if !realtimeTranscription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            if combinedContext != nil {
+                                combinedContext = "\(combinedContext!)\nREAL_TIME_TRANSCRIPTION:\n\(realtimeTranscription)"
+                            } else {
+                                combinedContext = "REAL_TIME_TRANSCRIPTION:\n\(realtimeTranscription)"
+                            }
+                        }
 
                         print("[KaraokeFeature] Finalizing transcription with combined context: \(combinedContext)")
 
                         // 4) Enhance the text with AI using combined context
-                        let prompt = settings.aiEnhancementPrompt.isEmpty ? EnhancementOptions.defaultPrompt : settings.aiEnhancementPrompt
+                        // Build enhancement prompt with additional rules.
+                        var prompt = settings.aiEnhancementPrompt.isEmpty ? EnhancementOptions.defaultPrompt : settings.aiEnhancementPrompt
+
+                        // Rule to preserve original language when REAL_TIME_TRANSCRIPTION indicates a non-English language.
+                        let languageRule = "If the REAL_TIME_TRANSCRIPTION appears to be in a language other than English, your final improved text must be in that same language and must NOT be translated to English."
+                        // Rule to format output suitable for karaoke display.
+                        let lyricRule = "Break your output into short lines, lyric style."
+
+                        if prompt.isEmpty {
+                            prompt = languageRule + "\n\n" + lyricRule
+                        } else {
+                            prompt += "\n\n" + languageRule + "\n\n" + lyricRule
+                        }
+
                         let enhanceOptions = EnhancementOptions(
                             prompt: prompt,
                             temperature: settings.aiEnhancementTemperature,
@@ -595,13 +650,13 @@ struct KaraokeFeature {
                     }
                 }
                 
-                // Split the enhanced text into individual sentences using ". " as the delimiter.
+                // Split the enhanced text into individual sentences using "\n" and ". " as the delimiter.
                 // This ensures each sentence appears on its own line in the karaoke view.
                 let newSegments: [String] = text
-                    // Replace any newline characters with spaces so they don't interfere with sentence splitting.
-                    .replacingOccurrences(of: "\n", with: " ")
-                    // Break into sentences by the ". " pattern.
-                    .components(separatedBy: ". ")
+                    // Replace any line end characters with new line
+                    .replacingOccurrences(of: ". ", with: "\n")
+                    // Break into sentences by the "\n" pattern.
+                    .components(separatedBy: "\n")
                     // Restore the terminating period for segments that lost it during the split, unless the
                     // segment already ends with a different punctuation mark.
                     .map { segment -> String in
@@ -610,7 +665,7 @@ struct KaraokeFeature {
                         if trimmed.hasSuffix(".") || trimmed.hasSuffix("?") || trimmed.hasSuffix("!") {
                             return trimmed
                         } else {
-                            return "\(trimmed)."
+                            return "\(trimmed)"
                         }
                     }
                     .filter { !$0.isEmpty }
@@ -657,7 +712,7 @@ struct KaraokeFeature {
                 // Clear processing separator tracking
                 state.currentProcessingSeparatorId = nil
 
-                // After finishing finalization, restart streaming
+                // Prepare parameters for restarting the live streaming transcription
                 let model = state.hexSettings.selectedModel
                 let options = DecodingOptions(
                     language: state.hexSettings.outputLanguage,
@@ -667,7 +722,8 @@ struct KaraokeFeature {
                 let settings = state.hexSettings
                 let previousTranscript = state.lastFinalizedTranscription
 
-                return .run { [transcription, model, options, settings, previousTranscript] send in
+                // Effect to restart the streaming transcription
+                let restartStreamEffect: Effect<Action> = .run { [transcription, model, options, settings, previousTranscript] send in
                     // Small delay to ensure previous finalize cleaned up resources
                     try? await Task.sleep(for: .milliseconds(100))
 
@@ -693,6 +749,15 @@ struct KaraokeFeature {
                     }
                 }
                 .cancellable(id: CancelID.stream, cancelInFlight: true)
+
+                // Debounce AI response request after inserting finalized segments
+                let debounceEffect: Effect<Action> = .run { [clock] send in
+                    try? await clock.sleep(for: .seconds(3))
+                    await send(._requestAIResponse)
+                }
+                .cancellable(id: CancelID.aiDebounce, cancelInFlight: true)
+
+                return .merge(restartStreamEffect, debounceEffect)
 
             case ._requestAIResponse:
                 let transcript = state.lines.map(\.text).joined(separator: "\n")
@@ -732,8 +797,7 @@ struct KaraokeFeature {
                         state.lastSpeechTime = nil
                         return .merge(
                             .cancel(id: CancelID.silenceCheck),
-                            .send(._finalizeTranscription),
-                            .send(._requestAIResponse)
+                            .send(._finalizeTranscription)
                         )
                     }
                 }

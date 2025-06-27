@@ -543,7 +543,7 @@ actor TranscriptionClientLive {
     // Remove Whisper special tokens
     let whisperTokenPatterns = [
       // lets remove all the <|...|> tokens
-      "<\\|[^>]+\\|>",
+      "<[\\|]?[^>]+[\\|]?>",
       "^\\s*", // Leading whitespace
       "\\s*$"  // Trailing whitespace
     ]
