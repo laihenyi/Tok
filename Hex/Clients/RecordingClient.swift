@@ -12,6 +12,7 @@ import CoreAudio
 import Dependencies
 import DependenciesMacros
 import Foundation
+import AudioToolbox
 
 /// Represents an audio input device
 struct AudioInputDevice: Identifiable, Equatable {
@@ -307,6 +308,10 @@ actor RecordingClientLive {
   // Cache to store already-processed device information
   private var deviceCache: [AudioDeviceID: (hasInput: Bool, name: String?, hasOutput: Bool?)] = [:]
   private var lastDeviceCheck = Date(timeIntervalSince1970: 0)
+  
+  // System-audio capture helpers
+  private var systemAudioEngine: AVAudioEngine?
+  private var systemAudioPlayerNode: AVAudioPlayerNode?
   
   /// Gets all available output devices on the system
   func getAvailableOutputDevices() async -> [AudioOutputDevice] {
@@ -678,8 +683,63 @@ actor RecordingClientLive {
       engine.connect(input, to: inputGainNode, format: inputFormat)
       engine.connect(inputGainNode, to: mixer, format: inputFormat)
       
-      // TODO: Set up output device monitoring (requires additional permissions on macOS)
-      // For now, we'll focus on input recording with the infrastructure for output mixing
+      // -----------------------------------------------------------------------------
+      // System-audio ("what you hear") capture
+      // -----------------------------------------------------------------------------
+      if hexSettings.enableAudioMixing,
+         let outputDeviceIDString = hexSettings.selectedOutputDeviceID,
+         let outputDeviceID = AudioDeviceID(outputDeviceIDString) {
+
+        // Secondary engine that taps the chosen output (loop-back) device.
+        let systemEngine = AVAudioEngine()
+        self.systemAudioEngine = systemEngine
+
+        // Input node for the loop-back device (default when we assign CurrentDevice below).
+        let sysInputNode = systemEngine.inputNode
+
+        if let au = sysInputNode.audioUnit {
+          var devID = outputDeviceID
+          // Point the engine's input to the selected output/loop-back device.
+          let status = AudioUnitSetProperty(
+            au,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &devID,
+            UInt32(MemoryLayout<AudioDeviceID>.size)
+          )
+          if status != noErr {
+            print("🎙️ [WARNING] Could not set system-audio device – status: \(status)")
+          }
+        }
+
+        let sysFormat = sysInputNode.inputFormat(forBus: 0)
+
+        // Apply user-defined gain to the system-audio stream.
+        let outputGainNode = AVAudioMixerNode()
+        systemEngine.attach(outputGainNode)
+        outputGainNode.outputVolume = Float(hexSettings.audioMixingOutputGain)
+        systemEngine.connect(sysInputNode, to: outputGainNode, format: sysFormat)
+
+        // Player node that will *feed* the captured buffers into our main mixer (silent – no playback).
+        let systemPlayerNode = AVAudioPlayerNode()
+        self.systemAudioPlayerNode = systemPlayerNode
+        engine.attach(systemPlayerNode)
+        engine.connect(systemPlayerNode, to: mixer, format: sysFormat)
+        systemPlayerNode.play()
+
+        // Tap the gain node in the *system* engine and shuttle buffers into the player node.
+        outputGainNode.installTap(onBus: 0, bufferSize: 1024, format: sysFormat) { [weak systemPlayerNode] buffer, _ in
+          systemPlayerNode?.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
+        }
+
+        do {
+          try systemEngine.start()
+          print("🎙️ System-audio engine started for device \(outputDeviceIDString)")
+        } catch {
+          print("🎙️ [ERROR] Failed to start system-audio engine: \(error)")
+        }
+      }
       
       // Set up recording file
       let audioFile = try AVAudioFile(forWriting: recordingURL, settings: recordingFormat.settings)
@@ -716,8 +776,10 @@ actor RecordingClientLive {
         }
       }
       
-      // Connect mixer to engine output
-      engine.connect(mixer, to: engine.mainMixerNode, format: recordingFormat)
+      // NOTE: Do NOT route the mixed audio back to the system output.  We only need the tap on the
+      // mixer for recording, so we intentionally avoid connecting the mixer to the engine's
+      // main output.  This prevents the microphone signal from being played back through the
+      // user's speakers / headset while still allowing the engine to pull audio for the tap.
       
       // Start the audio engine
       try engine.start()
@@ -922,6 +984,12 @@ actor RecordingClientLive {
     audioEngine?.stop()
     audioEngine?.reset()
     audioEngine = nil
+    
+    // Tear down system-audio capture engine if it was running
+    systemAudioEngine?.stop()
+    systemAudioEngine?.reset()
+    systemAudioEngine = nil
+    systemAudioPlayerNode = nil
     
     // Clean up nodes
     inputNode = nil
