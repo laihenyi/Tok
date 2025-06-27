@@ -744,12 +744,13 @@ private extension TranscriptionFeature {
 
         do {
           print("[TranscriptionFeature] Delayed screenshot capture starting…")
-          let screenshotData = try await screenCapture.captureScreenshot()
+          let byteLimit = providerTypeForImage == .groq ? 300 * 1024 : 10 * 1024
+          let screenshotData = try await screenCapture.captureScreenshot(byteLimit)
           print("[TranscriptionFeature] Screenshot captured (\(screenshotData.count) bytes)")
 
           let provider = providerTypeForImage
           let modelName = imageModel
-          let imagePrompt = ""
+          let imagePrompt = imageAnalysisPrompt
 
           print("[TranscriptionFeature] Image analysis provider: \(provider.displayName), model: \(modelName)")
           let context = try await aiEnhancement.analyzeImage(

@@ -8,16 +8,14 @@ import ScreenCaptureKit
 /// Supports capturing the active window or the entire screen.
 @DependencyClient
 struct ScreenCaptureClient {
-    /// Captures the active window and returns PNG encoded data.
-    /// Falls back to screen capture if no active window is available.
+    /// Captures the active window and returns image data compressed under a caller-supplied limit.
     var captureActiveWindow: @Sendable () async throws -> Data
     
     /// Captures the primary screen and returns PNG encoded data.
     var captureScreen: @Sendable () async throws -> Data
     
-    /// Captures the active window and returns PNG encoded data.
-    /// This is the main method that should be used for most use cases.
-    var captureScreenshot: @Sendable () async throws -> Data
+    /// Captures a screenshot (prefers active window) under a caller-supplied size limit, expressed in bytes.
+    var captureScreenshot: @Sendable (_ maxBytes: Int) async throws -> Data
 }
 
 extension ScreenCaptureClient: DependencyKey {
@@ -26,7 +24,7 @@ extension ScreenCaptureClient: DependencyKey {
         return Self(
             captureActiveWindow: { try await live.captureActiveWindow() },
             captureScreen: { try await live.captureScreen() },
-            captureScreenshot: { try await live.captureActiveWindow() } // Default to active window
+            captureScreenshot: { maxBytes in try await live.captureActiveWindow(maxBytes: maxBytes) }
         )
     }
 }
@@ -41,22 +39,31 @@ extension DependencyValues {
 /// Live implementation of ScreenCaptureClient using ScreenCaptureKit
 class ScreenCaptureClientLive {
     
-    /// Captures the active window and returns PNG data
+    /// Captures the active window and returns image data compressed under a caller-supplied limit.
+    /// If the active window cannot be captured, an error is thrown – **no** fallback to full-screen capture.
     func captureActiveWindow() async throws -> Data {
-        print("[ScreenCaptureClient] Attempting to capture active window…")
-        // First, try to get the active window
-        if let activeWindowData = try? await captureActiveWindowInternal() {
-            print("[ScreenCaptureClient] Captured active window (\(activeWindowData.count) bytes)")
-            return activeWindowData
-        }
-        
-        // Fallback to screen capture if we can't get the active window
-        print("[ScreenCaptureClient] Could not capture active window, falling back to screen capture")
-        return try await captureScreen()
+        return try await captureActiveWindow(maxBytes: 30 * 1024)
     }
     
-    /// Captures the entire screen and returns PNG data
+    /// Captures the active window compressed to under `maxBytes`.
+    func captureActiveWindow(maxBytes: Int) async throws -> Data {
+        print("[ScreenCaptureClient] Attempting to capture active window…")
+        if let rawCGImage = try? await captureActiveWindowCGImage() {
+            let compressed = try compressCGImage(rawCGImage, maxBytes: maxBytes)
+            print("[ScreenCaptureClient] Captured active window (\(compressed.count) bytes)")
+            return compressed
+        }
+        print("[ScreenCaptureClient] Could not capture active window, falling back to screen capture")
+        return try await captureScreen(maxBytes: maxBytes)
+    }
+    
+    /// Captures the primary screen and returns PNG data
     func captureScreen() async throws -> Data {
+        return try await captureScreen(maxBytes: 30 * 1024)
+    }
+    
+    /// Captures the primary display compressed to under `maxBytes`.
+    func captureScreen(maxBytes: Int) async throws -> Data {
         print("[ScreenCaptureClient] Capturing entire screen…")
         do {
             // Get all available content
@@ -84,7 +91,7 @@ class ScreenCaptureClientLive {
                 configuration: config
             )
             
-            let data = try convertCGImageToPNG(screenshot)
+            let data = try compressCGImage(screenshot, maxBytes: maxBytes)
             print("[ScreenCaptureClient] Captured screen (\(data.count) bytes)")
             return data
             
@@ -95,8 +102,8 @@ class ScreenCaptureClientLive {
         }
     }
     
-    /// Internal method to capture the active window
-    private func captureActiveWindowInternal() async throws -> Data {
+    /// Internal helper to produce an *uncompressed* CGImage of the active window.
+    private func captureActiveWindowCGImage() async throws -> CGImage {
         print("[ScreenCaptureClient] captureActiveWindowInternal: fetching shareable content…")
         do {
             // Get all available content
@@ -132,14 +139,27 @@ class ScreenCaptureClientLive {
                              userInfo: [NSLocalizedDescriptionKey: "No display found for window"])
             }
             
-            // Create content filter for just this window
-            let filter = SCContentFilter(display: display, including: [window])
+            // Create a content filter that captures ONLY this window (display-independent)
+            // Using the `desktopIndependentWindow` initializer ensures the
+            // resulting image contains just the window's content, without
+            // the surrounding portions of the display.
+            let filter = SCContentFilter(desktopIndependentWindow: window)
             print("[ScreenCaptureClient] Created content filter, capturing image…")
             
-            // Configure capture settings
+            // Determine the display scale to capture at 1× logical resolution.
+            let backingScale: CGFloat = {
+                // Try to match the NSScreen that contains the window to get its scale factor
+                let matchedScreen = NSScreen.screens.first { nsScreen in
+                    nsScreen.frame.intersects(window.frame)
+                }
+                return matchedScreen?.backingScaleFactor ?? 1.0
+            }()
+
+            // Configure capture settings – pass point dimensions / scale so
+            // ScreenCaptureKit produces a 1× (logical-point) image.
             let config = SCStreamConfiguration()
-            config.width = Int(window.frame.width)
-            config.height = Int(window.frame.height)
+            config.width = Int(window.frame.width / backingScale)
+            config.height = Int(window.frame.height / backingScale)
             config.pixelFormat = kCVPixelFormatType_32BGRA
             config.showsCursor = false // Usually don't want cursor in window captures
             
@@ -150,9 +170,7 @@ class ScreenCaptureClientLive {
             )
             print("[ScreenCaptureClient] Screenshot for active window captured, converting to PNG…")
             
-            let data = try convertCGImageToPNG(screenshot)
-            print("[ScreenCaptureClient] Active window PNG size: \(data.count) bytes")
-            return data
+            return screenshot
             
         } catch {
             print("[ScreenCaptureClient] Error capturing active window: \(error)")
@@ -160,13 +178,64 @@ class ScreenCaptureClientLive {
         }
     }
     
-    /// Converts a CGImage to PNG data
-    private func convertCGImageToPNG(_ cgImage: CGImage) throws -> Data {
-        let bitmapRep = NSBitmapImageRep(cgImage: cgImage)
-        guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else {
-            throw NSError(domain: "ScreenCaptureClient", code: -2,
-                         userInfo: [NSLocalizedDescriptionKey: "Failed to encode PNG data"])
+    /// Resize-then-compress: progressively scales the image down (not below 400 px wide)
+    /// and lowers JPEG quality until the encoded data fits within `maxBytes`.
+    private func compressCGImage(_ cgImage: CGImage, maxBytes: Int, minWidth: Int = 400) throws -> Data {
+        let qualities: [CGFloat] = [0.8, 0.6, 0.4, 0.25, 0.1]
+
+        var currentImage = cgImage
+        var targetWidth = cgImage.width
+
+        func encodeJPEG(_ image: CGImage, quality: CGFloat) -> Data? {
+            let rep = NSBitmapImageRep(cgImage: image)
+            return rep.representation(using: .jpeg, properties: [.compressionFactor: quality])
         }
-        return pngData
+
+        func resize(cgImage: CGImage, toWidth: Int) -> CGImage? {
+            let height = Int(Double(cgImage.height) * Double(toWidth) / Double(cgImage.width))
+            guard let colorSpace = cgImage.colorSpace else { return nil }
+            guard let ctx = CGContext(
+                data: nil,
+                width: toWidth,
+                height: height,
+                bitsPerComponent: cgImage.bitsPerComponent,
+                bytesPerRow: 0,
+                space: colorSpace,
+                bitmapInfo: cgImage.bitmapInfo.rawValue)
+            else { return nil }
+            ctx.interpolationQuality = .high
+            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: toWidth, height: height))
+            return ctx.makeImage()
+        }
+
+        while true {
+            for quality in qualities {
+                if let data = encodeJPEG(currentImage, quality: quality) {
+                    if data.count <= maxBytes {
+                        return data
+                    }
+                    if targetWidth <= minWidth && quality == qualities.last {
+                        // Return best-effort smallest image even if over limit.
+                        return data
+                    }
+                }
+            }
+
+            // Reduce dimensions and try again.
+            if targetWidth <= minWidth { break }
+            targetWidth = max(minWidth, Int(Double(targetWidth) * 0.8))
+            if let resized = resize(cgImage: currentImage, toWidth: targetWidth) {
+                currentImage = resized
+            } else {
+                break
+            }
+        }
+
+        // Fallback – lowest-quality encode
+        guard let fallback = encodeJPEG(currentImage, quality: 0.1) else {
+            throw NSError(domain: "ScreenCaptureClient", code: -7,
+                          userInfo: [NSLocalizedDescriptionKey: "Failed to compress image"])
+        }
+        return fallback
     }
 } 
