@@ -856,7 +856,6 @@ private extension TranscriptionFeature {
         
         // Keep the context prompt (may be set by delayed screenshot capture earlier)
                 let contextPrompt = state.contextPrompt
-        let previousTranscript = state.transcriptionHistory.history.first?.text ?? ""
         let recordingDuration: TimeInterval = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
         let model = state.hexSettings.selectedModel
         let language = state.hexSettings.outputLanguage
@@ -870,7 +869,7 @@ private extension TranscriptionFeature {
           .cancel(id: CancelID.screenshotCapture),
           .cancel(id: CancelID.streamTranscription),
           // Then stop streaming transcription synchronously before beginning offline transcription
-          .run { [previousTranscript] send in
+          .run { send in
         // Ensure the real-time streaming engine is fully stopped before we
         // start an offline transcription.  If we launch them concurrently,
         // WhisperKit will cancel one of the operations which manifests as a
@@ -915,7 +914,7 @@ private extension TranscriptionFeature {
             model,
             decodeOptionsWithPrefill,
             settings,
-            previousTranscript
+            nil
           ) { _ in }
 
           print("Result WITH prefill prompt: \"\(resultWithPrefill)\"")
@@ -933,7 +932,7 @@ private extension TranscriptionFeature {
               model,
               decodeOptionsNoPrefill,
               settings,
-              previousTranscript
+              nil
             ) { _ in }
 
             print("Initial result WITHOUT prefill prompt: \"\(resultWithoutPrefill)\"")
@@ -948,7 +947,7 @@ private extension TranscriptionFeature {
                 model,
                 decodeOptionsNoPrefill,
                 settings,
-                previousTranscript
+                nil
               ) { _ in }
 
               print("[TranscriptionFeature] Retry result WITHOUT prefill: \"\(retryResultNP)\"")

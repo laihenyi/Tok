@@ -166,8 +166,12 @@ struct KaraokeFeature {
                 state.isTranscribing = true
                 // Notify the rest of the app that Karaoke is now recording.
                 state.$isKaraokeRecording.withLock { $0 = true }
-                // Clear current lines and add initial separator
+                
+                // Reset context from any previous session
                 state.lines.removeAll()
+                state.aiResponse = ""
+                state.lastFinalizedTranscription = ""
+
                 state.lines.append(Line.sessionStart())
                 // Determine model & options
                 let model = state.hexSettings.selectedModel
@@ -177,7 +181,6 @@ struct KaraokeFeature {
                     chunkingStrategy: .vad
                 )
                 let settings = state.hexSettings
-                let previousTranscript = state.lastFinalizedTranscription
 
                 // First, explicitly cancel any existing stream to prevent overlapping callbacks
                 let cancelPreviousEffect: Effect<Action> = .merge(
@@ -191,7 +194,7 @@ struct KaraokeFeature {
                 )
 
                 // 1) Start live (streaming) transcription
-                let streamEffect: Effect<Action> = .run { [transcription, model, options, settings, previousTranscript] send in
+                let streamEffect: Effect<Action> = .run { [transcription, model, options, settings] send in
                     // Ensure any existing stream is stopped to prevent conflicts
                     await transcription.stopStreamTranscription()
                     
@@ -202,7 +205,8 @@ struct KaraokeFeature {
                     let updates = AsyncStream<StreamTranscriptionUpdate> { continuation in
                         let task = Task {
                             do {
-                                try await transcription.startStreamTranscription(model, options, settings, previousTranscript) { update in
+                                // We no longer pass previousTranscript here to ensure a clean start
+                                try await transcription.startStreamTranscription(model, options, settings, nil) { update in
                                     continuation.yield(update)
                                     // WhisperKit convention: final update has isComplete==true
                                     if update.isComplete {
