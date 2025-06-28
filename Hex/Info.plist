@@ -15,5 +15,7 @@
 	<string>https://post-ci-update.doubleqsun.workers.dev/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>Tvo3tYgr75QhBuf7CzSHl0+jsZPXEq4LItEmC5czaMs=</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Tok needs microphone access to record audio for AI analysis and context understanding.</string>
 </dict>
 </plist>

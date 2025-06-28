@@ -10,5 +10,9 @@
 	<true/>
 	<key>com.apple.security.automation.screen-capture</key>
 	<true/>
+	<key>com.apple.security.audio-capture</key>
+	<true/>
+	<key>com.apple.security.process-tap</key>
+	<true/>
 </dict>
 </plist>

@@ -313,6 +313,10 @@ actor RecordingClientLive {
   private var systemAudioEngine: AVAudioEngine?
   private var systemAudioPlayerNode: AVAudioPlayerNode?
   
+  // ProcessTap for capturing system-wide audio
+  private var processTap: ProcessTap?
+  private var tapQueue: DispatchQueue?
+  
   /// Gets all available output devices on the system
   func getAvailableOutputDevices() async -> [AudioOutputDevice] {
     // Reset cache if it's been more than 5 minutes since last full refresh
@@ -670,74 +674,132 @@ actor RecordingClientLive {
       
       engine.attach(mixer)
       
-      // Set up audio format (16kHz mono for transcription)
-      let recordingFormat = AVAudioFormat(standardFormatWithSampleRate: 16000, channels: 1)!
+      // -------------------------------------------------------------
+      // Microphone input -> mixer with adjustable gain
+      // -------------------------------------------------------------
+      // We'll decide final recording format once we know the system audio's format.
+      var recordingFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
       let inputFormat = input.inputFormat(forBus: 0)
-      
-      // Connect input to mixer with gain
+
       let inputGain = Float(hexSettings.audioMixingInputGain)
       let inputGainNode = AVAudioMixerNode()
       engine.attach(inputGainNode)
       inputGainNode.outputVolume = inputGain
-      
+
       engine.connect(input, to: inputGainNode, format: inputFormat)
       engine.connect(inputGainNode, to: mixer, format: inputFormat)
       
       // -----------------------------------------------------------------------------
-      // System-audio ("what you hear") capture
+      // System-audio ("what you hear") capture using ProcessTap
       // -----------------------------------------------------------------------------
-      if hexSettings.enableAudioMixing,
-         let outputDeviceIDString = hexSettings.selectedOutputDeviceID,
-         let outputDeviceID = AudioDeviceID(outputDeviceIDString) {
-
-        // Secondary engine that taps the chosen output (loop-back) device.
-        let systemEngine = AVAudioEngine()
-        self.systemAudioEngine = systemEngine
-
-        // Input node for the loop-back device (default when we assign CurrentDevice below).
-        let sysInputNode = systemEngine.inputNode
-
-        if let au = sysInputNode.audioUnit {
-          var devID = outputDeviceID
-          // Point the engine's input to the selected output/loop-back device.
-          let status = AudioUnitSetProperty(
-            au,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &devID,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-          )
-          if status != noErr {
-            print("🎙️ [WARNING] Could not set system-audio device – status: \(status)")
-          }
-        }
-
-        let sysFormat = sysInputNode.inputFormat(forBus: 0)
-
-        // Apply user-defined gain to the system-audio stream.
-        let outputGainNode = AVAudioMixerNode()
-        systemEngine.attach(outputGainNode)
-        outputGainNode.outputVolume = Float(hexSettings.audioMixingOutputGain)
-        systemEngine.connect(sysInputNode, to: outputGainNode, format: sysFormat)
-
+      if hexSettings.enableAudioMixing {
         // Player node that will *feed* the captured buffers into our main mixer (silent – no playback).
         let systemPlayerNode = AVAudioPlayerNode()
         self.systemAudioPlayerNode = systemPlayerNode
         engine.attach(systemPlayerNode)
-        engine.connect(systemPlayerNode, to: mixer, format: sysFormat)
+
+        // Create system-wide ProcessTap
+        let systemProcess = AudioProcess(
+          id: AudioTarget.systemWidePID,
+          kind: .system,
+          name: "System",
+          objectID: AudioObjectID(kAudioObjectSystemObject),
+          audioActive: true
+        )
+
+        let tap = ProcessTap(process: systemProcess)
+        self.processTap = tap
+        await MainActor.run { tap.activate() }
+
+        guard var streamDesc = tap.tapStreamDescription else {
+          print("🎙️ [ERROR] No stream description from ProcessTap")
+          return
+        }
+        print("🎙️ [DEBUG] ProcessTap stream desc: mSampleRate=\(streamDesc.mSampleRate), channels=\(streamDesc.mChannelsPerFrame), bytesPerFrame=\(streamDesc.mBytesPerFrame)")
+
+        let sysFormat = AVAudioFormat(streamDescription: &streamDesc)!
+        // Adopt system audio's sample rate for our recording format to avoid costly real-time resampling by AVAudioEngine.
+        recordingFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                       sampleRate: sysFormat.sampleRate,
+                                       channels: 2,
+                                       interleaved: false)!
+
+        // Connect player node to mixer letting AVAudioEngine negotiate format conversion
+        engine.connect(systemPlayerNode, to: mixer, format: nil)
         systemPlayerNode.play()
 
-        // Tap the gain node in the *system* engine and shuttle buffers into the player node.
-        outputGainNode.installTap(onBus: 0, bufferSize: 1024, format: sysFormat) { [weak systemPlayerNode] buffer, _ in
-          systemPlayerNode?.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
-        }
+        // Dispatch queue for the tap callback
+        let queue = DispatchQueue(label: "HexSystemAudioTapQueue")
+        self.tapQueue = queue
 
+        let playerCapture = systemPlayerNode
         do {
-          try systemEngine.start()
-          print("🎙️ System-audio engine started for device \(outputDeviceIDString)")
+          try tap.run(on: queue, ioBlock: { (now: UnsafePointer<AudioTimeStamp>, inputData: UnsafePointer<AudioBufferList>, inputTime: UnsafePointer<AudioTimeStamp>, outputData: UnsafeMutablePointer<AudioBufferList>?, outputTime: UnsafePointer<AudioTimeStamp>) in
+            let player = playerCapture
+
+            // Convert AudioBufferList -> AVAudioPCMBuffer
+            let ablPointer = UnsafeMutablePointer<AudioBufferList>(mutating: inputData)
+            let srcBuffers = UnsafeMutableAudioBufferListPointer(ablPointer)
+
+            guard srcBuffers.count > 0 else { return }
+
+            let bytesPerFrame = Int(streamDesc.mBytesPerFrame)
+            let frameCount = Int(srcBuffers[0].mDataByteSize) / bytesPerFrame
+
+            // Calculate RMS of system audio buffer to see if it has signal
+            var rms: Float = 0
+            if let firstBuffer = srcBuffers.first, let data = firstBuffer.mData {
+              if streamDesc.mFormatFlags & kAudioFormatFlagIsFloat != 0 {
+                let samples = data.bindMemory(to: Float.self, capacity: frameCount)
+                var sumSquares: Float = 0
+                for i in 0..<frameCount {
+                  let s = samples[i]
+                  sumSquares += s * s
+                }
+                rms = sqrt(sumSquares / Float(frameCount))
+              } else if streamDesc.mBitsPerChannel == 16 {
+                let samples = data.bindMemory(to: Int16.self, capacity: frameCount)
+                var sumSquares: Float = 0
+                for i in 0..<frameCount {
+                  let s = Float(samples[i]) / 32768.0
+                  sumSquares += s * s
+                }
+                rms = sqrt(sumSquares / Float(frameCount))
+              } else if streamDesc.mBitsPerChannel == 32 {
+                let samples = data.bindMemory(to: Int32.self, capacity: frameCount)
+                var sumSquares: Float = 0
+                for i in 0..<frameCount {
+                  let s = Float(samples[i]) / 2147483648.0
+                  sumSquares += s * s
+                }
+                rms = sqrt(sumSquares / Float(frameCount))
+              }
+            }
+            print("🎙️ [DEBUG] ProcessTap delivered \(frameCount) frames (sys audio), rms=\(rms)")
+
+            guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: sysFormat, frameCapacity: AVAudioFrameCount(frameCount)) else { return }
+            pcmBuffer.frameLength = AVAudioFrameCount(frameCount)
+
+            let dstBuffers = UnsafeMutableAudioBufferListPointer(pcmBuffer.mutableAudioBufferList)
+
+            for channel in 0..<srcBuffers.count {
+              let src = srcBuffers[channel]
+              let dst = dstBuffers[channel]
+              if let srcData = src.mData, let dstData = dst.mData {
+                memcpy(dstData, srcData, Int(src.mDataByteSize))
+              }
+            }
+
+            // Feed buffer to player node as-is; engine will handle any format conversion.
+            player.scheduleBuffer(pcmBuffer, at: nil, options: .interrupts, completionHandler: nil)
+          }, invalidationHandler: { [weak self] tap in
+            Task { [weak self] in
+              await self?.stopSystemTapDueToInvalidation()
+            }
+          })
+          print("🎙️ [DEBUG] ProcessTap.run successfully started")
         } catch {
-          print("🎙️ [ERROR] Failed to start system-audio engine: \(error)")
+          print("🎙️ [ERROR] Failed to start ProcessTap: \(error)")
         }
       }
       
@@ -748,6 +810,14 @@ actor RecordingClientLive {
       // Install tap on mixer to record mixed audio
       mixer.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, time in
         do {
+          let frameLen = Int(buffer.frameLength)
+          var rmsMix: Float = 0
+          if let data = buffer.floatChannelData?.pointee {
+            var sum: Float = 0
+            for i in 0..<frameLen { sum += data[i]*data[i] }
+            rmsMix = sqrt(sum / Float(frameLen))
+          }
+          print("🎙️ [DEBUG] Mixer tap received buffer with \(frameLen) frames, rms=\(rmsMix)")
           try audioFile.write(from: buffer)
           
           // Calculate audio levels for metering
@@ -780,9 +850,19 @@ actor RecordingClientLive {
       // mixer for recording, so we intentionally avoid connecting the mixer to the engine's
       // main output.  This prevents the microphone signal from being played back through the
       // user's speakers / headset while still allowing the engine to pull audio for the tap.
+      // NOTE: We still need the engine to **pull** audio through the graph.  The most reliable
+      // way to do that without creating audible feedback is to connect our mixer to the
+      // engine's main mixer and mute its output.  This keeps the signal silent for the user
+      // while ensuring the tap installed on the mixer receives filled buffers.
+      mixer.outputVolume = 1.0 // keep audible signal for tap
+      engine.connect(mixer, to: engine.mainMixerNode, format: nil)
+      // Mute app playback to avoid feedback while leaving recording intact
+      engine.mainMixerNode.outputVolume = 0.0
       
       // Start the audio engine
       try engine.start()
+      
+      print("🎙️ [DEBUG] Audio engine started. isRunning=\(engine.isRunning)")
       
       let totalDuration = Date().timeIntervalSince(startTime)
       print("🎙️ [TIMING] Total mixed recording start duration: \(String(format: "%.3f", totalDuration))s")
@@ -985,10 +1065,12 @@ actor RecordingClientLive {
     audioEngine?.reset()
     audioEngine = nil
     
-    // Tear down system-audio capture engine if it was running
-    systemAudioEngine?.stop()
-    systemAudioEngine?.reset()
-    systemAudioEngine = nil
+    // Invalidate ProcessTap if active
+    processTap?.invalidate()
+    processTap = nil
+    tapQueue = nil
+
+    // Release player node
     systemAudioPlayerNode = nil
     
     // Clean up nodes
@@ -1077,6 +1159,11 @@ actor RecordingClientLive {
 
   func observeAudioLevel() -> AsyncStream<Meter> {
     meterStream
+  }
+
+  private func stopSystemTapDueToInvalidation() {
+    processTap = nil
+    print("🎙️ ProcessTap invalidated")
   }
 }
 
