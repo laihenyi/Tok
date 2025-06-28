@@ -31,6 +31,8 @@ struct HexSettings: Codable, Equatable, Sendable {
     var audioMixingInputGain: Double = 1.0 // Gain for microphone input (0.0 - 2.0)
     var audioMixingSystemAudioGain: Double = 1.0 // Gain for system output (0.0 - 2.0)
     var backgroundOpacity: Double = 0.6 // Background opacity for karaoke view (0.0 - 1.0)
+    var karaokeFontSize: Double = 28.0 // Font size for karaoke view text (12.0 - 72.0)
+    var customThemeColors: [String] = [] // Custom color hex codes for theme picker
     var enableScreenCapture: Bool = false // New setting for enabling screen capture
     var hasCompletedOnboarding: Bool = false // New setting for onboarding completion
 
@@ -78,6 +80,8 @@ struct HexSettings: Codable, Equatable, Sendable {
         case audioMixingInputGain
         case audioMixingSystemAudioGain
         case backgroundOpacity
+        case karaokeFontSize
+        case customThemeColors
         case enableScreenCapture
         case hasCompletedOnboarding
         case useAIEnhancement
@@ -116,6 +120,8 @@ struct HexSettings: Codable, Equatable, Sendable {
         audioMixingInputGain: Double = 1.0,
         audioMixingSystemAudioGain: Double = 1.0,
         backgroundOpacity: Double = 0.6,
+        karaokeFontSize: Double = 28.0,
+        customThemeColors: [String] = [],
         enableScreenCapture: Bool = false,
         hasCompletedOnboarding: Bool = false,
         useAIEnhancement: Bool = false,
@@ -152,6 +158,8 @@ struct HexSettings: Codable, Equatable, Sendable {
         self.audioMixingInputGain = audioMixingInputGain
         self.audioMixingSystemAudioGain = audioMixingSystemAudioGain
         self.backgroundOpacity = backgroundOpacity
+        self.karaokeFontSize = karaokeFontSize
+        self.customThemeColors = customThemeColors
         self.enableScreenCapture = enableScreenCapture
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.useAIEnhancement = useAIEnhancement
@@ -204,6 +212,8 @@ struct HexSettings: Codable, Equatable, Sendable {
         audioMixingInputGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingInputGain) ?? 1.0
         audioMixingSystemAudioGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingSystemAudioGain) ?? 1.0
         backgroundOpacity = try container.decodeIfPresent(Double.self, forKey: .backgroundOpacity) ?? 0.6
+        karaokeFontSize = try container.decodeIfPresent(Double.self, forKey: .karaokeFontSize) ?? 28.0
+        customThemeColors = try container.decodeIfPresent([String].self, forKey: .customThemeColors) ?? []
         enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? false
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         // AI Enhancement settings

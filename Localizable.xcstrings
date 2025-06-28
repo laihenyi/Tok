@@ -59,13 +59,22 @@
     "Accuracy" : {
 
     },
+    "Add Theme" : {
+
+    },
     "Adjust microphone volume in the mix" : {
 
     },
     "Adjust system audio volume in the mix" : {
 
     },
+    "Adjust the size of text in the karaoke view" : {
+
+    },
     "Adjust transparency of the karaoke view background" : {
+
+    },
+    "AI" : {
 
     },
     "AI Enhancement" : {
@@ -104,6 +113,9 @@
 
     },
     "Back" : {
+
+    },
+    "Background Color" : {
 
     },
     "Background Opacity: %.1f" : {
@@ -243,10 +255,16 @@
     "Copy transcription text to clipboard in addition to pasting it" : {
 
     },
+    "Create custom color themes by selecting text and background colors. These will appear in the karaoke view's theme picker." : {
+
+    },
     "Creativity" : {
 
     },
     "Current Hotkey:" : {
+
+    },
+    "Custom Theme Colors" : {
 
     },
     "Customize how the AI analyzes screenshots. This affects the context information that helps improve transcription accuracy." : {
@@ -409,6 +427,9 @@
     "Error: %@" : {
 
     },
+    "Font Size: %lldpt" : {
+
+    },
     "General" : {
       "comment" : "General section in Settings Header.",
       "localizations" : {
@@ -493,7 +514,7 @@
     "Logs" : {
 
     },
-    "Lower values make the background more transparent, allowing you to see content underneath the karaoke window." : {
+    "Lower opacity values make the background more transparent. Font size affects all text displayed in the karaoke window." : {
 
     },
     "Lower values produce more consistent, conservative improvements. Higher values allow more creative rewording." : {
@@ -573,6 +594,9 @@
 
     },
     "Ollama Not Connected" : {
+
+    },
+    "on" : {
 
     },
     "Onboarding" : {
@@ -693,6 +717,9 @@
 
     },
     "Refresh available output devices" : {
+
+    },
+    "Remove custom theme" : {
 
     },
     "Request Permission" : {
@@ -871,6 +898,9 @@
 
     },
     "Test Connection" : {
+
+    },
+    "Text Color" : {
 
     },
     "Text Model" : {

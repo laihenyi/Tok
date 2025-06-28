@@ -153,7 +153,7 @@ struct TranscriptionIndicatorView: View {
               // First row: capsule + waveform + duration inside one StatusBar
               StatusBar {
                 capsule
-                VoiceWaveView(power: min(1, averagePower * 3))
+                VoiceWaveView(power: averagePower)
                   .frame(width: 160, height: 16)
                   .clipShape(RoundedRectangle(cornerRadius: 0))
                 Text(durationText(for: streaming))
@@ -493,10 +493,16 @@ struct VoiceWaveView: View {
   private let barWidth: CGFloat = 3
   private let spacing: CGFloat = 2
 
+  /// Desired number of samples (bars) per second.
+  private let samplesPerSecond: Double = 4
+  @State private var lastSampleDate: Date = .distantPast
+
   var body: some View {
     GeometryReader { geo in
       let maxHeight = geo.size.height
-      HStack(alignment: .bottom, spacing: spacing) {
+      // Center-aligned vertical bars so they extend both above and below the mid-line,
+      // creating a classic audio-waveform appearance.
+      HStack(alignment: .center, spacing: spacing) {
         ForEach(history.indices, id: \.self) { idx in
           let value = history[idx]
           Capsule()
@@ -505,14 +511,19 @@ struct VoiceWaveView: View {
                    height: max(2, CGFloat(value) * maxHeight))
         }
       }
-      // Right-align so newest bar appears at the far right, sliding older bars left.
-      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+      // Right-align horizontally so newest bar appears at the far right while remaining
+      // vertically centered.
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
     }
     // Push new sample whenever "power" changes. Using `.task(id:)` ensures the state
     // mutation happens in a fresh turn of the run loop, outside the current view
     // update cycle, avoiding the "Publishing changes from within view updates" warning.
     .task(id: power) {
-      // Clamp and append the sample asynchronously.
+      // Throttle updates so we record roughly `samplesPerSecond` bars per second.
+      let now = Date()
+      guard now.timeIntervalSince(lastSampleDate) >= 1.0 / samplesPerSecond else { return }
+      lastSampleDate = now
+
       let clamped = max(0, min(power, 1))
       history.append(clamped)
       if history.count > maxSamples {

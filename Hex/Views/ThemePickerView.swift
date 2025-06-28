@@ -9,12 +9,15 @@ struct ThemeOption: Identifiable, Hashable {
     let background: Color
 }
 
+
+
 struct ThemePickerView: View {
     @Binding var selectedText: Color
     @Binding var selectedBackground: Color
+    let customColors: [String]
     @Environment(\.dismiss) private var dismiss
 
-    private let options: [ThemeOption] = [
+    private let defaultOptions: [ThemeOption] = [
         ThemeOption(text: .black, background: .white),
         ThemeOption(text: .white, background: .black),
         ThemeOption(text: .blue, background: .white),
@@ -29,6 +32,26 @@ struct ThemePickerView: View {
 
     private let columns: [GridItem] = Array(repeating: .init(.fixed(44), spacing: 12), count: 3)
 
+    // Computed property to combine default and custom options
+    private var allOptions: [ThemeOption] {
+        var options = defaultOptions
+
+        // Parse custom themes from JSON if available
+        if let jsonString = customColors.first,
+           let data = jsonString.data(using: .utf8),
+           let customThemes: [CustomThemeOption] = try? JSONDecoder().decode([CustomThemeOption].self, from: data) {
+
+            for theme in customThemes {
+                options.append(ThemeOption(
+                    text: theme.textColor,
+                    background: theme.backgroundColor
+                ))
+            }
+        }
+
+        return options
+    }
+
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
             // Close button
@@ -42,7 +65,7 @@ struct ThemePickerView: View {
             }
 
             LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(options) { option in
+                ForEach(allOptions) { option in
                     Button {
                         // Defer the binding updates to avoid "Publishing changes from within view updates"
                         DispatchQueue.main.async {

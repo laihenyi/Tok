@@ -58,7 +58,7 @@ struct KaraokeView: View {
                 // content underneath the window show through.
                 if backgroundColor == .black {
                     CheckerboardBackground()
-                        .opacity(viewStore.hexSettings.backgroundOpacity * 0.8) // Scale down for checkerboard
+                        .opacity(viewStore.hexSettings.backgroundOpacity)
                 } else {
                     backgroundColor
                         .opacity(viewStore.hexSettings.backgroundOpacity)
@@ -83,15 +83,15 @@ struct KaraokeView: View {
                                         switch line.type {
                                             case .transcription:
                                                 Text(line.text)
-                                                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                                                    .font(.system(size: viewStore.hexSettings.karaokeFontSize, weight: .bold, design: .rounded))
                                                     .multilineTextAlignment(.center)
                                                     .foregroundStyle(highlightColor)
                                                     .animation(.easeInOut(duration: 0.3), value: line.isHighlighted)
                                                     .textSelection(.enabled)
-                                            
+
                                             case .liveText:
                                                 Text(line.text)
-                                                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                                                    .font(.system(size: viewStore.hexSettings.karaokeFontSize, weight: .bold, design: .rounded))
                                                     .multilineTextAlignment(.center)
                                                     .foregroundStyle(highlightColor)
                                                     .opacity(line.isHighlighted ? 1.0 : 0.6)
@@ -147,8 +147,12 @@ struct KaraokeView: View {
                             .buttonStyle(.plain)
                             .help("Choose theme colours")
                             .popover(isPresented: $showingThemePicker, arrowEdge: .top) {
-                                ThemePickerView(selectedText: $highlightColor, selectedBackground: $backgroundColor)
-                                    .onDisappear { showingThemePicker = false }
+                                ThemePickerView(
+                                    selectedText: $highlightColor,
+                                    selectedBackground: $backgroundColor,
+                                    customColors: viewStore.hexSettings.customThemeColors
+                                )
+                                .onDisappear { showingThemePicker = false }
                             }
 
                             // Pin button
@@ -204,7 +208,7 @@ struct KaraokeView: View {
                         } else {
                             ScrollView {
                                 Text(viewStore.aiResponse.isEmpty ? "" : viewStore.aiResponse)
-                                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                                    .font(.system(size: viewStore.hexSettings.karaokeFontSize, weight: .bold, design: .rounded))
                                     .foregroundColor(highlightColor)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding()
