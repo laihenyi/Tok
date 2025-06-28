@@ -302,8 +302,29 @@ actor RecordingClientLive {
   private nonisolated(unsafe) var micWritePosition: AVAudioFramePosition = 0
   private nonisolated(unsafe) var micReadPosition: AVAudioFramePosition = 0
   private nonisolated let bufferLock = NSLock()
+  // ----------------------------------------------------------------------
+  // Dynamic sample-rate estimation for ProcessTap audio
+  // ----------------------------------------------------------------------
+  private nonisolated let sampleRateLock = NSLock()
+  private nonisolated(unsafe) var prevSampleTime: Float64 = 0
+  private nonisolated(unsafe) var prevHostTime: UInt64 = 0
+  private nonisolated(unsafe) var sampleRateEstimates: [Double] = []
+  /// Most recent median of observed tap sample-rates (nil until enough data)
+  private nonisolated(unsafe) var measuredSystemSampleRate: Double?
+  /// Once we have gathered enough stable estimates, we freeze the decision here.
+  private nonisolated(unsafe) var fixedSystemSampleRate: Double?
+  // Sample-rate estimation parameters
+  private let estimateWindowSize       = 50   // keep at most this many observations
+  private let minEstimatesForFreeze    = 40   // need at least this many before deciding
+  private let stabilityTolerance       = 0.05 // 5 % band deemed stable
   private nonisolated(unsafe) var ringBufferCapacity: AVAudioFrameCount = 44100 // 1 second at 44.1kHz
   private nonisolated(unsafe) var recordingFormat: AVAudioFormat?
+  
+  // ------------------------------------------------------------------
+  // Re-lock / instrumentation state (sample-rate monitor)
+  // ------------------------------------------------------------------
+  private nonisolated(unsafe) var relockPerformed: Bool = false
+  private nonisolated(unsafe) var estimateLogCounter: Int = 0
   
   /// Tracks the current recording state to prevent overlapping operations
   private var isRecording: Bool = false
@@ -510,56 +531,99 @@ actor RecordingClientLive {
   
   /// Convert audio buffer to recording format
   private nonisolated func convertToRecordingFormat(_ sourceBuffer: AVAudioPCMBuffer, sourceFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
-    // Get the current recording format
-    guard let recordingFormat = recordingFormat else {
-      return sourceBuffer
-    }
-    
-    // If formats are close enough (same sample rate, has channels), avoid conversion
-    if abs(sourceFormat.sampleRate - recordingFormat.sampleRate) < 1.0 && sourceFormat.channelCount >= 1 {
-      // Create buffer in recording format but keep original data
-      guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: recordingFormat, frameCapacity: sourceBuffer.frameLength) else {
-        return sourceBuffer
-      }
-      
+    // Current desired recording format (44.1 kHz mono-float)
+    guard let recordingFormat = recordingFormat else { return sourceBuffer }
+
+    // Determine the *actual* source sample-rate, using empirical estimate when available.
+    let actualSourceRate = fixedSystemSampleRate ?? measuredSystemSampleRate ?? sourceFormat.sampleRate
+
+    // Fast-path: already effectively at target rate ⇒ just re-wrap/copy
+    if abs(actualSourceRate - recordingFormat.sampleRate) < 1.0 &&
+       sourceFormat.channelCount >= 1 &&
+       sourceFormat.commonFormat == recordingFormat.commonFormat {
+      guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: recordingFormat,
+                                                frameCapacity: sourceBuffer.frameLength) else { return sourceBuffer }
       outputBuffer.frameLength = sourceBuffer.frameLength
-      
-      // Copy audio data directly without sample rate conversion (take first channel only)
-      if let sourceData = sourceBuffer.floatChannelData?[0],
-         let outputData = outputBuffer.floatChannelData?[0] {
-        memcpy(outputData, sourceData, Int(sourceBuffer.frameLength) * MemoryLayout<Float>.size)
+      if let src = sourceBuffer.floatChannelData?[0],
+         let dst = outputBuffer.floatChannelData?[0] {
+        memcpy(dst, src, Int(sourceBuffer.frameLength) * MemoryLayout<Float>.size)
       }
-      
       return outputBuffer
     }
-    
-    // Create converter for different sample rates
-    guard let converter = AVAudioConverter(from: sourceFormat, to: recordingFormat) else {
+
+    //------------------------------------------------------------------
+    // We need to resample.  Build a format that reflects the *measured*
+    // source rate so AVAudioConverter applies the correct ratio.
+    //------------------------------------------------------------------
+    let adjustedSourceFormat: AVAudioFormat
+    let bufferForConversion: AVAudioPCMBuffer
+
+    if abs(actualSourceRate - sourceFormat.sampleRate) < 1.0 {
+      // Reported rate matches measurement → use original buffer/format
+      adjustedSourceFormat = sourceFormat
+      bufferForConversion   = sourceBuffer
+    } else {
+      // Build new format with corrected sample-rate and copy references
+      guard let fmt = AVAudioFormat(commonFormat: sourceFormat.commonFormat,
+                                    sampleRate: actualSourceRate,
+                                    channels: sourceFormat.channelCount,
+                                    interleaved: sourceFormat.isInterleaved) else {
+        return sourceBuffer
+      }
+      adjustedSourceFormat = fmt
+
+      guard let tmp = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: sourceBuffer.frameCapacity) else {
+        return sourceBuffer
+      }
+      tmp.frameLength = sourceBuffer.frameLength
+      if let srcFloat = sourceBuffer.floatChannelData, let dstFloat = tmp.floatChannelData {
+        // Float data path (non-interleaved)
+        let channels = Int(sourceFormat.channelCount)
+        for ch in 0..<channels {
+          memcpy(dstFloat[ch], srcFloat[ch], Int(sourceBuffer.frameLength) * MemoryLayout<Float>.size)
+        }
+      } else {
+        // Fallback: copy raw bytes for interleaved / integer formats.
+        let srcABL = sourceBuffer.audioBufferList.pointee.mBuffers
+        let dstABL = tmp.mutableAudioBufferList.pointee.mBuffers
+        memcpy(dstABL.mData, srcABL.mData, Int(srcABL.mDataByteSize))
+      }
+      bufferForConversion = tmp
+    }
+
+    // Create converter from *adjusted* source to recording format
+    guard let converter = AVAudioConverter(from: adjustedSourceFormat, to: recordingFormat) else {
       print("🎙️ [WARNING] Failed to create audio converter")
       return sourceBuffer
     }
-    
-    // Calculate output frame count
-    let ratio = recordingFormat.sampleRate / sourceFormat.sampleRate
-    let outputFrameCount = AVAudioFrameCount(Double(sourceBuffer.frameLength) * ratio)
-    
+
+    // Estimated output frame count
+    let ratio = recordingFormat.sampleRate / adjustedSourceFormat.sampleRate
+    let outputFrameCount = AVAudioFrameCount(Double(bufferForConversion.frameLength) * ratio) + 1
+
     guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: recordingFormat, frameCapacity: outputFrameCount) else {
       print("🎙️ [WARNING] Failed to create output buffer")
       return sourceBuffer
     }
-    
-    // Convert
+
+    var provided = false
     var error: NSError?
     let status = converter.convert(to: outputBuffer, error: &error) { _, outStatus in
-      outStatus.pointee = AVAudioConverterInputStatus.haveData
-      return sourceBuffer
+      if provided {
+        outStatus.pointee = AVAudioConverterInputStatus.endOfStream
+        return nil
+      } else {
+        provided = true
+        outStatus.pointee = AVAudioConverterInputStatus.haveData
+        return bufferForConversion
+      }
     }
-    
+
     if status == .error {
-      print("🎙️ [WARNING] Audio conversion failed: \(error?.localizedDescription ?? "unknown error")")
+      print("🎙️ [WARNING] Audio conversion failed: \(error?.localizedDescription ?? "unknown")")
       return sourceBuffer
     }
-    
+
     return outputBuffer
   }
   
@@ -893,27 +957,15 @@ actor RecordingClientLive {
         }
         print("🎙️ [DEBUG] ProcessTap stream desc: mSampleRate=\(streamDesc.mSampleRate), channels=\(streamDesc.mChannelsPerFrame), bytesPerFrame=\(streamDesc.mBytesPerFrame)")
 
+        // Build formats AFTER any patching
         let sysFormat = AVAudioFormat(streamDescription: &streamDesc)!
-        // If the tap incorrectly reports a low sample-rate (e.g. 16 kHz) we know we are
-        // already falling back to an aggregate device that runs at the system output's
-        // native rate (typically 44.1 kHz or 48 kHz).  In that case, override the reported
-        // sample-rate so the WAV header matches the real data and playback speed is
-        // correct.  We query the default output device's nominal sample-rate which is a
-        // reliable proxy for the aggregate device.
 
-        var correctedSampleRate = sysFormat.sampleRate
-        if correctedSampleRate < 20_000 {
-          correctedSampleRate = 44_100 // Standard CD-quality sample rate
-          print("🎙️ [INFO] Overriding reported low sample-rate \(sysFormat.sampleRate) → 44.1 kHz")
-        }
-
-        // Adopt (possibly corrected) sample-rate for our recording format.  Record mono to
-        // avoid channel-balance issues reported by users.
+        // Target recording format (44.1 kHz mono-float); converter will resample if needed.
         recordingFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                       sampleRate: correctedSampleRate,
+                                       sampleRate: 44_100,
                                        channels: 2,
                                        interleaved: false)!
-
+         
         // Store recording format for nonisolated access
         self.recordingFormat = recordingFormat
 
@@ -1033,20 +1085,92 @@ actor RecordingClientLive {
 
             guard srcBuffers.count > 0 else { return }
 
-            // Determine the number of frames from the buffer size and sample size.
+            // Determine the number of audio frames contained in this buffer.
+            // Use `mBytesPerFrame` from the stream description so we correctly
+            // handle both interleaved (all channels in one buffer) and
+            // de-interleaved formats (one buffer per channel).
+            let bytesPerFrame = Int(streamDesc.mBytesPerFrame)
             var frameCount: Int = 0
-            var bytesPerSample: Int = 4 // Default to 4 for Float32
-
-            if streamDesc.mFormatFlags & kAudioFormatFlagIsFloat == 0 {
-                if streamDesc.mBitsPerChannel == 16 {
-                    bytesPerSample = 2
-                } else if streamDesc.mBitsPerChannel == 32 {
-                    bytesPerSample = 4
-                }
+            if bytesPerFrame > 0, let firstBuffer = srcBuffers.first {
+              frameCount = Int(firstBuffer.mDataByteSize) / bytesPerFrame
             }
-            
-            if let firstBuffer = srcBuffers.first {
-                frameCount = Int(firstBuffer.mDataByteSize) / bytesPerSample
+
+            //-------------------------------------------------------------
+            // 1️⃣  Update empirical sample-rate estimate
+            //-------------------------------------------------------------
+            if let strongSelf = self {
+              let currentSampleTime = now.pointee.mSampleTime
+              let currentHostTime   = now.pointee.mHostTime
+
+              strongSelf.sampleRateLock.withLock {
+                if strongSelf.prevHostTime != 0 && strongSelf.prevSampleTime != 0 {
+                  let deltaSamples = currentSampleTime - strongSelf.prevSampleTime
+                  let deltaHost    = currentHostTime   - strongSelf.prevHostTime
+                  if deltaSamples > 0 && deltaHost > 0 {
+                    // Convert host-time ticks to seconds via AudioToolbox helper
+                    let ns      = AudioConvertHostTimeToNanos(deltaHost)
+                    let seconds = Double(ns) / 1_000_000_000.0
+                    if seconds > 0 {
+                      let rate = Double(deltaSamples) / seconds
+                      // Maintain sliding window & store median
+                      strongSelf.sampleRateEstimates.append(rate)
+                      if strongSelf.sampleRateEstimates.count > strongSelf.estimateWindowSize {
+                        strongSelf.sampleRateEstimates.removeFirst()
+                      }
+
+                      // Instrumentation every ~50 callbacks to observe behaviour.
+                      strongSelf.estimateLogCounter += 1
+                      if strongSelf.estimateLogCounter >= 50,
+                         !strongSelf.sampleRateEstimates.isEmpty {
+                        let winSorted = strongSelf.sampleRateEstimates.sorted()
+                        let medDbg = winSorted[winSorted.count / 2]
+                        let minDbg = winSorted.first ?? 0
+                        let maxDbg = winSorted.last  ?? 0
+                        print("🎙️ [DEBUG] tap SR window – median: \(String(format: "%.1f", medDbg))  min: \(String(format: "%.1f", minDbg))  max: \(String(format: "%.1f", maxDbg))  fixed: \(strongSelf.fixedSystemSampleRate?.description ?? "nil")")
+                        strongSelf.estimateLogCounter = 0
+                      }
+
+                      guard strongSelf.sampleRateEstimates.count >= strongSelf.minEstimatesForFreeze else { return }
+
+                      let sorted = strongSelf.sampleRateEstimates.sorted()
+                      let median = sorted[sorted.count / 2]
+
+                      let stableCount = strongSelf.sampleRateEstimates.filter { abs($0 - median) / median < strongSelf.stabilityTolerance }.count
+                      guard stableCount >= strongSelf.minEstimatesForFreeze else { return }
+
+                      func snap(_ v: Double) -> Double {
+                        if abs(v - 44_100) < 2_200 { return 44_100 }
+                        if abs(v - 48_000) < 2_400 { return 48_000 }
+                        if v < 30_000 { return (v < 19_000) ? 16_000 : 22_050 }
+                        return v
+                      }
+
+                      if strongSelf.fixedSystemSampleRate == nil {
+                        // First lock (cold-start)
+                        let chosen = snap(median)
+                        strongSelf.fixedSystemSampleRate = chosen
+                        strongSelf.measuredSystemSampleRate = median
+                        strongSelf.sampleRateEstimates.removeAll(keepingCapacity: true)
+                        print("🎙️ [INFO] Fixed system sample-rate decided: \(chosen) Hz (median of bootstrap)")
+                      } else {
+                        // Re-lock logic – allow exactly one adjustment if the true rate differs by >10 %.
+                        let currentFixed = strongSelf.fixedSystemSampleRate!
+                        if !strongSelf.relockPerformed && abs(median - currentFixed) / currentFixed > 0.10 {
+                          let newRate = snap(median)
+                          strongSelf.fixedSystemSampleRate = newRate
+                          strongSelf.relockPerformed = true
+                          strongSelf.measuredSystemSampleRate = median
+                          strongSelf.resetRingBuffers()
+                          strongSelf.sampleRateEstimates.removeAll(keepingCapacity: true)
+                          print("🎙️ [INFO] Re-locked system sample-rate \(currentFixed) → \(newRate) Hz")
+                        }
+                      }
+                    }
+                  }
+                }
+                strongSelf.prevSampleTime = currentSampleTime
+                strongSelf.prevHostTime   = currentHostTime
+              }
             }
 
             // Calculate RMS of system audio buffer to see if it has signal
@@ -1093,8 +1217,14 @@ actor RecordingClientLive {
               }
             }
 
-            // Write to ring buffer instead of scheduling on player node
-            self?.writeToSystemRingBuffer(pcmBuffer)
+            // NEW: Ensure buffer is at the canonical recording format (e.g., 44.1 kHz)
+            if let strongSelf = self {
+              if let converted = strongSelf.convertToRecordingFormat(pcmBuffer, sourceFormat: sysFormat) {
+                strongSelf.writeToSystemRingBuffer(converted)
+              } else {
+                strongSelf.writeToSystemRingBuffer(pcmBuffer)
+              }
+            }
           }, invalidationHandler: { [weak self] tap in
             Task { [weak self] in
               await self?.stopSystemTapDueToInvalidation()
@@ -1153,10 +1283,6 @@ actor RecordingClientLive {
       // mixer for recording, so we intentionally avoid connecting the mixer to the engine's
       // main output.  This prevents the microphone signal from being played back through the
       // user's speakers / headset while still allowing the engine to pull audio for the tap.
-      // NOTE: We still need the engine to **pull** audio through the graph.  The most reliable
-      // way to do that without creating audible feedback is to connect our mixer to the
-      // engine's main mixer and mute its output.  This keeps the signal silent for the user
-      // while ensuring the tap installed on the mixer receives filled buffers.
       mixer.outputVolume = 1.0 // keep audible signal for tap
       engine.connect(mixer, to: engine.mainMixerNode, format: nil)
       // Mute app playback to avoid feedback while leaving recording intact
@@ -1480,6 +1606,24 @@ actor RecordingClientLive {
   private func stopSystemTapDueToInvalidation() {
     processTap = nil
     print("🎙️ ProcessTap invalidated")
+  }
+
+  /// Clears the contents and resets read/write positions of the ring buffers.
+  /// Must be called under `bufferLock` or from a context that guarantees
+  /// exclusive access (e.g. from the IOProc serial queue).
+  private nonisolated func resetRingBuffers() {
+    bufferLock.withLock {
+      if let sys = systemAudioRingBuffer?.floatChannelData?[0] {
+        memset(sys, 0, Int(ringBufferCapacity) * MemoryLayout<Float>.size)
+      }
+      if let mic = microphoneRingBuffer?.floatChannelData?[0] {
+        memset(mic, 0, Int(ringBufferCapacity) * MemoryLayout<Float>.size)
+      }
+      systemWritePosition = 0
+      systemReadPosition  = 0
+      micWritePosition    = 0
+      micReadPosition     = 0
+    }
   }
 }
 
