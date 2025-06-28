@@ -1085,14 +1085,18 @@ actor RecordingClientLive {
 
             guard srcBuffers.count > 0 else { return }
 
-            // Determine the number of audio frames contained in this buffer.
-            // Use `mBytesPerFrame` from the stream description so we correctly
-            // handle both interleaved (all channels in one buffer) and
-            // de-interleaved formats (one buffer per channel).
-            let bytesPerFrame = Int(streamDesc.mBytesPerFrame)
+            // Derive frame count reliably even when `mBytesPerFrame` is zero (which happens on
+            // some de-interleaved stream descriptions). Fallback to using bits-per-channel.
             var frameCount: Int = 0
-            if bytesPerFrame > 0, let firstBuffer = srcBuffers.first {
-              frameCount = Int(firstBuffer.mDataByteSize) / bytesPerFrame
+            if let firstBuffer = srcBuffers.first {
+              let bytesPerFrame = Int(streamDesc.mBytesPerFrame)
+              if bytesPerFrame > 0 {
+                frameCount = Int(firstBuffer.mDataByteSize) / bytesPerFrame
+              } else {
+                // When bytesPerFrame is 0, estimate using bitsPerChannel.
+                let bytesPerSample = max(Int(streamDesc.mBitsPerChannel) / 8, 1)
+                frameCount = Int(firstBuffer.mDataByteSize) / bytesPerSample
+              }
             }
 
             //-------------------------------------------------------------
