@@ -154,8 +154,8 @@ struct SettingsView: View {
 						// Output gain slider
 						Label {
 							VStack(alignment: .leading, spacing: 4) {
-								Slider(value: $store.hexSettings.audioMixingOutputGain, in: 0.0...2.0, step: 0.1) {
-									Text("System Audio Gain: \(store.hexSettings.audioMixingOutputGain, specifier: "%.1f")")
+								Slider(value: $store.hexSettings.audioMixingSystemAudioGain, in: 0.0...2.0, step: 0.1) {
+									Text("System Audio Gain: \(store.hexSettings.audioMixingSystemAudioGain, specifier: "%.1f")")
 								}
 								Text("Adjust system audio volume in the mix")
 									.font(.caption)

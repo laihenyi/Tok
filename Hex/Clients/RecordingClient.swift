@@ -290,9 +290,20 @@ actor RecordingClientLive {
   // Audio mixing components for input/output mixing
   private var audioEngine: AVAudioEngine?
   private var inputNode: AVAudioInputNode?
-  private var outputTap: AVAudioNode?
   private var mixerNode: AVAudioMixerNode?
   private var audioFile: AVAudioFile?
+  private var sourceNode: AVAudioSourceNode?
+  
+  // Ring buffers for reliable audio mixing (thread-safe, not actor-isolated)
+  private nonisolated(unsafe) var systemAudioRingBuffer: AVAudioPCMBuffer?
+  private nonisolated(unsafe) var microphoneRingBuffer: AVAudioPCMBuffer?
+  private nonisolated(unsafe) var systemWritePosition: AVAudioFramePosition = 0
+  private nonisolated(unsafe) var systemReadPosition: AVAudioFramePosition = 0
+  private nonisolated(unsafe) var micWritePosition: AVAudioFramePosition = 0
+  private nonisolated(unsafe) var micReadPosition: AVAudioFramePosition = 0
+  private nonisolated let bufferLock = NSLock()
+  private nonisolated(unsafe) var ringBufferCapacity: AVAudioFrameCount = 44100 // 1 second at 44.1kHz
+  private nonisolated(unsafe) var recordingFormat: AVAudioFormat?
   
   /// Tracks the current recording state to prevent overlapping operations
   private var isRecording: Bool = false
@@ -308,10 +319,6 @@ actor RecordingClientLive {
   // Cache to store already-processed device information
   private var deviceCache: [AudioDeviceID: (hasInput: Bool, name: String?, hasOutput: Bool?)] = [:]
   private var lastDeviceCheck = Date(timeIntervalSince1970: 0)
-  
-  // System-audio capture helpers
-  private var systemAudioEngine: AVAudioEngine?
-  private var systemAudioPlayerNode: AVAudioPlayerNode?
   
   // ProcessTap for capturing system-wide audio
   private var processTap: ProcessTap?
@@ -387,6 +394,159 @@ actor RecordingClientLive {
     }
     
     return inputDevices
+  }
+  
+  /// Set up ring buffers for reliable audio mixing
+  private func setupRingBuffers(format: AVAudioFormat) {
+    ringBufferCapacity = AVAudioFrameCount(format.sampleRate) // 1 second of audio
+    
+    // Create ring buffers
+    systemAudioRingBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: ringBufferCapacity)
+    microphoneRingBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: ringBufferCapacity)
+    
+    // Initialize buffer lengths
+    systemAudioRingBuffer?.frameLength = ringBufferCapacity
+    microphoneRingBuffer?.frameLength = ringBufferCapacity
+    
+    // Clear buffers
+    if let systemBuffer = systemAudioRingBuffer,
+       let systemData = systemBuffer.floatChannelData?[0] {
+      memset(systemData, 0, Int(ringBufferCapacity) * MemoryLayout<Float>.size)
+    }
+    
+    if let micBuffer = microphoneRingBuffer,
+       let micData = micBuffer.floatChannelData?[0] {
+      memset(micData, 0, Int(ringBufferCapacity) * MemoryLayout<Float>.size)
+    }
+    
+    // Reset positions
+    systemWritePosition = 0
+    systemReadPosition = 0
+    micWritePosition = 0
+    micReadPosition = 0
+    
+    print("🎙️ [DEBUG] Ring buffers set up with capacity: \(ringBufferCapacity) frames")
+  }
+  
+  /// Write system audio data to ring buffer
+  private nonisolated func writeToSystemRingBuffer(_ buffer: AVAudioPCMBuffer) {
+    guard let inputData = buffer.floatChannelData?[0],
+          let ringBuffer = systemAudioRingBuffer,
+          let ringData = ringBuffer.floatChannelData?[0] else {
+      return
+    }
+    
+    bufferLock.withLock {
+      let framesToWrite = Int(buffer.frameLength)
+      let writeIndex = Int(systemWritePosition % AVAudioFramePosition(ringBufferCapacity))
+      
+      if writeIndex + framesToWrite <= Int(ringBufferCapacity) {
+        // Simple copy - no wrap around
+        memcpy(ringData.advanced(by: writeIndex), inputData, framesToWrite * MemoryLayout<Float>.size)
+      } else {
+        // Handle wrap around
+        let firstChunk = Int(ringBufferCapacity) - writeIndex
+        let secondChunk = framesToWrite - firstChunk
+        
+        memcpy(ringData.advanced(by: writeIndex), inputData, firstChunk * MemoryLayout<Float>.size)
+        memcpy(ringData, inputData.advanced(by: firstChunk), secondChunk * MemoryLayout<Float>.size)
+      }
+      
+      systemWritePosition += AVAudioFramePosition(framesToWrite)
+    }
+  }
+  
+  /// Write microphone audio data to ring buffer
+  private nonisolated func writeToMicrophoneRingBuffer(_ buffer: AVAudioPCMBuffer) {
+    guard let inputData = buffer.floatChannelData?[0],
+          let ringBuffer = microphoneRingBuffer,
+          let ringData = ringBuffer.floatChannelData?[0] else {
+      return
+    }
+    
+    bufferLock.withLock {
+      let framesToWrite = Int(buffer.frameLength)
+      let writeIndex = Int(micWritePosition % AVAudioFramePosition(ringBufferCapacity))
+      
+      if writeIndex + framesToWrite <= Int(ringBufferCapacity) {
+        // Simple copy - no wrap around
+        memcpy(ringData.advanced(by: writeIndex), inputData, framesToWrite * MemoryLayout<Float>.size)
+      } else {
+        // Handle wrap around
+        let firstChunk = Int(ringBufferCapacity) - writeIndex
+        let secondChunk = framesToWrite - firstChunk
+        
+        memcpy(ringData.advanced(by: writeIndex), inputData, firstChunk * MemoryLayout<Float>.size)
+        memcpy(ringData, inputData.advanced(by: firstChunk), secondChunk * MemoryLayout<Float>.size)
+      }
+      
+      micWritePosition += AVAudioFramePosition(framesToWrite)
+    }
+  }
+  
+  /// Process microphone buffer and write to ring buffer
+  private nonisolated func processMicrophoneBuffer(_ buffer: AVAudioPCMBuffer, originalFormat: AVAudioFormat) {
+    // Convert microphone buffer to our recording format if needed
+    let convertedBuffer = convertToRecordingFormat(buffer, sourceFormat: originalFormat)
+    
+    if let converted = convertedBuffer {
+      writeToMicrophoneRingBuffer(converted)
+    }
+  }
+  
+  /// Convert audio buffer to recording format
+  private nonisolated func convertToRecordingFormat(_ sourceBuffer: AVAudioPCMBuffer, sourceFormat: AVAudioFormat) -> AVAudioPCMBuffer? {
+    // Get the current recording format
+    guard let recordingFormat = recordingFormat else {
+      return sourceBuffer
+    }
+    
+    // If formats are close enough (same sample rate, has channels), avoid conversion
+    if abs(sourceFormat.sampleRate - recordingFormat.sampleRate) < 1.0 && sourceFormat.channelCount >= 1 {
+      // Create buffer in recording format but keep original data
+      guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: recordingFormat, frameCapacity: sourceBuffer.frameLength) else {
+        return sourceBuffer
+      }
+      
+      outputBuffer.frameLength = sourceBuffer.frameLength
+      
+      // Copy audio data directly without sample rate conversion (take first channel only)
+      if let sourceData = sourceBuffer.floatChannelData?[0],
+         let outputData = outputBuffer.floatChannelData?[0] {
+        memcpy(outputData, sourceData, Int(sourceBuffer.frameLength) * MemoryLayout<Float>.size)
+      }
+      
+      return outputBuffer
+    }
+    
+    // Create converter for different sample rates
+    guard let converter = AVAudioConverter(from: sourceFormat, to: recordingFormat) else {
+      print("🎙️ [WARNING] Failed to create audio converter")
+      return sourceBuffer
+    }
+    
+    // Calculate output frame count
+    let ratio = recordingFormat.sampleRate / sourceFormat.sampleRate
+    let outputFrameCount = AVAudioFrameCount(Double(sourceBuffer.frameLength) * ratio)
+    
+    guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: recordingFormat, frameCapacity: outputFrameCount) else {
+      print("🎙️ [WARNING] Failed to create output buffer")
+      return sourceBuffer
+    }
+    
+    // Convert
+    var error: NSError?
+    let status = converter.convert(to: outputBuffer, error: &error) { _, outStatus in
+      outStatus.pointee = AVAudioConverterInputStatus.haveData
+      return sourceBuffer
+    }
+    
+    if status == .error {
+      print("🎙️ [WARNING] Audio conversion failed: \(error?.localizedDescription ?? "unknown error")")
+      return sourceBuffer
+    }
+    
+    return outputBuffer
   }
   
   // MARK: - Core Audio Helpers
@@ -679,6 +839,8 @@ actor RecordingClientLive {
       // -------------------------------------------------------------
       // We'll decide final recording format once we know the system audio's format.
       var recordingFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
+      // Store initial recording format for nonisolated access
+      self.recordingFormat = recordingFormat
       let inputFormat = input.inputFormat(forBus: 0)
 
       let inputGain = Float(hexSettings.audioMixingInputGain)
@@ -686,6 +848,11 @@ actor RecordingClientLive {
       engine.attach(inputGainNode)
       inputGainNode.outputVolume = inputGain
 
+      // Install tap on microphone input to capture to ring buffer  
+      input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+        self?.processMicrophoneBuffer(buffer, originalFormat: inputFormat)
+      }
+      
       engine.connect(input, to: inputGainNode, format: inputFormat)
       engine.connect(inputGainNode, to: mixer, format: inputFormat)
       
@@ -693,12 +860,7 @@ actor RecordingClientLive {
       // System-audio ("what you hear") capture using ProcessTap
       // -----------------------------------------------------------------------------
       if hexSettings.enableAudioMixing {
-        // Player node that will *feed* the captured buffers into our main mixer (silent – no playback).
-        let systemPlayerNode = AVAudioPlayerNode()
-        self.systemAudioPlayerNode = systemPlayerNode
-        engine.attach(systemPlayerNode)
-
-        // Create system-wide ProcessTap
+        // Create system-wide ProcessTap with empty process list to capture ALL system audio
         let systemProcess = AudioProcess(
           id: AudioTarget.systemWidePID,
           kind: .system,
@@ -724,18 +886,110 @@ actor RecordingClientLive {
                                        channels: 2,
                                        interleaved: false)!
 
-        // Connect player node to mixer letting AVAudioEngine negotiate format conversion
-        engine.connect(systemPlayerNode, to: mixer, format: nil)
-        systemPlayerNode.play()
+        // Store recording format for nonisolated access
+        self.recordingFormat = recordingFormat
+
+        // Set up ring buffers with the correct format
+        setupRingBuffers(format: recordingFormat)
+
+        // Create source node that reads from ring buffers (replaces AVAudioPlayerNode)
+        sourceNode = AVAudioSourceNode { [weak self] (_, _, frameCount, audioBufferList) -> OSStatus in
+          guard let self = self else { return noErr }
+          
+          let bufferList = UnsafeMutableAudioBufferListPointer(audioBufferList)
+          
+          // Clear the output buffers
+          for buffer in bufferList {
+            memset(buffer.mData, 0, Int(buffer.mDataByteSize))
+          }
+          
+          let framesToProvide = min(frameCount, 512) // Reasonable chunk size
+          
+          // Get pointers to left and right channel output
+          guard bufferList.count >= 2,
+                let leftChannelOut = bufferList[0].mData?.assumingMemoryBound(to: Float.self),
+                let rightChannelOut = bufferList[1].mData?.assumingMemoryBound(to: Float.self) else {
+            return noErr
+          }
+          
+          self.bufferLock.withLock {
+            // Read system audio from ring buffer (left channel)
+            if let systemBuffer = self.systemAudioRingBuffer,
+               let systemData = systemBuffer.floatChannelData?[0] {
+              
+              let availableFrames = self.systemWritePosition - self.systemReadPosition
+              let framesToRead = min(Int(framesToProvide), Int(availableFrames))
+              
+              if framesToRead > 0 {
+                let readIndex = Int(self.systemReadPosition % AVAudioFramePosition(self.ringBufferCapacity))
+                
+                if readIndex + framesToRead <= Int(self.ringBufferCapacity) {
+                  // Simple copy - no wrap around
+                  memcpy(leftChannelOut, systemData.advanced(by: readIndex), framesToRead * MemoryLayout<Float>.size)
+                } else {
+                  // Handle wrap around
+                  let firstChunk = Int(self.ringBufferCapacity) - readIndex
+                  let secondChunk = framesToRead - firstChunk
+                  
+                  memcpy(leftChannelOut, systemData.advanced(by: readIndex), firstChunk * MemoryLayout<Float>.size)
+                  memcpy(leftChannelOut.advanced(by: firstChunk), systemData, secondChunk * MemoryLayout<Float>.size)
+                }
+                
+                self.systemReadPosition += AVAudioFramePosition(framesToRead)
+              }
+            }
+            
+            // Read microphone audio from ring buffer (right channel)
+            if let micBuffer = self.microphoneRingBuffer,
+               let micData = micBuffer.floatChannelData?[0] {
+              
+              let availableFrames = self.micWritePosition - self.micReadPosition
+              let framesToRead = min(Int(framesToProvide), Int(availableFrames))
+              
+              if framesToRead > 0 {
+                let readIndex = Int(self.micReadPosition % AVAudioFramePosition(self.ringBufferCapacity))
+                
+                if readIndex + framesToRead <= Int(self.ringBufferCapacity) {
+                  // Simple copy - no wrap around
+                  memcpy(rightChannelOut, micData.advanced(by: readIndex), framesToRead * MemoryLayout<Float>.size)
+                } else {
+                  // Handle wrap around
+                  let firstChunk = Int(self.ringBufferCapacity) - readIndex
+                  let secondChunk = framesToRead - firstChunk
+                  
+                  memcpy(rightChannelOut, micData.advanced(by: readIndex), firstChunk * MemoryLayout<Float>.size)
+                  memcpy(rightChannelOut.advanced(by: firstChunk), micData, secondChunk * MemoryLayout<Float>.size)
+                }
+                
+                self.micReadPosition += AVAudioFramePosition(framesToRead)
+              }
+            }
+          }
+          
+          return noErr
+        }
+
+        guard let sourceNode = sourceNode else {
+          print("🎙️ [ERROR] Failed to create source node")
+          return
+        }
+
+        // Gain node for system audio
+        let systemAudioGain = Float(hexSettings.audioMixingSystemAudioGain)
+        let systemGainNode = AVAudioMixerNode()
+        engine.attach(systemGainNode)
+        systemGainNode.outputVolume = systemAudioGain
+
+        engine.attach(sourceNode)
+        engine.connect(sourceNode, to: systemGainNode, format: recordingFormat)
+        engine.connect(systemGainNode, to: mixer, format: recordingFormat)
 
         // Dispatch queue for the tap callback
         let queue = DispatchQueue(label: "HexSystemAudioTapQueue")
         self.tapQueue = queue
 
-        let playerCapture = systemPlayerNode
         do {
-          try tap.run(on: queue, ioBlock: { (now: UnsafePointer<AudioTimeStamp>, inputData: UnsafePointer<AudioBufferList>, inputTime: UnsafePointer<AudioTimeStamp>, outputData: UnsafeMutablePointer<AudioBufferList>?, outputTime: UnsafePointer<AudioTimeStamp>) in
-            let player = playerCapture
+          try tap.run(on: queue, ioBlock: { [weak self] (now: UnsafePointer<AudioTimeStamp>, inputData: UnsafePointer<AudioBufferList>, inputTime: UnsafePointer<AudioTimeStamp>, outputData: UnsafeMutablePointer<AudioBufferList>?, outputTime: UnsafePointer<AudioTimeStamp>) in
 
             // Convert AudioBufferList -> AVAudioPCMBuffer
             let ablPointer = UnsafeMutablePointer<AudioBufferList>(mutating: inputData)
@@ -743,8 +997,21 @@ actor RecordingClientLive {
 
             guard srcBuffers.count > 0 else { return }
 
-            let bytesPerFrame = Int(streamDesc.mBytesPerFrame)
-            let frameCount = Int(srcBuffers[0].mDataByteSize) / bytesPerFrame
+            // Determine the number of frames from the buffer size and sample size.
+            var frameCount: Int = 0
+            var bytesPerSample: Int = 4 // Default to 4 for Float32
+
+            if streamDesc.mFormatFlags & kAudioFormatFlagIsFloat == 0 {
+                if streamDesc.mBitsPerChannel == 16 {
+                    bytesPerSample = 2
+                } else if streamDesc.mBitsPerChannel == 32 {
+                    bytesPerSample = 4
+                }
+            }
+            
+            if let firstBuffer = srcBuffers.first {
+                frameCount = Int(firstBuffer.mDataByteSize) / bytesPerSample
+            }
 
             // Calculate RMS of system audio buffer to see if it has signal
             var rms: Float = 0
@@ -790,8 +1057,8 @@ actor RecordingClientLive {
               }
             }
 
-            // Feed buffer to player node as-is; engine will handle any format conversion.
-            player.scheduleBuffer(pcmBuffer, at: nil, options: .interrupts, completionHandler: nil)
+            // Write to ring buffer instead of scheduling on player node
+            self?.writeToSystemRingBuffer(pcmBuffer)
           }, invalidationHandler: { [weak self] tap in
             Task { [weak self] in
               await self?.stopSystemTapDueToInvalidation()
@@ -1055,7 +1322,10 @@ actor RecordingClientLive {
   
   /// Stop mixed recording and clean up audio engine
   private func stopMixedRecording() async {
-    // Remove tap from mixer if it exists
+    // Remove taps
+    if let input = inputNode {
+      input.removeTap(onBus: 0)
+    }
     if let mixer = mixerNode {
       mixer.removeTap(onBus: 0)
     }
@@ -1069,14 +1339,24 @@ actor RecordingClientLive {
     processTap?.invalidate()
     processTap = nil
     tapQueue = nil
-
-    // Release player node
-    systemAudioPlayerNode = nil
     
     // Clean up nodes
+    if let sourceNode = sourceNode {
+      audioEngine?.detach(sourceNode)
+      self.sourceNode = nil
+    }
     inputNode = nil
-    outputTap = nil
     mixerNode = nil
+    
+    // Clean up ring buffers  
+    bufferLock.withLock {
+      systemAudioRingBuffer = nil
+      microphoneRingBuffer = nil
+      systemWritePosition = 0
+      systemReadPosition = 0
+      micWritePosition = 0
+      micReadPosition = 0
+    }
     
     // Close audio file
     audioFile = nil

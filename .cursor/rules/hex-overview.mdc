@@ -1,7 +1,7 @@
 ---
 description: 
 globs: 
-alwaysApply: false
+alwaysApply: true
 ---
 # Tok Overview
 
@@ -15,3 +15,5 @@ Tok will paste the transcription into your current app.
 
 
 The name of the build schema is `Tok`
+
+`xcodebuild -project Hex.xcodeproj -scheme Tok -configuration Debug build`

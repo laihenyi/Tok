@@ -29,7 +29,7 @@ struct HexSettings: Codable, Equatable, Sendable {
     var enableAudioMixing: Bool = false // Enable mixing input and output audio
     var selectedOutputDeviceID: String? = nil // Output device to capture audio from
     var audioMixingInputGain: Double = 1.0 // Gain for microphone input (0.0 - 2.0)
-    var audioMixingOutputGain: Double = 1.0 // Gain for system output (0.0 - 2.0)
+    var audioMixingSystemAudioGain: Double = 1.0 // Gain for system output (0.0 - 2.0)
     var enableScreenCapture: Bool = false // New setting for enabling screen capture
     var hasCompletedOnboarding: Bool = false // New setting for onboarding completion
 
@@ -75,7 +75,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         case enableAudioMixing
         case selectedOutputDeviceID
         case audioMixingInputGain
-        case audioMixingOutputGain
+        case audioMixingSystemAudioGain
         case enableScreenCapture
         case hasCompletedOnboarding
         case useAIEnhancement
@@ -112,7 +112,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         enableAudioMixing: Bool = false,
         selectedOutputDeviceID: String? = nil,
         audioMixingInputGain: Double = 1.0,
-        audioMixingOutputGain: Double = 1.0,
+        audioMixingSystemAudioGain: Double = 1.0,
         enableScreenCapture: Bool = false,
         hasCompletedOnboarding: Bool = false,
         useAIEnhancement: Bool = false,
@@ -147,7 +147,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         self.enableAudioMixing = enableAudioMixing
         self.selectedOutputDeviceID = selectedOutputDeviceID
         self.audioMixingInputGain = audioMixingInputGain
-        self.audioMixingOutputGain = audioMixingOutputGain
+        self.audioMixingSystemAudioGain = audioMixingSystemAudioGain
         self.enableScreenCapture = enableScreenCapture
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.useAIEnhancement = useAIEnhancement
@@ -198,7 +198,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         enableAudioMixing = try container.decodeIfPresent(Bool.self, forKey: .enableAudioMixing) ?? false
         selectedOutputDeviceID = try container.decodeIfPresent(String.self, forKey: .selectedOutputDeviceID)
         audioMixingInputGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingInputGain) ?? 1.0
-        audioMixingOutputGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingOutputGain) ?? 1.0
+        audioMixingSystemAudioGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingSystemAudioGain) ?? 1.0
         enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? false
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         // AI Enhancement settings
