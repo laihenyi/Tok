@@ -13,6 +13,7 @@ import Dependencies
 import DependenciesMacros
 import Foundation
 import AudioToolbox
+import WhisperKit  // For AudioStreamTranscriber.appendAudioBuffer(...)
 
 /// Represents an audio input device
 struct AudioInputDevice: Identifiable, Equatable {
@@ -458,7 +459,6 @@ actor RecordingClientLive {
     
     let channelCount = Int(buffer.format.channelCount)
     let framesToWrite = Int(buffer.frameLength)
-    print("🎙️ [DEBUG] Writing system audio: \(framesToWrite) frames, \(channelCount) channels")
     
     bufferLock.withLock {
       let writeIndex = Int(systemWritePosition % AVAudioFramePosition(ringBufferCapacity))
@@ -931,8 +931,13 @@ actor RecordingClientLive {
         self?.processMicrophoneBuffer(buffer, originalFormat: inputFormat)
       }
       
-      engine.connect(input, to: inputGainNode, format: inputFormat)
-      engine.connect(inputGainNode, to: mixer, format: inputFormat)
+      // Do NOT route the microphone directly to the mixer—this duplicates the
+      // mic signal (it is already provided via the ring-buffer in `SourceNode`).
+      // We keep the tap on the input node for capturing, but avoid this additional
+      // connection to ensure left/right channels remain distinct (L = system,
+      // R = microphone).
+      // engine.connect(input, to: inputGainNode, format: inputFormat)
+      // engine.connect(inputGainNode, to: mixer, format: inputFormat)
       
       // -----------------------------------------------------------------------------
       // System-audio ("what you hear") capture using ProcessTap
@@ -984,7 +989,6 @@ actor RecordingClientLive {
           }
           
           let framesToProvide = frameCount // Use full requested frame count
-          print("🎙️ [DEBUG] Source node: Core Audio requested \(frameCount) frames, providing \(framesToProvide)")
           
           // Get pointers to left and right channel output
           guard bufferList.count >= 2,
@@ -1051,9 +1055,6 @@ actor RecordingClientLive {
               }
             }
           }
-          
-          print("🎙️ [DEBUG] Source node output: System→Left: \(systemFramesRead) frames, Mic→Right: \(micFramesRead) frames")
-          
           return noErr
         }
 
@@ -1206,7 +1207,6 @@ actor RecordingClientLive {
                 rms = sqrt(sumSquares / Float(frameCount))
               }
             }
-            print("🎙️ [DEBUG] ProcessTap delivered \(frameCount) frames (sys audio), rms=\(rms)")
 
             guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: sysFormat, frameCapacity: AVAudioFrameCount(frameCount)) else { return }
             pcmBuffer.frameLength = AVAudioFrameCount(frameCount)
@@ -1221,12 +1221,23 @@ actor RecordingClientLive {
               }
             }
 
-            // NEW: Ensure buffer is at the canonical recording format (e.g., 44.1 kHz)
             if let strongSelf = self {
+              // Always write to the ring-buffer first.
+              let bufferForTranscriber: AVAudioPCMBuffer
               if let converted = strongSelf.convertToRecordingFormat(pcmBuffer, sourceFormat: sysFormat) {
                 strongSelf.writeToSystemRingBuffer(converted)
+                bufferForTranscriber = converted
               } else {
                 strongSelf.writeToSystemRingBuffer(pcmBuffer)
+                bufferForTranscriber = pcmBuffer
+              }
+
+              // 🚀  Forward *system-only* audio to the live streaming transcriber (if active).
+              if let liveTranscriber = TranscriptionClientLive.currentLiveStreamTranscriber,
+                 let samples = RecordingClientLive.convertTo16kMonoFloatArray(bufferForTranscriber) {
+                Task {
+                  await liveTranscriber.appendAudioBuffer(samples)
+                }
               }
             }
           }, invalidationHandler: { [weak self] tap in
@@ -1254,7 +1265,6 @@ actor RecordingClientLive {
             for i in 0..<frameLen { sum += data[i]*data[i] }
             rmsMix = sqrt(sum / Float(frameLen))
           }
-          print("🎙️ [DEBUG] Mixer tap received buffer with \(frameLen) frames, rms=\(rmsMix)")
           try audioFile.write(from: buffer)
           
           // Calculate audio levels for metering
@@ -1628,6 +1638,67 @@ actor RecordingClientLive {
       micWritePosition    = 0
       micReadPosition     = 0
     }
+  }
+
+  // ------------------------------------------------------------------
+  // MARK: - Helper for WhisperKit streaming input
+  // ------------------------------------------------------------------
+
+  /// Converts an arbitrary `AVAudioPCMBuffer` into a mono 16 kHz `Float`
+  /// sample array that can be fed into `AudioStreamTranscriber.appendAudioBuffer(_)`.
+  /// The implementation creates an `AVAudioConverter` on-the-fly, so it should
+  /// not be used inside tight real-time loops for large buffers, but is sufficient
+  /// for the 1024-frame tap buffers we forward during recording.
+  nonisolated static func convertTo16kMonoFloatArray(_ buffer: AVAudioPCMBuffer) -> [Float]? {
+    // Desired format required by WhisperKit – 16 kHz mono, 32-bit float, de-interleaved.
+    guard let targetFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                           sampleRate: 16_000,
+                                           channels: 1,
+                                           interleaved: false) else {
+      return nil
+    }
+
+    // Fast path: If the buffer is already in the right format we can just copy **only the first channel** (index 0)
+    if buffer.format == targetFormat,
+       let channelData = buffer.floatChannelData?[0] {
+      let frameCount = Int(buffer.frameLength)
+      return Array(UnsafeBufferPointer(start: channelData, count: frameCount))
+    }
+
+    // Otherwise resample / down-mix via AVAudioConverter while explicitly selecting only the first channel
+    guard let converter = AVAudioConverter(from: buffer.format, to: targetFormat) else {
+      print("🎙️ [WARNING] Failed to create AVAudioConverter for 16 kHz mono down-mix")
+      return nil
+    }
+    // Map *only* the first source channel (0) to the mono output to avoid feeding the microphone channel twice.
+    converter.channelMap = [NSNumber(value: 0)]
+
+    // Allocate output buffer with enough capacity for the converted frames.
+    let ratio = targetFormat.sampleRate / buffer.format.sampleRate
+    let expectedFrames = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1
+    guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: expectedFrames) else {
+      return nil
+    }
+
+    var inputProvided = false
+    let status = converter.convert(to: outputBuffer, error: nil) { _, outStatus in
+      if inputProvided {
+        outStatus.pointee = .endOfStream
+        return nil
+      } else {
+        inputProvided = true
+        outStatus.pointee = .haveData
+        return buffer
+      }
+    }
+
+    guard status != .error,
+          let floatChannelData = outputBuffer.floatChannelData?[0] else {
+      return nil
+    }
+
+    let frameCount = Int(outputBuffer.frameLength)
+    return Array(UnsafeBufferPointer(start: floatChannelData, count: frameCount))
   }
 }
 

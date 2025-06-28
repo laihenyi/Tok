@@ -123,6 +123,15 @@ actor TranscriptionClientLive {
   /// Track the source of the current stream to help debug conflicts
   private var currentStreamSource: String?
 
+  /// Global handle to the *currently active* AudioStreamTranscriber so that
+  /// other subsystems (e.g. RecordingClientLive) can push additional mixed
+  /// audio buffers into the same live transcription pipeline.  This reference
+  /// is set when `startStreamTranscription` begins and cleared when the stream
+  /// finishes.  We intentionally keep it *strong* for the lifetime of the
+  /// stream and rely on `stopStreamTranscription` to nil it out, so no retain
+  /// cycles are introduced.
+  static var currentLiveStreamTranscriber: AudioStreamTranscriber?
+
   /// The base folder under which we store model data (e.g., ~/Library/Application Support/...).
   private lazy var modelsBaseFolder: URL = {
     do {
@@ -686,11 +695,6 @@ actor TranscriptionClientLive {
       lastSentText = cleanedText
       lastSentSegmentCount = newState.confirmedSegments.count
       
-      print("[TranscriptionClientLive] Stream callback triggered - Raw text: '\(newState.currentText)'")
-      print("[TranscriptionClientLive] Confirmed segments count: \(newState.confirmedSegments.count)")
-      print("[TranscriptionClientLive] Unconfirmed segments count: \(newState.unconfirmedSegments.count)")
-      print("[TranscriptionClientLive] Cleaned text: '\(cleanedText)'")
-      
       // Convert WhisperKit segments to our custom format, also cleaning their text
       let confirmedSegments = newState.confirmedSegments.map { segment in
         TranscriptionSegment(
@@ -722,6 +726,9 @@ actor TranscriptionClientLive {
     }
     
     self.audioStreamTranscriber = streamTranscriber
+    // Expose the active transcriber globally so mixed-audio buffers can be
+    // forwarded from RecordingClientLive.
+    Self.currentLiveStreamTranscriber = streamTranscriber
     self.isStreamingActive = true
     print("[TranscriptionClientLive] AudioStreamTranscriber created successfully, streaming now active")
 
@@ -754,6 +761,8 @@ actor TranscriptionClientLive {
 
       // Mark streaming as inactive when task completes
       await self.setStreamingInactive()
+      // Clear the global reference once the stream has stopped
+      Self.currentLiveStreamTranscriber = nil
     }
   }
   
@@ -784,6 +793,7 @@ actor TranscriptionClientLive {
     if let streamTranscriber = audioStreamTranscriber {
       await streamTranscriber.stopStreamTranscription()
       audioStreamTranscriber = nil
+      Self.currentLiveStreamTranscriber = nil
       print("[TranscriptionClientLive] AudioStreamTranscriber stopped and cleared")
     }
 

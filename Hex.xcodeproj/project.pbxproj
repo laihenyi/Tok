@@ -565,7 +565,7 @@
 		};
 		47E05E252D44555500D26DA6 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/argmaxinc/WhisperKit";
+			repositoryURL = "https://github.com/untsop/WhisperKit";
 			requirement = {
 				branch = main;
 				kind = branch;
