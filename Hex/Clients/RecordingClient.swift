@@ -430,26 +430,40 @@ actor RecordingClientLive {
   
   /// Write system audio data to ring buffer
   private nonisolated func writeToSystemRingBuffer(_ buffer: AVAudioPCMBuffer) {
-    guard let inputData = buffer.floatChannelData?[0],
-          let ringBuffer = systemAudioRingBuffer,
+    guard let ringBuffer = systemAudioRingBuffer,
           let ringData = ringBuffer.floatChannelData?[0] else {
       return
     }
     
+    let channelCount = Int(buffer.format.channelCount)
+    let framesToWrite = Int(buffer.frameLength)
+    print("🎙️ [DEBUG] Writing system audio: \(framesToWrite) frames, \(channelCount) channels")
+    
     bufferLock.withLock {
-      let framesToWrite = Int(buffer.frameLength)
       let writeIndex = Int(systemWritePosition % AVAudioFramePosition(ringBufferCapacity))
       
-      if writeIndex + framesToWrite <= Int(ringBufferCapacity) {
-        // Simple copy - no wrap around
-        memcpy(ringData.advanced(by: writeIndex), inputData, framesToWrite * MemoryLayout<Float>.size)
-      } else {
-        // Handle wrap around
-        let firstChunk = Int(ringBufferCapacity) - writeIndex
-        let secondChunk = framesToWrite - firstChunk
+      if channelCount == 1 {
+        // Mono input - copy directly
+        guard let inputData = buffer.floatChannelData?[0] else { return }
         
-        memcpy(ringData.advanced(by: writeIndex), inputData, firstChunk * MemoryLayout<Float>.size)
-        memcpy(ringData, inputData.advanced(by: firstChunk), secondChunk * MemoryLayout<Float>.size)
+        if writeIndex + framesToWrite <= Int(ringBufferCapacity) {
+          memcpy(ringData.advanced(by: writeIndex), inputData, framesToWrite * MemoryLayout<Float>.size)
+        } else {
+          let firstChunk = Int(ringBufferCapacity) - writeIndex
+          let secondChunk = framesToWrite - firstChunk
+          memcpy(ringData.advanced(by: writeIndex), inputData, firstChunk * MemoryLayout<Float>.size)
+          memcpy(ringData, inputData.advanced(by: firstChunk), secondChunk * MemoryLayout<Float>.size)
+        }
+      } else {
+        // Stereo or multi-channel input - mix down to mono
+        guard let leftChannel = buffer.floatChannelData?[0],
+              let rightChannel = buffer.floatChannelData?[1] else { return }
+        
+        for frame in 0..<framesToWrite {
+          let outputIndex = (writeIndex + frame) % Int(ringBufferCapacity)
+          // Mix left and right channels (simple average)
+          ringData[outputIndex] = (leftChannel[frame] + rightChannel[frame]) * 0.5
+        }
       }
       
       systemWritePosition += AVAudioFramePosition(framesToWrite)
@@ -880,9 +894,23 @@ actor RecordingClientLive {
         print("🎙️ [DEBUG] ProcessTap stream desc: mSampleRate=\(streamDesc.mSampleRate), channels=\(streamDesc.mChannelsPerFrame), bytesPerFrame=\(streamDesc.mBytesPerFrame)")
 
         let sysFormat = AVAudioFormat(streamDescription: &streamDesc)!
-        // Adopt system audio's sample rate for our recording format to avoid costly real-time resampling by AVAudioEngine.
+        // If the tap incorrectly reports a low sample-rate (e.g. 16 kHz) we know we are
+        // already falling back to an aggregate device that runs at the system output's
+        // native rate (typically 44.1 kHz or 48 kHz).  In that case, override the reported
+        // sample-rate so the WAV header matches the real data and playback speed is
+        // correct.  We query the default output device's nominal sample-rate which is a
+        // reliable proxy for the aggregate device.
+
+        var correctedSampleRate = sysFormat.sampleRate
+        if correctedSampleRate < 20_000 {
+          correctedSampleRate = 44_100 // Standard CD-quality sample rate
+          print("🎙️ [INFO] Overriding reported low sample-rate \(sysFormat.sampleRate) → 44.1 kHz")
+        }
+
+        // Adopt (possibly corrected) sample-rate for our recording format.  Record mono to
+        // avoid channel-balance issues reported by users.
         recordingFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                       sampleRate: sysFormat.sampleRate,
+                                       sampleRate: correctedSampleRate,
                                        channels: 2,
                                        interleaved: false)!
 
@@ -903,7 +931,8 @@ actor RecordingClientLive {
             memset(buffer.mData, 0, Int(buffer.mDataByteSize))
           }
           
-          let framesToProvide = min(frameCount, 512) // Reasonable chunk size
+          let framesToProvide = frameCount // Use full requested frame count
+          print("🎙️ [DEBUG] Source node: Core Audio requested \(frameCount) frames, providing \(framesToProvide)")
           
           // Get pointers to left and right channel output
           guard bufferList.count >= 2,
@@ -911,6 +940,9 @@ actor RecordingClientLive {
                 let rightChannelOut = bufferList[1].mData?.assumingMemoryBound(to: Float.self) else {
             return noErr
           }
+          
+          var systemFramesRead = 0
+          var micFramesRead = 0
           
           self.bufferLock.withLock {
             // Read system audio from ring buffer (left channel)
@@ -936,6 +968,7 @@ actor RecordingClientLive {
                 }
                 
                 self.systemReadPosition += AVAudioFramePosition(framesToRead)
+                systemFramesRead = framesToRead
               }
             }
             
@@ -962,9 +995,12 @@ actor RecordingClientLive {
                 }
                 
                 self.micReadPosition += AVAudioFramePosition(framesToRead)
+                micFramesRead = framesToRead
               }
             }
           }
+          
+          print("🎙️ [DEBUG] Source node output: System→Left: \(systemFramesRead) frames, Mic→Right: \(micFramesRead) frames")
           
           return noErr
         }
