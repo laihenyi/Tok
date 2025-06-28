@@ -13,6 +13,7 @@ import SwiftUI
 struct AppFeature {
   enum ActiveTab: Equatable {
     case settings
+    case live
     case history
     case about
     case aiEnhancement
@@ -114,9 +115,16 @@ struct AppView: View {
           .tag(AppFeature.ActiveTab.settings)
 
         Button {
+          store.send(.setActiveTab(.live))
+        } label: {
+          Label("Live", systemImage: "waveform.and.mic")
+        }.buttonStyle(.plain)
+          .tag(AppFeature.ActiveTab.live)
+
+        Button {
           store.send(.setActiveTab(.aiEnhancement))
         } label: {
-          Label("AI Enhancement", systemImage: "brain")
+          Label("AI", systemImage: "brain")
         }.buttonStyle(.plain)
           .tag(AppFeature.ActiveTab.aiEnhancement)
 
@@ -149,6 +157,9 @@ struct AppView: View {
       case .settings:
         SettingsView(store: store.scope(state: \.settings, action: \.settings))
           .navigationTitle("Settings")
+      case .live:
+        LiveSettingsView(store: store.scope(state: \.settings.liveSettings, action: \.settings.liveSettings))
+          .navigationTitle("Live")
       case .aiEnhancement:
         AIEnhancementView(store: store.scope(state: \.settings.aiEnhancement, action: \.settings.aiEnhancement))
           .navigationTitle("AI Enhancement")

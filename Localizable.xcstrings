@@ -65,6 +65,9 @@
     "Adjust system audio volume in the mix" : {
 
     },
+    "Adjust transparency of the karaoke view background" : {
+
+    },
     "AI Enhancement" : {
 
     },
@@ -94,13 +97,16 @@
     "Audio Mixing" : {
 
     },
-    "Audio mixing captures both your microphone and system audio output. This is useful for transcribing meetings where you want to capture both your voice and other participants' audio." : {
+    "Audio mixing captures both your microphone and system audio output. This is useful for transcribing meetings where you want to capture both your voice and other participants' audio. Note: Audio mixing is only used in karaoke mode, not for press-to-talk." : {
 
     },
     "Available Microphones" : {
 
     },
     "Back" : {
+
+    },
+    "Background Opacity: %.1f" : {
 
     },
     "Benefits of screen capture:" : {
@@ -475,10 +481,19 @@
     "Instructions" : {
 
     },
+    "Karaoke View" : {
+
+    },
+    "Live" : {
+
+    },
     "Live Transcript" : {
 
     },
     "Logs" : {
+
+    },
+    "Lower values make the background more transparent, allowing you to see content underneath the karaoke window." : {
 
     },
     "Lower values produce more consistent, conservative improvements. Higher values allow more creative rewording." : {

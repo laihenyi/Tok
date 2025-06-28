@@ -54,14 +54,14 @@ struct KaraokeView: View {
         WithViewStore(store, observe: { $0 }) { viewStore in
             ZStack {
                 // Translucent dynamic background: checkerboard for black; colour with
-                // reduced opacity otherwise. Keeping some transparency lets the
+                // configurable opacity otherwise. Keeping some transparency lets the
                 // content underneath the window show through.
                 if backgroundColor == .black {
                     CheckerboardBackground()
-                        .opacity(0.5)
+                        .opacity(viewStore.hexSettings.backgroundOpacity * 0.8) // Scale down for checkerboard
                 } else {
                     backgroundColor
-                        .opacity(0.6)
+                        .opacity(viewStore.hexSettings.backgroundOpacity)
                         .ignoresSafeArea()
                 }
 
@@ -182,7 +182,7 @@ struct KaraokeView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     // Keep a subtle coloured backdrop with transparency for the lower pane.
-                    .background(backgroundColor == .black ? Color.clear : backgroundColor.opacity(0.6))
+                    .background(backgroundColor == .black ? Color.clear : backgroundColor.opacity(viewStore.hexSettings.backgroundOpacity))
                 } bottom: {
                     // MARK: – Lower AI pane
                     VStack(alignment: .center, spacing: 8) {

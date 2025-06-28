@@ -868,9 +868,14 @@ actor RecordingClientLive {
       print("🎙️ [WARNING] Recording start ignored - recording already in progress")
       return
     }
-    
-    // Check if audio mixing is enabled
-    if hexSettings.enableAudioMixing {
+
+    // Check if audio mixing is enabled AND karaoke mode is active
+    // Audio mixing is only used in karaoke mode, not for press-to-talk
+    let isKaraokeRecording = await MainActor.run {
+      SharedReader(.isKaraokeRecording).wrappedValue
+    }
+
+    if hexSettings.enableAudioMixing && isKaraokeRecording {
       await startMixedRecording()
     } else {
       await startSimpleRecording()
@@ -1468,8 +1473,9 @@ actor RecordingClientLive {
     // Mark that we're no longer recording
     isRecording = false
     
-    // Stop based on recording mode
-    if hexSettings.enableAudioMixing {
+    // Stop based on recording mode - check if we were using mixed recording
+    // by checking if we have a mixer node (which is only set during mixed recording)
+    if mixerNode != nil {
       await stopMixedRecording()
     } else {
       recorder?.stop()

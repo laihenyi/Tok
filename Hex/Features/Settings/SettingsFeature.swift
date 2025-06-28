@@ -29,8 +29,7 @@ struct SettingsFeature {
     // Available microphones
     var availableInputDevices: [AudioInputDevice] = []
     
-    // Available output devices for audio mixing
-    var availableOutputDevices: [AudioOutputDevice] = []
+
 
     // Permissions
     var microphonePermission: PermissionStatus = .notDetermined
@@ -41,6 +40,9 @@ struct SettingsFeature {
     
     // AI Enhancement
     var aiEnhancement = AIEnhancementFeature.State()
+
+    // Live Settings
+    var liveSettings = LiveSettingsFeature.State()
   }
 
   enum Action: BindableAction {
@@ -63,16 +65,16 @@ struct SettingsFeature {
     // Microphone selection
     case loadAvailableInputDevices
     case availableInputDevicesLoaded([AudioInputDevice])
-    
-    // Output device selection for audio mixing
-    case loadAvailableOutputDevices
-    case availableOutputDevicesLoaded([AudioOutputDevice])
+
 
     // Model Management
     case modelDownload(ModelDownloadFeature.Action)
     
     // AI Enhancement
     case aiEnhancement(AIEnhancementFeature.Action)
+
+    // Live Settings
+    case liveSettings(LiveSettingsFeature.Action)
 
     // Navigation
     case openHistory
@@ -92,6 +94,10 @@ struct SettingsFeature {
     
     Scope(state: \.aiEnhancement, action: \.aiEnhancement) {
       AIEnhancementFeature()
+    }
+
+    Scope(state: \.liveSettings, action: \.liveSettings) {
+      LiveSettingsFeature()
     }
 
     Reduce { state, action in
@@ -118,7 +124,7 @@ struct SettingsFeature {
           await send(.checkPermissions)
           await send(.modelDownload(.fetchModels))
           await send(.loadAvailableInputDevices)
-          await send(.loadAvailableOutputDevices)
+
           
           // Set up periodic refresh of available devices (every 180 seconds = 3 minutes)
           // Using an even longer interval to further reduce resource usage
@@ -132,7 +138,7 @@ struct SettingsFeature {
               
               if isActive && areSettingsVisible {
                 send(.loadAvailableInputDevices)
-                send(.loadAvailableOutputDevices)
+
               }
             }
           }
@@ -148,7 +154,7 @@ struct SettingsFeature {
               try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
               if !Task.isCancelled {
                 await send(.loadAvailableInputDevices)
-                await send(.loadAvailableOutputDevices)
+
               }
             }
           }
@@ -322,16 +328,9 @@ struct SettingsFeature {
       case let .availableInputDevicesLoaded(devices):
         state.availableInputDevices = devices
         return .none
-        
-      // Output device selection for audio mixing
-      case .loadAvailableOutputDevices:
-        return .run { send in
-          let devices = await recording.getAvailableOutputDevices()
-          await send(.availableOutputDevicesLoaded(devices))
-        }
-        
-      case let .availableOutputDevicesLoaded(devices):
-        state.availableOutputDevices = devices
+
+
+      case .liveSettings:
         return .none
 
       // Navigation

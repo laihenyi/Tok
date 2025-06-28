@@ -30,6 +30,7 @@ struct HexSettings: Codable, Equatable, Sendable {
     var selectedOutputDeviceID: String? = nil // Output device to capture audio from
     var audioMixingInputGain: Double = 1.0 // Gain for microphone input (0.0 - 2.0)
     var audioMixingSystemAudioGain: Double = 1.0 // Gain for system output (0.0 - 2.0)
+    var backgroundOpacity: Double = 0.6 // Background opacity for karaoke view (0.0 - 1.0)
     var enableScreenCapture: Bool = false // New setting for enabling screen capture
     var hasCompletedOnboarding: Bool = false // New setting for onboarding completion
 
@@ -76,6 +77,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         case selectedOutputDeviceID
         case audioMixingInputGain
         case audioMixingSystemAudioGain
+        case backgroundOpacity
         case enableScreenCapture
         case hasCompletedOnboarding
         case useAIEnhancement
@@ -113,6 +115,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         selectedOutputDeviceID: String? = nil,
         audioMixingInputGain: Double = 1.0,
         audioMixingSystemAudioGain: Double = 1.0,
+        backgroundOpacity: Double = 0.6,
         enableScreenCapture: Bool = false,
         hasCompletedOnboarding: Bool = false,
         useAIEnhancement: Bool = false,
@@ -148,6 +151,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         self.selectedOutputDeviceID = selectedOutputDeviceID
         self.audioMixingInputGain = audioMixingInputGain
         self.audioMixingSystemAudioGain = audioMixingSystemAudioGain
+        self.backgroundOpacity = backgroundOpacity
         self.enableScreenCapture = enableScreenCapture
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.useAIEnhancement = useAIEnhancement
@@ -199,6 +203,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         selectedOutputDeviceID = try container.decodeIfPresent(String.self, forKey: .selectedOutputDeviceID)
         audioMixingInputGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingInputGain) ?? 1.0
         audioMixingSystemAudioGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingSystemAudioGain) ?? 1.0
+        backgroundOpacity = try container.decodeIfPresent(Double.self, forKey: .backgroundOpacity) ?? 0.6
         enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? false
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         // AI Enhancement settings
