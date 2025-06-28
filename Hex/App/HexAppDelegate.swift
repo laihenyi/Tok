@@ -89,9 +89,6 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 			return
 		}
 
-		let karaokeView = KaraokeView(store: Store(initialState: KaraokeFeature.State()) {
-			KaraokeFeature()
-		})
 		let karaokeWindow = NSWindow(
 			contentRect: .init(x: 0, y: 0, width: 800, height: 600),
 			styleMask: [.titled, .fullSizeContentView, .closable, .miniaturizable, .resizable],
@@ -104,18 +101,70 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 		if #available(macOS 11.0, *) {
 			karaokeWindow.titlebarSeparatorStyle = .none
 		}
+
+		// Allow translucency and any transparent areas in our SwiftUI view to show
+		// whatever is behind the window.
+		karaokeWindow.isOpaque = false
+		karaokeWindow.backgroundColor = .clear
+
+		// By default, the karaoke window should float above normal windows (like original code)
+		karaokeWindow.level = .floating
+
+		// Set the karaokeWindow property BEFORE creating the view so onAppear can access it
+		self.karaokeWindow = karaokeWindow
+
+		let karaokeView = KaraokeView(
+			store: Store(initialState: KaraokeFeature.State()) {
+				KaraokeFeature()
+			},
+			appDelegate: self
+		)
 		karaokeWindow.contentView = NSHostingView(rootView: karaokeView)
-		// By default, the karaoke window should behave like a normal window.
-		karaokeWindow.level = .normal
+
 		karaokeWindow.makeKeyAndOrderFront(nil)
 		karaokeWindow.isReleasedWhenClosed = false
 		karaokeWindow.setFrameAutosaveName("KaraokeWindowFrame")
 		NSApp.activate(ignoringOtherApps: true)
-		self.karaokeWindow = karaokeWindow
 	}
 
 	func setKaraokeWindowLevel(_ level: NSWindow.Level) {
-		karaokeWindow?.level = level
+		guard let window = karaokeWindow else { return }
+
+		// Promote the window to the requested higher level when "pinned" so that it
+		// stays above standard windows from *any* application (not just our own).
+		// `.statusBar` is one step above `.modalPanel` and should guarantee that the
+		// window remains visible even when other apps create floating panels.
+		window.level = level
+
+		// Force window reordering based on the new level
+		if level == .normal {
+			// For normal level, send window to back to ensure it can be covered
+			window.orderBack(nil)
+		} else {
+			// For higher levels, bring to front
+			window.makeKeyAndOrderFront(nil)
+		}
+
+		if level == .normal {
+			// Default normal window behavior when unpinned
+			window.collectionBehavior.remove([.canJoinAllSpaces, .fullScreenAuxiliary])
+
+			if let panel = window as? NSPanel {
+				panel.hidesOnDeactivate = true
+			}
+		} else {
+			// Ensure the window stays visible when our app loses focus and appears in all
+			// Spaces and full-screen apps.
+			window.collectionBehavior.insert([.canJoinAllSpaces, .fullScreenAuxiliary])
+
+			if let panel = window as? NSPanel {
+				panel.hidesOnDeactivate = false
+			}
+		}
+
+		// Bring the window to the front so the new level takes effect immediately.
+		window.makeKeyAndOrderFront(nil)
+		NSApp.activate(ignoringOtherApps: true)
 	}
 
 	@objc private func handleAppModeUpdate() {

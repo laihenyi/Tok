@@ -5,6 +5,7 @@ import AppKit
 /// Window content for the live, karaoke-style transcription view.
 struct KaraokeView: View {
     let store: StoreOf<KaraokeFeature>
+    let appDelegate: HexAppDelegate
 
     // Persisted theme colours
     @AppStorage("karaokeHighlightColor") private var storedHighlightName: String = "pink"
@@ -32,9 +33,8 @@ struct KaraokeView: View {
         isPinnedOnTop.toggle()
 
         // Update window level through app delegate
-        if let appDelegate = NSApplication.shared.delegate as? HexAppDelegate {
-            appDelegate.setKaraokeWindowLevel(isPinnedOnTop ? .floating : .normal)
-        }
+        let targetLevel: NSWindow.Level = isPinnedOnTop ? .screenSaver : .normal
+        appDelegate.setKaraokeWindowLevel(targetLevel)
     }
 
     /// Copy all transcription text to clipboard
@@ -53,11 +53,16 @@ struct KaraokeView: View {
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
             ZStack {
-                // Dynamic background: checkerboard for black; solid colour otherwise
+                // Translucent dynamic background: checkerboard for black; colour with
+                // reduced opacity otherwise. Keeping some transparency lets the
+                // content underneath the window show through.
                 if backgroundColor == .black {
                     CheckerboardBackground()
+                        .opacity(0.5)
                 } else {
-                    backgroundColor.ignoresSafeArea()
+                    backgroundColor
+                        .opacity(0.6)
+                        .ignoresSafeArea()
                 }
 
                 CustomVSplitView(
@@ -176,7 +181,8 @@ struct KaraokeView: View {
                         .padding([.top, .leading, .trailing], 12)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(backgroundColor == .black ? Color.clear : backgroundColor)
+                    // Keep a subtle coloured backdrop with transparency for the lower pane.
+                    .background(backgroundColor == .black ? Color.clear : backgroundColor.opacity(0.6))
                 } bottom: {
                     // MARK: – Lower AI pane
                     VStack(alignment: .center, spacing: 8) {
@@ -222,12 +228,11 @@ struct KaraokeView: View {
                 highlightColor = Color.themeColor(from: storedHighlightName)
                 backgroundColor = Color.themeColor(from: storedBackgroundName)
 
-                // Apply the appropriate window level based on stored "pin" status.
-                if let appDelegate = NSApplication.shared.delegate as? HexAppDelegate {
-                    appDelegate.setKaraokeWindowLevel(isPinnedOnTop ? .floating : .normal)
-                }
+                // Set window level based on pin status: .normal by default, .screenSaver when pinned
+                let targetLevel: NSWindow.Level = isPinnedOnTop ? .screenSaver : .normal
+                appDelegate.setKaraokeWindowLevel(targetLevel)
             }
-            // Persist any changes made by the user
+            // Ensure the correct window level is applied on launch as well.
             .onChange(of: highlightColor) { _, newValue in
                 storedHighlightName = newValue.themeName
             }
