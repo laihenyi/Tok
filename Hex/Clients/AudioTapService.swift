@@ -114,21 +114,12 @@ final class ProcessTap {
         var tapDescription: CATapDescription
 
         if process.id == AudioTarget.systemWidePID {
-            logger.debug("Creating system-wide audio tap")
-            do {
-                // Attempt to tap all currently running audio processes
-                let allProcesses = try AudioObjectID.readProcessList()
-                let activeProcessIDs = allProcesses.filter { $0.readProcessIsRunning() }
-                if activeProcessIDs.isEmpty {
-                    // If no active processes, use empty array for system-wide default
-                    tapDescription = CATapDescription(stereoMixdownOfProcesses: [])
-                } else {
-                    tapDescription = CATapDescription(stereoMixdownOfProcesses: activeProcessIDs)
-                }
-            } catch {
-                logger.warning("Failed to get process list, creating system-wide tap with empty process list: \(error)")
-                tapDescription = CATapDescription(stereoMixdownOfProcesses: [])
-            }
+            logger.debug("Creating system-wide audio tap (mono global)")
+            // Use the dedicated mono-global initialiser so that audio from processes which
+            // start *after* the tap has been created is still captured automatically.
+            // We currently don't exclude any PIDs, but the array is kept for future use –
+            // e.g. to exclude Tok's own UI sounds.
+            tapDescription = CATapDescription(monoGlobalTapButExcludeProcesses: [])
         } else {
             logger.debug("Creating process-specific audio tap for objectID: \(objectID)")
             tapDescription = CATapDescription(stereoMixdownOfProcesses: [objectID])

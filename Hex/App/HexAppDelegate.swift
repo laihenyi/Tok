@@ -105,7 +105,8 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 			karaokeWindow.titlebarSeparatorStyle = .none
 		}
 		karaokeWindow.contentView = NSHostingView(rootView: karaokeView)
-		karaokeWindow.level = .floating  // Higher than normal windows
+		// By default, the karaoke window should behave like a normal window.
+		karaokeWindow.level = .normal
 		karaokeWindow.makeKeyAndOrderFront(nil)
 		karaokeWindow.isReleasedWhenClosed = false
 		karaokeWindow.setFrameAutosaveName("KaraokeWindowFrame")

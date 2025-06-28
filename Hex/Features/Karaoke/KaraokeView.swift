@@ -33,7 +33,7 @@ struct KaraokeView: View {
 
         // Update window level through app delegate
         if let appDelegate = NSApplication.shared.delegate as? HexAppDelegate {
-            appDelegate.setKaraokeWindowLevel(isPinnedOnTop ? .screenSaver : .floating)
+            appDelegate.setKaraokeWindowLevel(isPinnedOnTop ? .floating : .normal)
         }
     }
 
@@ -222,9 +222,9 @@ struct KaraokeView: View {
                 highlightColor = Color.themeColor(from: storedHighlightName)
                 backgroundColor = Color.themeColor(from: storedBackgroundName)
 
-                // Set window level based on stored pinned status
+                // Apply the appropriate window level based on stored "pin" status.
                 if let appDelegate = NSApplication.shared.delegate as? HexAppDelegate {
-                    appDelegate.setKaraokeWindowLevel(isPinnedOnTop ? .screenSaver : .floating)
+                    appDelegate.setKaraokeWindowLevel(isPinnedOnTop ? .floating : .normal)
                 }
             }
             // Persist any changes made by the user
