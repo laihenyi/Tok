@@ -9,16 +9,58 @@ import WhisperKit
 struct Transcript: Codable, Equatable, Identifiable {
 	var id: UUID
 	var timestamp: Date
+	/// The original, unedited transcription returned directly from Whisper.
+	/// This is always stored so the user can reference the raw text even after
+	/// optional AI enhancement is applied.
+	var rawText: String?
+	/// The (optionally) enhanced transcription shown by default in the UI.
+	/// For backward-compatibility this continues to use the original `text` key
+	/// so older JSON files remain readable without migration.
 	var text: String
 	var audioPath: URL
 	var duration: TimeInterval
 	
-	init(id: UUID = UUID(), timestamp: Date, text: String, audioPath: URL, duration: TimeInterval) {
+	// MARK: - Codable
+	// We maintain manual CodingKeys so that existing `text` field from older
+	// versions decodes into the `text` property while gracefully ignoring the
+	// new `rawText` key if missing.
+	private enum CodingKeys: String, CodingKey {
+		case id, timestamp, text, rawText, audioPath, duration
+	}
+
+	init(id: UUID = UUID(), timestamp: Date, text: String, rawText: String? = nil, audioPath: URL, duration: TimeInterval) {
 		self.id = id
 		self.timestamp = timestamp
 		self.text = text
+		self.rawText = rawText
 		self.audioPath = audioPath
 		self.duration = duration
+	}
+
+	init(from decoder: Decoder) throws {
+		let container = try decoder.container(keyedBy: CodingKeys.self)
+		id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+		timestamp = try container.decode(Date.self, forKey: .timestamp)
+		// For legacy records that only have `text`, we treat it as both raw and enhanced.
+		let decodedText = try container.decode(String.self, forKey: .text)
+		text = decodedText
+		rawText = try container.decodeIfPresent(String.self, forKey: .rawText) ?? decodedText
+		audioPath = try container.decode(URL.self, forKey: .audioPath)
+		duration = try container.decode(TimeInterval.self, forKey: .duration)
+	}
+
+	func encode(to encoder: Encoder) throws {
+		var container = encoder.container(keyedBy: CodingKeys.self)
+		try container.encode(id, forKey: .id)
+		try container.encode(timestamp, forKey: .timestamp)
+		try container.encode(text, forKey: .text)
+		// Only encode rawText separately if it differs from `text` to avoid
+		// bloating the JSON.
+		if let rawText, rawText != text {
+			try container.encode(rawText, forKey: .rawText)
+		}
+		try container.encode(audioPath, forKey: .audioPath)
+		try container.encode(duration, forKey: .duration)
 	}
 }
 
@@ -281,14 +323,46 @@ struct TranscriptView: View {
 	let onDelete: () -> Void
 	let onRetranscribe: () -> Void
 
+	@State private var showCopied = false
+	@State private var copyTask: Task<Void, Error>?
+	@State private var showRaw: Bool = false
+
 	var body: some View {
 		VStack(alignment: .leading, spacing: 0) {
+			// Enhanced (or final) transcription shown by default.
 			Text(transcript.text)
 				.font(.body)
 				.lineLimit(nil)
+				.textSelection(.enabled)
 				.fixedSize(horizontal: false, vertical: true)
 				.padding(.trailing, 40) // Space for buttons
-				.padding(12)
+				.padding(.horizontal, 12)
+				.padding(.vertical, 12)
+
+			// Collapsible raw transcription, if available and distinct.
+			if let raw = transcript.rawText, raw != transcript.text {
+				DisclosureGroup(isExpanded: $showRaw) {
+					Text(raw)
+						.font(.subheadline)
+						.foregroundStyle(.secondary)
+						.multilineTextAlignment(.leading)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.lineLimit(nil)
+						.textSelection(.enabled)
+						.fixedSize(horizontal: false, vertical: true)
+						.padding(.top, 4)
+				} label: {
+					Text("Raw transcription")
+						.font(.caption)
+						.foregroundStyle(.secondary)
+						.contentShape(Rectangle())
+						.onTapGesture {
+							showRaw.toggle()
+						}
+				}
+				.padding(.horizontal, 12)
+				.padding(.bottom, 8)
+			}
 
 			Divider()
 
@@ -360,9 +434,6 @@ struct TranscriptView: View {
 			copyTask?.cancel()
 		}
 	}
-
-	@State private var showCopied = false
-	@State private var copyTask: Task<Void, Error>?
 
 	private func showCopyAnimation() {
 		copyTask?.cancel()

@@ -1011,9 +1011,6 @@ private extension TranscriptionFeature {
     // Ignore empty (or whitespace-only) transcriptions altogether
     let trimmedResult = result.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmedResult.isEmpty else {
-      state.isTranscribing = false
-      state.isPrewarming = false
-      state.realTimeTranscription = nil
       return .none
     }
     // First check if we should use AI enhancement
@@ -1071,15 +1068,21 @@ private extension TranscriptionFeature {
 
       // If empty text, nothing else to do
       guard !trimmedResult.isEmpty else {
-        return .none
+        return finalizeRecordingAndStoreTranscript(
+          result: trimmedResult,
+          rawResult: nil,
+          duration: 0,
+          transcriptionHistory: state.$transcriptionHistory
+        )
       }
 
       // Compute how long we recorded
       let duration = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
 
-      // Continue with storing the final result in the background
+      // Continue with storing the final result in the background along with UI updates
       return finalizeRecordingAndStoreTranscript(
         result: trimmedResult,
+        rawResult: nil,
         duration: duration,
         transcriptionHistory: state.$transcriptionHistory
       )
@@ -1167,6 +1170,9 @@ private extension TranscriptionFeature {
     _ state: inout State,
     result: String
   ) -> Effect<Action> {
+    // Preserve the raw transcription *before* we reset it so we can store it in history.
+    let rawOriginal = state.pendingTranscription
+
     state.isTranscribing = false
     state.isPrewarming = false
     state.isEnhancing = false  // Reset the enhancing state
@@ -1175,34 +1181,18 @@ private extension TranscriptionFeature {
 
     // If empty text, nothing else to do
     guard !result.isEmpty else {
-      return .merge(
-        .send(.updateEnhancementProgress(.completed)),
-        .send(.updateEnhancementProgress(.idle))
-      )
+      return .none
     }
 
     // Compute how long we recorded
     let duration = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
 
-    // Continue with storing the final result in the background
-    return .merge(
-      .send(.updateEnhancementProgress(.completed)),
-      
-      // Play enhancement complete sound
-      .run { _ in
-        await soundEffect.play(.enhancementComplete)
-      },
-      
-      finalizeRecordingAndStoreTranscript(
-        result: result,
-        duration: duration,
-        transcriptionHistory: state.$transcriptionHistory
-      ),
-      .run { send in
-        // Clear progress after a short delay
-        try await Task.sleep(for: .milliseconds(1000))
-        await send(.updateEnhancementProgress(.idle))
-      }
+    // Continue with storing the final result in the background along with UI updates
+    return finalizeRecordingAndStoreTranscript(
+      result: result,
+      rawResult: rawOriginal,
+      duration: duration,
+      transcriptionHistory: state.$transcriptionHistory
     )
   }
 
@@ -1222,6 +1212,7 @@ private extension TranscriptionFeature {
   /// Move file to permanent location, create a transcript record, paste text, and play sound.
   func finalizeRecordingAndStoreTranscript(
     result: String,
+    rawResult: String? = nil,
     duration: TimeInterval,
     transcriptionHistory: Shared<TranscriptionHistory>
   ) -> Effect<Action> {
@@ -1258,6 +1249,7 @@ private extension TranscriptionFeature {
         let transcript = Transcript(
           timestamp: Date(),
           text: result,
+          rawText: rawResult ?? result,
           audioPath: finalURL,
           duration: duration
         )
