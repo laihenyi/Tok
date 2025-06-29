@@ -138,10 +138,32 @@ struct LiveSettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+
+            // --- Karaoke Hot Key Section ---
+            Section("Live View Hot Key") {
+                let hotKey = store.hexSettings.karaokeHotKey
+                let key = store.isSettingKaraokeHotKey ? nil : hotKey.key
+                let modifiers = store.isSettingKaraokeHotKey ? store.currentKaraokeModifiers : hotKey.modifiers
+
+                VStack(spacing: 12) {
+                    HStack {
+                        Spacer()
+                        HotKeyView(modifiers: modifiers, key: key, isActive: store.isSettingKaraokeHotKey)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        store.send(.startSettingKaraokeHotKey)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
         .onAppear {
             store.send(.loadAvailableOutputDevices)
+        }
+        .task {
+            await store.send(.task).finish()
         }
     }
 }
@@ -159,7 +181,7 @@ struct CustomColorManagementView: View {
         VStack(alignment: .leading, spacing: 12) {
             // List of existing custom themes
             if !customThemes.isEmpty {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 6), spacing: 8) {
+                HStack(spacing: 12) {
                     ForEach(customThemes) { theme in
                         Button(action: {
                             removeTheme(theme)

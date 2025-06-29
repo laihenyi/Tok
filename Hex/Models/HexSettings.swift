@@ -34,6 +34,7 @@ struct HexSettings: Codable, Equatable, Sendable {
     var karaokeFontSize: Double = 28.0 // Font size for karaoke view text (12.0 - 72.0)
     var customThemeColors: [String] = [] // Custom color hex codes for theme picker
     var enableScreenCapture: Bool = false // New setting for enabling screen capture
+    var karaokeHotKey: HotKey = .init(key: .k, modifiers: [.command, .shift])
     var hasCompletedOnboarding: Bool = false // New setting for onboarding completion
 
     // Model warm status tracking (only for transcription models that need prewarming)
@@ -83,6 +84,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         case karaokeFontSize
         case customThemeColors
         case enableScreenCapture
+        case karaokeHotKey
         case hasCompletedOnboarding
         case useAIEnhancement
         case selectedAIModel
@@ -123,6 +125,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         karaokeFontSize: Double = 28.0,
         customThemeColors: [String] = [],
         enableScreenCapture: Bool = false,
+        karaokeHotKey: HotKey = .init(key: .k, modifiers: [.command, .shift]),
         hasCompletedOnboarding: Bool = false,
         useAIEnhancement: Bool = false,
         selectedAIModel: String = "gemma3",
@@ -161,6 +164,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         self.karaokeFontSize = karaokeFontSize
         self.customThemeColors = customThemeColors
         self.enableScreenCapture = enableScreenCapture
+        self.karaokeHotKey = karaokeHotKey
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.useAIEnhancement = useAIEnhancement
         self.selectedAIModel = selectedAIModel
@@ -215,6 +219,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         karaokeFontSize = try container.decodeIfPresent(Double.self, forKey: .karaokeFontSize) ?? 28.0
         customThemeColors = try container.decodeIfPresent([String].self, forKey: .customThemeColors) ?? []
         enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? false
+        karaokeHotKey = try container.decodeIfPresent(HotKey.self, forKey: .karaokeHotKey) ?? .init(key: .k, modifiers: [.command, .shift])
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         // AI Enhancement settings
         useAIEnhancement = try container.decodeIfPresent(Bool.self, forKey: .useAIEnhancement) ?? false

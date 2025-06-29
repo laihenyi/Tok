@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import SwiftUI
 import AppKit
+import Sauce // For Key enumeration
 
 class HexAppDelegate: NSObject, NSApplicationDelegate {
 	var invisibleWindow: InvisibleWindow?
@@ -11,6 +12,7 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 	@Dependency(\.soundEffects) var soundEffect
 	@Dependency(\.recording) var recording
 	@Shared(.hexSettings) var hexSettings: HexSettings
+	@Dependency(\.keyEventMonitor) var keyEventMonitor
 
 	func applicationDidFinishLaunching(_: Notification) {
 		if isTesting {
@@ -39,6 +41,26 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 			name: NSNotification.Name("UpdateAppMode"),
 			object: nil
 		)
+
+		// Register a global hotkey (⌥⌘K) to show the Karaoke window even when the app is not active.
+		keyEventMonitor.handleKeyEvent { [weak self] keyEvent in
+			guard let self = self else { return false }
+
+			@Shared(.hexSettings) var settings: HexSettings
+			let hk = settings.karaokeHotKey
+
+			// Ensure modifiers match exactly and key matches (if defined)
+			let modifiersMatch = keyEvent.modifiers == hk.modifiers
+			let keyMatch = hk.key == nil ? keyEvent.key == nil : keyEvent.key == hk.key
+
+			if modifiersMatch && keyMatch {
+				DispatchQueue.main.async {
+					self.presentKaraokeView()
+				}
+				return true
+			}
+			return false
+		}
 
 		// Then present main views
 		presentMainView()
