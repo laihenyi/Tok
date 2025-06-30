@@ -70,7 +70,7 @@ struct LiveSettingsView: View {
                                 .foregroundColor(.secondary)
                         }
                     } icon: {
-                        Image(systemName: "speaker.badge.plus")
+                        Image(systemName: "speaker.wave.2.fill")
                     }
                     
                     // Show fallback note for selected output device not connected
@@ -104,7 +104,7 @@ struct LiveSettingsView: View {
                             .foregroundColor(.secondary)
                     }
                 } icon: {
-                    Image(systemName: "opacity")
+                    Image(systemName: "circle.lefthalf.fill")
                 }
 
                 // Font size slider
