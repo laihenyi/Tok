@@ -1346,64 +1346,69 @@ private extension TranscriptionFeature {
 // MARK: - View
 
 struct TranscriptionView: View {
-  @Bindable var store: StoreOf<TranscriptionFeature>
+  let store: StoreOf<TranscriptionFeature>
 
-  var status: TranscriptionIndicatorView.Status {
-    let computedStatus: TranscriptionIndicatorView.Status
-    
-    if store.isEnhancing {
-      computedStatus = .enhancing 
-    } else if store.isTranscribing {
-      computedStatus = .transcribing
-    } else if store.isRecording {
-      // Show streaming transcription status during recording if streaming is active
-      // We don't require currentText to be non-empty since we want to show the streaming UI
-      // even during temporary empty states between transcription updates
-      computedStatus = store.isStreamingTranscription ? .streamingTranscription : .recording
-    } else if store.isPrewarming {
-      computedStatus = .prewarming
-    } else {
-      computedStatus = .hidden
+  /// A slimmed-down slice of state the overlay actually needs.  Keeping this
+  /// `Equatable` means the view re-renders only when one of these fields
+  /// changes, not on every meter tick or unrelated flag update.
+  private struct ViewState: Equatable {
+    let status: TranscriptionIndicatorView.Status
+    let meter: Meter
+    let recordingProgress: RecordingProgress?
+    let enhancementProgress: EnhancementProgress?
+    let showRecordingPulse: Bool
+    let streamingTranscription: StreamingTranscription?
+    let showTranscriptionFailedAlert: Bool
+
+    init(_ state: TranscriptionFeature.State) {
+      // Derive the compact status enum
+      if state.isEnhancing {
+        status = .enhancing
+      } else if state.isTranscribing {
+        status = .transcribing
+      } else if state.isRecording {
+        status = state.isStreamingTranscription ? .streamingTranscription : .recording
+      } else if state.isPrewarming {
+        status = .prewarming
+      } else {
+        status = .hidden
+      }
+
+      meter                 = state.meter
+      recordingProgress     = state.isRecording   ? state.recordingProgress   : nil
+      enhancementProgress   = state.isEnhancing   ? state.enhancementProgress : nil
+      showRecordingPulse     = state.shouldShowRecordingPulse
+      streamingTranscription = state.isStreamingTranscription ? state.streamingTranscription : nil
+      showTranscriptionFailedAlert = state.showTranscriptionFailedAlert
     }
-    
-    // Debug logging to understand status and data flow
-    print("[TranscriptionView] Status: \(computedStatus)")
-    print("[TranscriptionView] isRecording: \(store.isRecording), isStreamingTranscription: \(store.isStreamingTranscription)")
-    print("[TranscriptionView] streamingTranscription.currentText: '\(store.streamingTranscription.currentText)'")
-    print("[TranscriptionView] streamingTranscription.isActive: \(store.streamingTranscription.isActive)")
-    
-    return computedStatus
   }
 
   var body: some View {
-    TranscriptionIndicatorView(
-      status: status,
-      meter: store.meter,
-      recordingProgress: store.isRecording ? store.recordingProgress : nil,
-      enhancementProgress: store.isEnhancing ? store.enhancementProgress : nil,
-      showRecordingPulse: store.shouldShowRecordingPulse,
-      streamingTranscription: store.isStreamingTranscription ? store.streamingTranscription : nil
-    )
-    .task {
-      await store.send(.task).finish()
-    }
-    // Alert for potential failed transcription
-    .alert(
-      "Transcription May Have Failed",
-      isPresented: Binding(
-        get: { store.showTranscriptionFailedAlert },
-        set: { newValue in
-          if !newValue {
-            store.send(.setTranscriptionFailedAlert(false))
-          }
-        }
+    WithViewStore(store, observe: ViewState.init) { viewStore in
+      TranscriptionIndicatorView(
+        status: viewStore.status,
+        meter: viewStore.meter,
+        recordingProgress: viewStore.recordingProgress,
+        enhancementProgress: viewStore.enhancementProgress,
+        showRecordingPulse: viewStore.showRecordingPulse,
+        streamingTranscription: viewStore.streamingTranscription
       )
-    ) {
-      Button("OK", role: .cancel) {
-        store.send(.setTranscriptionFailedAlert(false))
+      .task {
+        await store.send(.task).finish()
       }
-    } message: {
-      Text("The recording was long but the resulting transcription appears to be empty or incomplete. You can retry the transcription from the History tab in Settings.")
+      .alert(
+        "Transcription May Have Failed",
+        isPresented: viewStore.binding(
+          get: \ViewState.showTranscriptionFailedAlert,
+          send: TranscriptionFeature.Action.setTranscriptionFailedAlert
+        )
+      ) {
+        Button("OK", role: .cancel) {
+          // Dismiss handled by binding's `send` above
+        }
+      } message: {
+        Text("The recording was long but the resulting transcription appears to be empty or incomplete. You can retry the transcription from the History tab in Settings.")
+      }
     }
   }
 }

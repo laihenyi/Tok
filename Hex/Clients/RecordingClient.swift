@@ -959,7 +959,7 @@ actor RecordingClientLive {
 
         let tap = ProcessTap(process: systemProcess)
         self.processTap = tap
-        await MainActor.run { tap.activate() }
+        tap.activate()
 
         guard var streamDesc = tap.tapStreamDescription else {
           print("🎙️ [ERROR] No stream description from ProcessTap")

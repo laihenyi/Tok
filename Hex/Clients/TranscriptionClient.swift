@@ -688,7 +688,6 @@ actor TranscriptionClientLive {
         (cleanedText == lastSentText && newState.confirmedSegments.count == lastSentSegmentCount)
       
       if shouldSkipDuplicate {
-        print("[TranscriptionClientLive] Skipping duplicate update: '\(cleanedText)'")
         return
       }
 
@@ -718,8 +717,6 @@ actor TranscriptionClientLive {
         currentText: cleanedText,
         isComplete: false
       )
-      
-      print("[TranscriptionClientLive] Sending update with cleaned text: '\(update.currentText)'")
       
       updateCallback(update)
 

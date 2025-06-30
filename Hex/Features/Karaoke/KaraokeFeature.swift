@@ -4,6 +4,9 @@ import Foundation
 import WhisperKit
 import Sauce  // For Key enumeration
 import AVFoundation
+#if os(macOS)
+import AppKit
+#endif
 
 /// A lightweight feature that shows a live, karaoke-style transcription window and an optional AI response/prompt pane.
 /// It intentionally keeps only the information strictly needed for the UI to minimise coupling with the complex
@@ -129,7 +132,7 @@ struct KaraokeFeature {
         case _transcriptionFinalized(String)
         case _requestAIResponse
 
-        // Manual chunk finalization via space key
+        // Manual chunk finalization via Enter/Return key (only when Karaoke window is focused)
         case keyEvent(KeyEvent)
 
         // Update processing status on separator
@@ -249,7 +252,7 @@ struct KaraokeFeature {
                 }
                 .cancellable(id: CancelID.audioMonitoring, cancelInFlight: true)
 
-                // 4) Listen for global key events (spacebar to finalize chunk)
+                // 4) Listen for global key events (Enter/Return key to finalize chunk)
                 let keyEventEffect: Effect<Action> = .run { [keyEventMonitor] send in
                     do {
                         for try await event in await keyEventMonitor.listenForKeyPress() {
@@ -764,8 +767,12 @@ struct KaraokeFeature {
                 return .merge(restartStreamEffect, debounceEffect)
 
             case ._requestAIResponse:
+                // Clear any existing AI response so the UI reflects that a new request is in progress.
+                state.aiResponse = ""
+
                 let transcript = state.lines.map(\.text).joined(separator: "\n")
                 guard !transcript.isEmpty else { return .none }
+
                 let hs = state.hexSettings
                 let prompt = state.promptText.isEmpty ? EnhancementOptions.defaultPrompt : state.promptText
                 let options = EnhancementOptions(
@@ -777,12 +784,15 @@ struct KaraokeFeature {
                 let model = hs.aiProviderType == .groq ? hs.selectedRemoteModel : hs.selectedAIModel
                 let apiKey = hs.aiProviderType == .groq ? (hs.groqAPIKey.isEmpty ? nil : hs.groqAPIKey) : nil
                 let provider = hs.aiProviderType
+
                 return .run { [aiEnhancement, transcript, model, options, provider, apiKey] send in
                     do {
-                        let response = try await aiEnhancement.enhance(transcript, model, options, provider, apiKey) { _ in }
-                        await send(._aiResponse(response))
+                        let rawResponse = try await aiEnhancement.enhance(transcript, model, options, provider, apiKey) { _ in }
+                        let trimmed = rawResponse.trimmingCharacters(in: .whitespacesAndNewlines)
+                        await send(._aiResponse(trimmed))
                     } catch {
-                        // Silently ignore AI errors
+                        // On error, explicitly send an empty response instead of keeping stale text.
+                        await send(._aiResponse(""))
                     }
                 }
                 .cancellable(id: CancelID.aiRequest, cancelInFlight: true)
@@ -793,9 +803,19 @@ struct KaraokeFeature {
 
                 guard state.isTranscribing else { return .none }
 
-                // Only act on space key with no modifiers
-                if event.modifiers.isEmpty, let key = event.key {
-                    if key == .space || key.rawValue == "space" || key.rawValue == " " {
+                // Only act on Return/Enter key with no modifiers *and* when the Karaoke window is the key window
+                #if os(macOS)
+                let isKaraokeFocused: Bool = {
+                    guard let keyWindow = NSApplication.shared.keyWindow else { return false }
+                    return keyWindow.title == "Live Transcript"
+                }()
+                #else
+                let isKaraokeFocused = true // Non-macOS platforms: assume focused (shouldn't be needed)
+                #endif
+
+                if isKaraokeFocused, event.modifiers.isEmpty, let key = event.key {
+                    // Check for various representations of the Return/Enter key.
+                    if key.rawValue == "return" || key.rawValue == "enter" || key.rawValue == "\r" {
                         // Cancel any pending silence timer to avoid double-finalisation
                         state.isMonitoringSilence = false
                         state.lastSpeechTime = nil

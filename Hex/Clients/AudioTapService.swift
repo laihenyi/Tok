@@ -60,7 +60,6 @@ final class ProcessTap {
 
     // MARK: Public lifecycle
 
-    @MainActor
     func activate() {
         guard !activated else { return }
         activated = true
