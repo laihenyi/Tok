@@ -47,6 +47,7 @@ struct HexSettings: Codable, Equatable, Sendable {
     // Remote AI provider settings
     var aiProviderType: AIProviderType = .ollama
     var groqAPIKey: String = ""
+    var geminiAPIKey: String = ""
     var selectedRemoteModel: String = "llama-3.3-70b-versatile"
     // Voice Recognition Initial Prompt
     var voiceRecognitionPrompt: String = ""
@@ -92,6 +93,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         case aiEnhancementTemperature
         case aiProviderType
         case groqAPIKey
+        case geminiAPIKey
         case selectedRemoteModel
         case voiceRecognitionPrompt
         case liveResponsePrompt
@@ -102,146 +104,68 @@ struct HexSettings: Codable, Equatable, Sendable {
         case developerModeEnabled
 	}
 
-	init(
-		soundEffectsEnabled: Bool = true,
-		hotkey: HotKey = .init(key: nil, modifiers: [.option]),
-		openOnLogin: Bool = false,
-		showDockIcon: Bool = true,
-		selectedModel: String = "openai_whisper-large-v3-v20240930",
-		useClipboardPaste: Bool = true,
-		preventSystemSleep: Bool = true,
-		pauseMediaOnRecord: Bool = true,
-		minimumKeyTime: Double = 0.2,
-		copyToClipboard: Bool = true,
-		useDoubleTapOnly: Bool = false,
-		outputLanguage: String? = nil,
-		selectedMicrophoneID: String? = nil,
-        disableAutoCapitalization: Bool = false,
-        enableAudioMixing: Bool = false,
-        selectedOutputDeviceID: String? = nil,
-        audioMixingInputGain: Double = 1.0,
-        audioMixingSystemAudioGain: Double = 1.0,
-        backgroundOpacity: Double = 0.6,
-        karaokeFontSize: Double = 28.0,
-        customThemeColors: [String] = [],
-        enableScreenCapture: Bool = false,
-        karaokeHotKey: HotKey = .init(key: .k, modifiers: [.command, .shift]),
-        hasCompletedOnboarding: Bool = false,
-        useAIEnhancement: Bool = false,
-        selectedAIModel: String = "gemma3",
-        aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt,
-        aiEnhancementTemperature: Double = 0.3,
-        aiProviderType: AIProviderType = .ollama,
-        groqAPIKey: String = "",
-        selectedRemoteModel: String = "llama-3.3-70b-versatile",
-        voiceRecognitionPrompt: String = "",
-        liveResponsePrompt: String = "",
-        transcriptionModelWarmStatus: ModelWarmStatus = .cold,
-        selectedImageModel: String = "gemma3n",
-        selectedRemoteImageModel: String = "meta-llama/llama-4-maverick-17b-128e-instruct",
-        imageAnalysisPrompt: String = defaultImageAnalysisPrompt,
-        developerModeEnabled: Bool = false
-	) {
-		self.soundEffectsEnabled = soundEffectsEnabled
-		self.hotkey = hotkey
-		self.openOnLogin = openOnLogin
-		self.showDockIcon = showDockIcon
-		self.selectedModel = selectedModel
-		self.useClipboardPaste = useClipboardPaste
-		self.preventSystemSleep = preventSystemSleep
-		self.pauseMediaOnRecord = pauseMediaOnRecord
-		self.minimumKeyTime = minimumKeyTime
-		self.copyToClipboard = copyToClipboard
-		self.useDoubleTapOnly = useDoubleTapOnly
-		self.outputLanguage = outputLanguage
-		self.selectedMicrophoneID = selectedMicrophoneID
-        self.disableAutoCapitalization = disableAutoCapitalization
-        self.enableAudioMixing = enableAudioMixing
-        self.selectedOutputDeviceID = selectedOutputDeviceID
-        self.audioMixingInputGain = audioMixingInputGain
-        self.audioMixingSystemAudioGain = audioMixingSystemAudioGain
-        self.backgroundOpacity = backgroundOpacity
-        self.karaokeFontSize = karaokeFontSize
-        self.customThemeColors = customThemeColors
-        self.enableScreenCapture = enableScreenCapture
-        self.karaokeHotKey = karaokeHotKey
-        self.hasCompletedOnboarding = hasCompletedOnboarding
-        self.useAIEnhancement = useAIEnhancement
-        self.selectedAIModel = selectedAIModel
-        self.aiEnhancementPrompt = aiEnhancementPrompt
-        self.aiEnhancementTemperature = aiEnhancementTemperature
-        self.aiProviderType = aiProviderType
-        self.groqAPIKey = groqAPIKey
-        self.selectedRemoteModel = selectedRemoteModel
-        self.voiceRecognitionPrompt = voiceRecognitionPrompt
-        self.liveResponsePrompt = liveResponsePrompt
-        self.transcriptionModelWarmStatus = transcriptionModelWarmStatus
-        self.selectedImageModel = selectedImageModel
-        self.selectedRemoteImageModel = selectedRemoteImageModel
-        self.imageAnalysisPrompt = imageAnalysisPrompt
-        self.developerModeEnabled = developerModeEnabled
-	}
+	/// Default initializer that relies on all stored-property default values.
+	/// Needed because the presence of a custom `init(from:)` prevents Swift from
+	/// synthesising the zero-argument initializer that other code expects.
+	init() {}
 
 	// Custom decoder that handles missing fields
 	init(from decoder: Decoder) throws {
 		let container = try decoder.container(keyedBy: CodingKeys.self)
+		// A fresh instance gives us all default values in one place so we don't have to
+		// duplicate literals here.
+		let defaults = HexSettings()
 
-		// Decode each property, using decodeIfPresent with default fallbacks
-		soundEffectsEnabled =
-			try container.decodeIfPresent(Bool.self, forKey: .soundEffectsEnabled) ?? true
-		hotkey =
-			try container.decodeIfPresent(HotKey.self, forKey: .hotkey)
-			?? .init(key: nil, modifiers: [.option])
-		openOnLogin = try container.decodeIfPresent(Bool.self, forKey: .openOnLogin) ?? false
-		showDockIcon = try container.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? true
-		selectedModel =
-			try container.decodeIfPresent(String.self, forKey: .selectedModel)
-			?? "openai_whisper-large-v3-v20240930"
-		useClipboardPaste = try container.decodeIfPresent(Bool.self, forKey: .useClipboardPaste) ?? true
-		preventSystemSleep =
-			try container.decodeIfPresent(Bool.self, forKey: .preventSystemSleep) ?? true
-		pauseMediaOnRecord =
-			try container.decodeIfPresent(Bool.self, forKey: .pauseMediaOnRecord) ?? true
-		minimumKeyTime =
-			try container.decodeIfPresent(Double.self, forKey: .minimumKeyTime) ?? 0.2
-		copyToClipboard =
-			try container.decodeIfPresent(Bool.self, forKey: .copyToClipboard) ?? true
-		useDoubleTapOnly =
-			try container.decodeIfPresent(Bool.self, forKey: .useDoubleTapOnly) ?? false
-		outputLanguage = try container.decodeIfPresent(String.self, forKey: .outputLanguage)
-        selectedMicrophoneID = try container.decodeIfPresent(String.self, forKey: .selectedMicrophoneID)
-        disableAutoCapitalization = try container.decodeIfPresent(Bool.self, forKey: .disableAutoCapitalization) ?? false
-        enableAudioMixing = try container.decodeIfPresent(Bool.self, forKey: .enableAudioMixing) ?? false
-        selectedOutputDeviceID = try container.decodeIfPresent(String.self, forKey: .selectedOutputDeviceID)
-        audioMixingInputGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingInputGain) ?? 1.0
-        audioMixingSystemAudioGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingSystemAudioGain) ?? 1.0
-        backgroundOpacity = try container.decodeIfPresent(Double.self, forKey: .backgroundOpacity) ?? 0.6
-        karaokeFontSize = try container.decodeIfPresent(Double.self, forKey: .karaokeFontSize) ?? 28.0
-        customThemeColors = try container.decodeIfPresent([String].self, forKey: .customThemeColors) ?? []
-        enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? false
-        karaokeHotKey = try container.decodeIfPresent(HotKey.self, forKey: .karaokeHotKey) ?? .init(key: .k, modifiers: [.command, .shift])
-        hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
-        // AI Enhancement settings
-        useAIEnhancement = try container.decodeIfPresent(Bool.self, forKey: .useAIEnhancement) ?? false
-        selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? "gemma3"
-        aiEnhancementPrompt = try container.decodeIfPresent(String.self, forKey: .aiEnhancementPrompt) ?? EnhancementOptions.defaultPrompt
-        aiEnhancementTemperature = try container.decodeIfPresent(Double.self, forKey: .aiEnhancementTemperature) ?? 0.3
+		soundEffectsEnabled = try container.decodeIfPresent(Bool.self, forKey: .soundEffectsEnabled) ?? defaults.soundEffectsEnabled
+		hotkey = try container.decodeIfPresent(HotKey.self, forKey: .hotkey) ?? defaults.hotkey
+		openOnLogin = try container.decodeIfPresent(Bool.self, forKey: .openOnLogin) ?? defaults.openOnLogin
+		showDockIcon = try container.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? defaults.showDockIcon
+		selectedModel = try container.decodeIfPresent(String.self, forKey: .selectedModel) ?? defaults.selectedModel
+		useClipboardPaste = try container.decodeIfPresent(Bool.self, forKey: .useClipboardPaste) ?? defaults.useClipboardPaste
+		preventSystemSleep = try container.decodeIfPresent(Bool.self, forKey: .preventSystemSleep) ?? defaults.preventSystemSleep
+		pauseMediaOnRecord = try container.decodeIfPresent(Bool.self, forKey: .pauseMediaOnRecord) ?? defaults.pauseMediaOnRecord
+		minimumKeyTime = try container.decodeIfPresent(Double.self, forKey: .minimumKeyTime) ?? defaults.minimumKeyTime
+		copyToClipboard = try container.decodeIfPresent(Bool.self, forKey: .copyToClipboard) ?? defaults.copyToClipboard
+		useDoubleTapOnly = try container.decodeIfPresent(Bool.self, forKey: .useDoubleTapOnly) ?? defaults.useDoubleTapOnly
+		outputLanguage = try container.decodeIfPresent(String.self, forKey: .outputLanguage) ?? defaults.outputLanguage
+        selectedMicrophoneID = try container.decodeIfPresent(String.self, forKey: .selectedMicrophoneID) ?? defaults.selectedMicrophoneID
+        disableAutoCapitalization = try container.decodeIfPresent(Bool.self, forKey: .disableAutoCapitalization) ?? defaults.disableAutoCapitalization
+        enableAudioMixing = try container.decodeIfPresent(Bool.self, forKey: .enableAudioMixing) ?? defaults.enableAudioMixing
+        selectedOutputDeviceID = try container.decodeIfPresent(String.self, forKey: .selectedOutputDeviceID) ?? defaults.selectedOutputDeviceID
+        audioMixingInputGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingInputGain) ?? defaults.audioMixingInputGain
+        audioMixingSystemAudioGain = try container.decodeIfPresent(Double.self, forKey: .audioMixingSystemAudioGain) ?? defaults.audioMixingSystemAudioGain
+        backgroundOpacity = try container.decodeIfPresent(Double.self, forKey: .backgroundOpacity) ?? defaults.backgroundOpacity
+        karaokeFontSize = try container.decodeIfPresent(Double.self, forKey: .karaokeFontSize) ?? defaults.karaokeFontSize
+        customThemeColors = try container.decodeIfPresent([String].self, forKey: .customThemeColors) ?? defaults.customThemeColors
+        enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? defaults.enableScreenCapture
+        karaokeHotKey = try container.decodeIfPresent(HotKey.self, forKey: .karaokeHotKey) ?? defaults.karaokeHotKey
+        hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? defaults.hasCompletedOnboarding
+
+        // AI Enhancement
+        useAIEnhancement = try container.decodeIfPresent(Bool.self, forKey: .useAIEnhancement) ?? defaults.useAIEnhancement
+        selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? defaults.selectedAIModel
+        aiEnhancementPrompt = try container.decodeIfPresent(String.self, forKey: .aiEnhancementPrompt) ?? defaults.aiEnhancementPrompt
+        aiEnhancementTemperature = try container.decodeIfPresent(Double.self, forKey: .aiEnhancementTemperature) ?? defaults.aiEnhancementTemperature
+
         // Remote AI provider settings
-        aiProviderType = try container.decodeIfPresent(AIProviderType.self, forKey: .aiProviderType) ?? .ollama
-        groqAPIKey = try container.decodeIfPresent(String.self, forKey: .groqAPIKey) ?? ""
-        selectedRemoteModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteModel) ?? "llama-3.3-70b-versatile"
-        // Voice Recognition Initial Prompt
-        voiceRecognitionPrompt = try container.decodeIfPresent(String.self, forKey: .voiceRecognitionPrompt) ?? ""
-        liveResponsePrompt = try container.decodeIfPresent(String.self, forKey: .liveResponsePrompt) ?? ""
-        // Model warm status tracking (only for transcription models)
-        transcriptionModelWarmStatus = try container.decodeIfPresent(ModelWarmStatus.self, forKey: .transcriptionModelWarmStatus) ?? .cold
-        // Image Recognition Model settings
-        selectedImageModel = try container.decodeIfPresent(String.self, forKey: .selectedImageModel) ?? "gemma3"
-        selectedRemoteImageModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteImageModel) ?? "meta-llama/llama-4-maverick-17b-128e-instruct"
-        // Image Analysis Prompt
-        imageAnalysisPrompt = try container.decodeIfPresent(String.self, forKey: .imageAnalysisPrompt) ?? defaultImageAnalysisPrompt
-        // Developer options
-        developerModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .developerModeEnabled) ?? false
+        aiProviderType = try container.decodeIfPresent(AIProviderType.self, forKey: .aiProviderType) ?? defaults.aiProviderType
+        groqAPIKey = try container.decodeIfPresent(String.self, forKey: .groqAPIKey) ?? defaults.groqAPIKey
+        geminiAPIKey = try container.decodeIfPresent(String.self, forKey: .geminiAPIKey) ?? defaults.geminiAPIKey
+        selectedRemoteModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteModel) ?? defaults.selectedRemoteModel
+
+        // Voice Recognition
+        voiceRecognitionPrompt = try container.decodeIfPresent(String.self, forKey: .voiceRecognitionPrompt) ?? defaults.voiceRecognitionPrompt
+        liveResponsePrompt = try container.decodeIfPresent(String.self, forKey: .liveResponsePrompt) ?? defaults.liveResponsePrompt
+
+        // Model warm status
+        transcriptionModelWarmStatus = try container.decodeIfPresent(ModelWarmStatus.self, forKey: .transcriptionModelWarmStatus) ?? defaults.transcriptionModelWarmStatus
+
+        // Image Recognition
+        selectedImageModel = try container.decodeIfPresent(String.self, forKey: .selectedImageModel) ?? defaults.selectedImageModel
+        selectedRemoteImageModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteImageModel) ?? defaults.selectedRemoteImageModel
+        imageAnalysisPrompt = try container.decodeIfPresent(String.self, forKey: .imageAnalysisPrompt) ?? defaults.imageAnalysisPrompt
+
+        developerModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .developerModeEnabled) ?? defaults.developerModeEnabled
 	}
 }
 
@@ -265,6 +189,8 @@ enum AIProviderType: String, Codable, CaseIterable, Equatable {
     /// Local LM Studio REST server (default port 1234)
     case lmstudio = "lmstudio"
     case groq = "groq"
+    /// Google Gemini API (Generative Language)
+    case gemini = "gemini"
     
     var displayName: String {
         switch self {
@@ -274,6 +200,8 @@ enum AIProviderType: String, Codable, CaseIterable, Equatable {
             return "LM Studio (Local)"
         case .groq:
             return "Groq (Remote)"
+        case .gemini:
+            return "Gemini (Remote)"
         }
     }
     
@@ -285,6 +213,8 @@ enum AIProviderType: String, Codable, CaseIterable, Equatable {
             return "Run AI models locally using LM Studio"
         case .groq:
             return "Use Groq's fast inference API"
+        case .gemini:
+            return "Google Gemini Generative Language API"
         }
     }
 }
@@ -301,7 +231,7 @@ extension AIProviderType {
         switch self {
         case .ollama, .lmstudio:
             return .local
-        case .groq:
+        case .groq, .gemini:
             return .remote
         }
     }

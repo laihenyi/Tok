@@ -548,8 +548,17 @@ struct KaraokeFeature {
                         do {
                             let imageData = try await screenCapture.captureScreen()
                             let provider = settings.aiProviderType
-                            let imgModel = provider == .groq ? settings.selectedRemoteImageModel : settings.selectedImageModel
-                            let apiKey = provider == .groq ? (settings.groqAPIKey.isEmpty ? nil : settings.groqAPIKey) : nil
+                            let imgModel = (provider == .groq || provider == .gemini) ? settings.selectedRemoteImageModel : settings.selectedImageModel
+                            let apiKey: String? = {
+                                switch provider {
+                                case .groq:
+                                    return settings.groqAPIKey.isEmpty ? nil : settings.groqAPIKey
+                                case .gemini:
+                                    return settings.geminiAPIKey.isEmpty ? nil : settings.geminiAPIKey
+                                default:
+                                    return nil
+                                }
+                            }()
                             let systemPrompt = defaultImageAnalysisPrompt
                             contextSummary = try await aiEnhancement.analyzeImage(
                                 imageData,
@@ -608,13 +617,22 @@ struct KaraokeFeature {
                             context: combinedContext
                         )
 
+                        let model = (settings.aiProviderType == .groq || settings.aiProviderType == .gemini) ? settings.selectedRemoteModel : settings.selectedAIModel
+                        let apiKey: String? = {
+                            switch settings.aiProviderType {
+                            case .groq:
+                                return settings.groqAPIKey.isEmpty ? nil : settings.groqAPIKey
+                            case .gemini:
+                                return settings.geminiAPIKey.isEmpty ? nil : settings.geminiAPIKey
+                            default:
+                                return nil
+                            }
+                        }()
                         let provider = settings.aiProviderType
-                        let aiModel = provider == .groq ? settings.selectedRemoteModel : settings.selectedAIModel
-                        let apiKey = provider == .groq ? (settings.groqAPIKey.isEmpty ? nil : settings.groqAPIKey) : nil
 
                         let enhancedText: String
                         do {
-                            enhancedText = try await aiEnhancement.enhance(rawText, aiModel, enhanceOptions, provider, apiKey) { _ in }
+                            enhancedText = try await aiEnhancement.enhance(rawText, model, enhanceOptions, provider, apiKey) { _ in }
                         } catch {
                             // If AI enhancement fails, fall back to raw text
                             enhancedText = rawText
@@ -781,8 +799,17 @@ struct KaraokeFeature {
                     maxTokens: 1000,
                     context: nil
                 )
-                let model = hs.aiProviderType == .groq ? hs.selectedRemoteModel : hs.selectedAIModel
-                let apiKey = hs.aiProviderType == .groq ? (hs.groqAPIKey.isEmpty ? nil : hs.groqAPIKey) : nil
+                let model = (hs.aiProviderType == .groq || hs.aiProviderType == .gemini) ? hs.selectedRemoteModel : hs.selectedAIModel
+                let apiKey: String? = {
+                    switch hs.aiProviderType {
+                    case .groq:
+                        return hs.groqAPIKey.isEmpty ? nil : hs.groqAPIKey
+                    case .gemini:
+                        return hs.geminiAPIKey.isEmpty ? nil : hs.geminiAPIKey
+                    default:
+                        return nil
+                    }
+                }()
                 let provider = hs.aiProviderType
 
                 return .run { [aiEnhancement, transcript, model, options, provider, apiKey] send in

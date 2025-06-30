@@ -10,6 +10,9 @@
     "%@ API Key" : {
 
     },
+    "%@ Connected" : {
+
+    },
     "•" : {
       "shouldTranslate" : false
     },
@@ -78,9 +81,6 @@
 
     },
     "AI Enhancement" : {
-
-    },
-    "AI enhancement requires Ollama to be installed and running locally." : {
 
     },
     "AI Provider" : {
@@ -347,6 +347,9 @@
         }
       }
     },
+    "Download LM Studio" : {
+
+    },
     "Download Ollama" : {
 
     },
@@ -591,12 +594,6 @@
       }
     },
     "OK" : {
-
-    },
-    "Ollama Connected" : {
-
-    },
-    "Ollama Not Connected" : {
 
     },
     "on" : {
@@ -921,7 +918,7 @@
     "These instructions tell the AI how to improve your transcribed text." : {
 
     },
-    "To set up Ollama:" : {
+    "To set up %@:" : {
 
     },
     "Tok is open source" : {

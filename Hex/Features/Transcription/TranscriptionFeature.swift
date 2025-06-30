@@ -721,6 +721,7 @@ private extension TranscriptionFeature {
     let providerTypeForImage = state.hexSettings.aiProviderType
     let imageModel = providerTypeForImage == .ollama ? state.hexSettings.selectedImageModel : state.hexSettings.selectedRemoteImageModel
     let groqAPIKey = state.hexSettings.groqAPIKey
+    let geminiAPIKey = state.hexSettings.geminiAPIKey
     let imageAnalysisPrompt = state.hexSettings.imageAnalysisPrompt
 
     print("[TranscriptionFeature] Starting recording…")
@@ -744,7 +745,7 @@ private extension TranscriptionFeature {
 
         do {
           print("[TranscriptionFeature] Delayed screenshot capture starting…")
-          let byteLimit = providerTypeForImage == .groq ? 300 * 1024 : 10 * 1024
+          let byteLimit = (providerTypeForImage == .groq || providerTypeForImage == .gemini) ? 300 * 1024 : 10 * 1024
           let screenshotData = try await screenCapture.captureScreenshot(byteLimit)
           print("[TranscriptionFeature] Screenshot captured (\(screenshotData.count) bytes)")
 
@@ -758,7 +759,16 @@ private extension TranscriptionFeature {
             modelName,
             imagePrompt,
             provider,
-            provider == .groq ? groqAPIKey : nil,
+            {
+              switch provider {
+              case .groq:
+                return groqAPIKey.isEmpty ? nil : groqAPIKey
+              case .gemini:
+                return geminiAPIKey.isEmpty ? nil : geminiAPIKey
+              default:
+                return nil
+              }
+            }(),
             imageAnalysisPrompt
           ) { _ in }
           print("[TranscriptionFeature] Image analysis returned context prompt: \"\(context)\"")
@@ -1027,6 +1037,7 @@ private extension TranscriptionFeature {
       let promptText = state.hexSettings.aiEnhancementPrompt
       let temperature = state.hexSettings.aiEnhancementTemperature
       let groqAPIKey = state.hexSettings.groqAPIKey
+      let geminiAPIKey = state.hexSettings.geminiAPIKey
       let baseContextPrompt = state.contextPrompt
       let realTimeText = state.realTimeTranscription
 
@@ -1059,6 +1070,7 @@ private extension TranscriptionFeature {
         promptText: enhancedPrompt,
         temperature: temperature,
         groqAPIKey: groqAPIKey,
+        geminiAPIKey: geminiAPIKey,
         contextPrompt: combinedContext
       )
     } else {
@@ -1100,6 +1112,7 @@ private extension TranscriptionFeature {
     promptText: String,
     temperature: Double,
     groqAPIKey: String,
+    geminiAPIKey: String,
     contextPrompt: String?
   ) -> Effect<Action> {
     // Trim whitespace so we don't send blank requests to the AI service
@@ -1118,7 +1131,16 @@ private extension TranscriptionFeature {
     
     // Determine the actual model to use based on provider
     let model = providerType == .ollama ? selectedAIModel : selectedRemoteModel
-    let apiKey = providerType == .groq ? groqAPIKey : nil
+    let apiKey: String? = {
+      switch providerType {
+      case .groq:
+        return groqAPIKey.isEmpty ? nil : groqAPIKey
+      case .gemini:
+        return geminiAPIKey.isEmpty ? nil : geminiAPIKey
+      default:
+        return nil
+      }
+    }()
     
     print("[TranscriptionFeature] Starting AI enhancement with \(providerType.displayName), model: \(model)")
     
@@ -1150,7 +1172,7 @@ private extension TranscriptionFeature {
           // Update progress to finalizing
           await send(.updateEnhancementProgress(.finalizing))
           
-          print("[TranscriptionFeature] AI enhancement succeeded")
+          print("[TranscriptionFeature] AI enhancement succeeded: \(enhancedText)")
           await send(.aiEnhancementResult(enhancedText))
         } catch {
           print("[TranscriptionFeature] Error enhancing text with AI: \(error)")

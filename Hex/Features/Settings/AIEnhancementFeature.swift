@@ -51,7 +51,7 @@ struct AIEnhancementFeature {
             switch currentProvider {
             case .ollama, .lmstudio:
                 return hexSettings.selectedAIModel
-            case .groq:
+            case .groq, .gemini:
                 return hexSettings.selectedRemoteModel
             }
         }
@@ -60,7 +60,7 @@ struct AIEnhancementFeature {
             switch currentProvider {
             case .ollama, .lmstudio:
                 return hexSettings.selectedImageModel
-            case .groq:
+            case .groq, .gemini:
                 return hexSettings.selectedRemoteImageModel
             }
         }
@@ -72,6 +72,8 @@ struct AIEnhancementFeature {
                 return ""
             case .groq:
                 return hexSettings.groqAPIKey
+            case .gemini:
+                return hexSettings.geminiAPIKey
             }
         }
     }
@@ -110,10 +112,10 @@ struct AIEnhancementFeature {
         Reduce { state, action in
             switch action {
             case .task:
-                // Check Ollama availability and load models for current provider
-                if state.currentProvider == .groq && !state.currentAPIKey.isEmpty {
+                // Check availability and load models for current provider
+                if state.currentProvider.category == .remote && !state.currentAPIKey.isEmpty {
                     return .merge(
-                        .send(.checkAvailability(.groq)),
+                        .send(.checkAvailability(state.currentProvider)),
                         .send(.loadRemoteModels),
                         .send(.loadRemoteImageModels)
                     )
@@ -207,7 +209,7 @@ struct AIEnhancementFeature {
                             .send(.loadAvailableImageModels)
                         )
                     }
-                case .groq:
+                case .groq, .gemini:
                     if !state.currentAPIKey.isEmpty {
                         return .merge(
                             .send(.loadRemoteModels),
@@ -219,12 +221,12 @@ struct AIEnhancementFeature {
                 
             case let .setAPIKey(apiKey):
                 switch state.currentProvider {
-                case .ollama:
-                    break // Ollama doesn't use API keys
+                case .ollama, .lmstudio:
+                    break // No API keys needed
                 case .groq:
                     state.$hexSettings.withLock { $0.groqAPIKey = apiKey }
-                case .lmstudio:
-                    break
+                case .gemini:
+                    state.$hexSettings.withLock { $0.geminiAPIKey = apiKey }
                 }
                 return .none
                 
@@ -242,7 +244,7 @@ struct AIEnhancementFeature {
                 state.isTestingConnection = false
                 state.connectionStatus = status
                 
-                if isConnected && state.currentProvider == .groq {
+                if isConnected && (state.currentProvider == .groq || state.currentProvider == .gemini) {
                     return .merge(
                         .send(.loadRemoteModels),
                         .send(.loadRemoteImageModels)
@@ -296,6 +298,7 @@ struct AIEnhancementFeature {
                     do {
                         let modelsRaw = try await aiEnhancement.getLocalModels(provider)
                         let imageModels = modelsRaw.filter { model in
+                            model.lowercased().contains("gemini") ||
                             model.lowercased().contains("gemma") ||
                             model.lowercased().contains("llava") ||
                             model.lowercased().contains("vl") ||
@@ -346,6 +349,7 @@ struct AIEnhancementFeature {
                         let models = try await aiEnhancement.getRemoteModels(provider, apiKey)
                         // Filter for vision/image models
                         let imageModels = models.filter { model in
+                            model.id.lowercased().contains("gemini") ||
                             model.id.lowercased().contains("gemma") ||
                             model.id.lowercased().contains("llama-4") ||
                             model.id.lowercased().contains("llava") ||

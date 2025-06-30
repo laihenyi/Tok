@@ -160,10 +160,10 @@ struct AIEnhancementView: View {
     // Computed properties for dynamic content
     private var shouldShowConnectionStatus: Bool {
         switch store.currentProvider {
-        case .groq:
-            return store.currentAPIKey.isEmpty || (store.connectionStatus?.contains("failed") == true)
-        default:
+        case .ollama, .lmstudio:
             return !store.isLocalProviderAvailable
+        case .groq, .gemini:
+            return store.currentAPIKey.isEmpty || (store.connectionStatus?.contains("failed") == true)
         }
     }
     
@@ -173,6 +173,8 @@ struct AIEnhancementView: View {
             return "Run AI models locally using Ollama. Requires Ollama to be installed and running."
         case .groq:
             return "Use Groq's fast inference API. Requires a Groq API key."
+        case .gemini:
+            return "Use Google Gemini Generative Language API. Requires a Gemini API key."
         case .lmstudio:
             return "Run AI models locally using LM Studio. Requires LM Studio server to be running."
         default:
@@ -184,6 +186,8 @@ struct AIEnhancementView: View {
         switch store.currentProvider {
         case .groq:
             return "Get your free API key from console.groq.com. Your key is stored securely on your device."
+        case .gemini:
+            return "Get an API key from Google AI Studio. Your key is stored securely on your device."
         default:
             return ""
         }
@@ -192,7 +196,7 @@ struct AIEnhancementView: View {
     // Model selection helper properties
     private var canLoadModels: Bool {
         switch store.currentProvider {
-        case .groq:
+        case .groq, .gemini:
             return !store.currentAPIKey.isEmpty
         default:
             return store.isLocalProviderAvailable
@@ -201,7 +205,7 @@ struct AIEnhancementView: View {
     
     private var hasAvailableModels: Bool {
         switch store.currentProvider {
-        case .groq:
+        case .groq, .gemini:
             return !store.availableRemoteModels.isEmpty
         default:
             return !store.availableModels.isEmpty
@@ -212,11 +216,9 @@ struct AIEnhancementView: View {
         switch store.currentProvider {
         case .ollama:
             return "Ollama connection required to view models"
-        case .groq:
+        case .groq, .gemini:
             return "API key required to load models"
         case .lmstudio:
-            return "LM Studio server must be running to view models"
-        default:
             return "LM Studio server must be running to view models"
         }
     }
@@ -227,6 +229,8 @@ struct AIEnhancementView: View {
             return "No models found in Ollama"
         case .groq:
             return "No models available from Groq"
+        case .gemini:
+            return "No models available from Gemini"
         case .lmstudio:
             return "No models found in LM Studio"
         default:
@@ -238,6 +242,8 @@ struct AIEnhancementView: View {
         switch store.currentProvider {
         case .groq:
             return "Different models offer various capabilities and speeds."
+        case .gemini:
+            return "Model capabilities vary between Gemini versions."
         default:
             return "Smaller models are faster but less capable."
         }
@@ -246,7 +252,7 @@ struct AIEnhancementView: View {
     // Image model selection helper properties
     private var hasAvailableImageModels: Bool {
         switch store.currentProvider {
-        case .groq:
+        case .groq, .gemini:
             return !store.availableRemoteImageModels.isEmpty
         default:
             return !store.availableImageModels.isEmpty
@@ -259,6 +265,8 @@ struct AIEnhancementView: View {
             return "No vision models found in Ollama"
         case .groq:
             return "No vision models available from Groq"
+        case .gemini:
+            return "No vision models available from Gemini"
         case .lmstudio:
             return "No vision models found in LM Studio"
         default:
@@ -272,6 +280,8 @@ struct AIEnhancementView: View {
             return "Vision models like LLaVA can analyze screenshots and images. Install vision models in Ollama to enable image recognition."
         case .groq:
             return "Vision models can analyze screenshots and images to provide context for your transcriptions."
+        case .gemini:
+            return "Gemini vision models can analyze screenshots and images to provide context for your transcriptions."
         case .lmstudio:
             return "Vision models like LLaVA can analyze screenshots and images. Ensure the model is loaded in LM Studio."
         default:
@@ -288,58 +298,101 @@ struct AIEnhancementView: View {
                     .foregroundColor(.orange)
                 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Ollama Not Connected")
+                    Text(connectionStatusTitle)
                         .font(.headline)
                         .foregroundColor(.primary)
                     
-                    Text("AI enhancement requires Ollama to be installed and running locally.")
+                    Text(connectionStatusBody)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
             }
-            
-            Divider()
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("To set up Ollama:")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    bulletPoint(text: "Download and install Ollama from [ollama.com](https://ollama.com)")
-                    bulletPoint(text: "Launch the Ollama application")
-                    bulletPoint(text: "Pull a language model (llama3 recommended)")
+
+            if store.currentProvider.category == .local {
+                Divider()
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("To set up \(store.currentProvider.displayName):")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if store.currentProvider == .ollama {
+                            bulletPoint(text: "Download and install Ollama from [ollama.com](https://ollama.com)")
+                            bulletPoint(text: "Launch the Ollama application")
+                            bulletPoint(text: "Pull a language model (llama3 recommended)")
+                        } else if store.currentProvider == .lmstudio {
+                            bulletPoint(text: "Download and install LM Studio from [lmstudio.ai](https://lmstudio.ai)")
+                            bulletPoint(text: "Launch LM Studio and ensure REST server is running on port 1234")
+                            bulletPoint(text: "Load or pull a compatible model (e.g., llama3)")
+                        }
+                    }
+                    .padding(.leading, 8)
                 }
-                .padding(.leading, 8)
             }
-            
+
             HStack {
                 Spacer()
-                
-                Button {
-                    NSWorkspace.shared.open(URL(string: "https://ollama.com")!)
-                } label: {
-                    Label("Download Ollama", systemImage: "arrow.down.circle")
+                if store.currentProvider.category == .local {
+                    if store.currentProvider == .ollama {
+                        Button {
+                            NSWorkspace.shared.open(URL(string: "https://ollama.com")!)
+                        } label: {
+                            Label("Download Ollama", systemImage: "arrow.down.circle")
+                        }
+                        .buttonStyle(DefaultButtonStyle())
+                        .foregroundColor(.blue)
+                    } else if store.currentProvider == .lmstudio {
+                        Button {
+                            NSWorkspace.shared.open(URL(string: "https://lmstudio.ai")!)
+                        } label: {
+                            Label("Download LM Studio", systemImage: "arrow.down.circle")
+                        }
+                        .buttonStyle(DefaultButtonStyle())
+                        .foregroundColor(.blue)
+                    }
                 }
-                .buttonStyle(DefaultButtonStyle())
-                .foregroundColor(Color.blue)
-                
                 Button {
                     store.send(.checkAvailability(store.currentProvider))
                 } label: {
                     Label("Check Connection", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(DefaultButtonStyle())
-                .foregroundColor(Color.blue)
+                .foregroundColor(.blue)
             }
             .padding(.top, 4)
         }
         .padding()
-        .background(RoundedRectangle(cornerRadius: 8)
-            .fill(Color.orange.opacity(0.1))
-            .overlay(RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.orange.opacity(0.3), lineWidth: 1))
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.orange.opacity(0.1))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                )
         )
+    }
+    
+    private var connectionStatusTitle: String {
+        switch store.currentProvider {
+        case .ollama:
+            return "Ollama Not Connected"
+        case .lmstudio:
+            return "LM Studio Not Connected"
+        case .groq:
+            return "Groq Connection Issue"
+        case .gemini:
+            return "Gemini Connection Issue"
+        }
+    }
+
+    private var connectionStatusBody: String {
+        switch store.currentProvider {
+        case .ollama:
+            return "AI enhancement requires Ollama to be installed and running locally."
+        case .lmstudio:
+            return "AI enhancement requires LM Studio's REST server to be running locally (port 1234)."
+        case .groq, .gemini:
+            return "Verify that your API key is correct and that you have internet connectivity."
+        }
     }
     
     // Activation Toggle
@@ -364,12 +417,12 @@ struct AIEnhancementView: View {
             }
             
             // Connection status indicator (only show if AI enhancement is enabled and Ollama is available)
-            if store.hexSettings.useAIEnhancement && store.isLocalProviderAvailable {
+            if store.hexSettings.useAIEnhancement && store.currentProvider.category == .local && store.isLocalProviderAvailable {
                 HStack(spacing: 4) {
                     Circle()
                         .fill(Color.green)
                         .frame(width: 6, height: 6)
-                    Text("Ollama Connected")
+                    Text("\(store.currentProvider.displayName) Connected")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
@@ -438,7 +491,7 @@ struct AIEnhancementView: View {
                         .padding(.vertical, 8)
                     } else {
                         switch store.currentProvider {
-                        case .groq:
+                        case .groq, .gemini:
                             Picker("", selection: Binding(
                                 get: { store.hexSettings.selectedRemoteModel },
                                 set: { store.send(.setSelectedRemoteModel($0)) }
@@ -477,7 +530,7 @@ struct AIEnhancementView: View {
                     // Refresh button for models
                     Button {
                         switch store.currentProvider {
-                        case .groq:
+                        case .groq, .gemini:
                             store.send(.loadRemoteModels)
                         default:
                             store.send(.loadAvailableModels)
@@ -563,7 +616,7 @@ struct AIEnhancementView: View {
                         .padding(.vertical, 8)
                     } else {
                         switch store.currentProvider {
-                        case .groq:
+                        case .groq, .gemini:
                             Picker("", selection: Binding(
                                 get: { store.hexSettings.selectedRemoteImageModel },
                                 set: { store.send(.setSelectedRemoteImageModel($0)) }
@@ -595,7 +648,7 @@ struct AIEnhancementView: View {
                     // Refresh button for image models
                     Button {
                         switch store.currentProvider {
-                        case .groq:
+                        case .groq, .gemini:
                             store.send(.loadRemoteImageModels)
                         default:
                             store.send(.loadAvailableImageModels)
@@ -875,7 +928,7 @@ struct AIEnhancementView: View {
     // Helper to get currently selected model
     private func getCurrentSelectedModel() -> String {
         switch store.currentProvider {
-        case .groq:
+        case .groq, .gemini:
             return store.hexSettings.selectedRemoteModel
         default:
             return store.hexSettings.selectedAIModel
@@ -885,7 +938,7 @@ struct AIEnhancementView: View {
     // Helper to get currently selected image model
     private func getCurrentSelectedImageModel() -> String {
         switch store.currentProvider {
-        case .groq:
+        case .groq, .gemini:
             return store.hexSettings.selectedRemoteImageModel
         default:
             return store.hexSettings.selectedImageModel
