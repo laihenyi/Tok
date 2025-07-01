@@ -22,10 +22,17 @@ struct KaraokeFeature {
         public var isTranscribing: Bool = false
         /// The currently-selected tab in the lower pane.
         public var selectedTab: Tab = .response
+        /// The currently-selected tab in the upper pane.
+        public var selectedTopPaneTab: TopPaneTab = .transcription
         /// User-editable prompt (persisted via HexSettings.liveResponsePrompt).
         var promptText: String {
             get { hexSettings.liveResponsePrompt }
             set { $hexSettings.withLock { $0.liveResponsePrompt = newValue } }
+        }
+        /// User-editable background text (persisted via HexSettings.karaokeBackgroundText).
+        var backgroundText: String {
+            get { hexSettings.karaokeBackgroundText }
+            set { $hexSettings.withLock { $0.karaokeBackgroundText = newValue } }
         }
         /// Latest AI response to show in the 'Response' tab.
         public var aiResponse: String = ""
@@ -104,6 +111,7 @@ struct KaraokeFeature {
     }
 
     enum Tab: Hashable { case response, prompt }
+    enum TopPaneTab: Hashable { case transcription, background }
 
     // MARK: Actions
     enum Action {
@@ -119,6 +127,8 @@ struct KaraokeFeature {
         // UI bindings
         case setSelectedTab(Tab)
         case setPrompt(String)
+        case setSelectedTopPaneTab(TopPaneTab)
+        case setBackgroundText(String)
 
         // AI
         case _aiResponse(String)
@@ -412,6 +422,14 @@ struct KaraokeFeature {
                 state.promptText = text // Writes through computed property to HexSettings.
                 return .none
 
+            case let .setSelectedTopPaneTab(tab):
+                state.selectedTopPaneTab = tab
+                return .none
+
+            case let .setBackgroundText(text):
+                state.backgroundText = text
+                return .none
+
             case let ._aiResponse(text):
                 state.aiResponse = text
                 return .none
@@ -481,7 +499,7 @@ struct KaraokeFeature {
                     chunkingStrategy: .vad
                 )
                 let settings = state.hexSettings
-                let previousTranscript = state.lastFinalizedTranscription
+                let previousTranscript = state.lastFinalizedTranscription.isEmpty ? state.backgroundText : state.lastFinalizedTranscription
 
                 // Capture the real-time transcription (confirmed + live) since the last separator so we
                 // can feed it into the AI enhancement for additional context.
@@ -650,10 +668,11 @@ struct KaraokeFeature {
                 }
                 .cancellable(id: CancelID.finalize, cancelInFlight: true)
 
-                // 1) Cancel the live stream immediately
-                let cancelStream: Effect<Action> = .cancel(id: CancelID.stream)
+                // NOTE: We no longer cancel the live stream here. Running the
+                // full-chunk transcription concurrently ensures that the
+                // real-time transcription continues uninterrupted.
 
-                return .merge(cancelStream, finalizeEffect)
+                return finalizeEffect
 
             case let ._transcriptionFinalized(text):
                 // Clear any remaining live text
@@ -737,44 +756,6 @@ struct KaraokeFeature {
                 // Clear processing separator tracking
                 state.currentProcessingSeparatorId = nil
 
-                // Prepare parameters for restarting the live streaming transcription
-                let model = state.hexSettings.selectedModel
-                let options = DecodingOptions(
-                    language: state.hexSettings.outputLanguage,
-                    detectLanguage: state.hexSettings.outputLanguage == nil,
-                    chunkingStrategy: .vad
-                )
-                let settings = state.hexSettings
-                let previousTranscript = state.lastFinalizedTranscription
-
-                // Effect to restart the streaming transcription
-                let restartStreamEffect: Effect<Action> = .run { [transcription, model, options, settings, previousTranscript] send in
-                    // Small delay to ensure previous finalize cleaned up resources
-                    try? await Task.sleep(for: .milliseconds(100))
-
-                    let updates = AsyncStream<StreamTranscriptionUpdate> { continuation in
-                        let task = Task {
-                            do {
-                                try await transcription.startStreamTranscription(model, options, settings, previousTranscript) { update in
-                                    continuation.yield(update)
-                                    if update.isComplete { continuation.finish() }
-                                }
-                            } catch {
-                                continuation.finish()
-                            }
-                        }
-                        continuation.onTermination = { _ in
-                            task.cancel()
-                            Task { await transcription.stopStreamTranscription() }
-                        }
-                    }
-
-                    for await update in updates {
-                        await send(.streamUpdate(update))
-                    }
-                }
-                .cancellable(id: CancelID.stream, cancelInFlight: true)
-
                 // Debounce AI response request after inserting finalized segments
                 let debounceEffect: Effect<Action> = .run { [clock] send in
                     try? await clock.sleep(for: .seconds(3))
@@ -782,7 +763,8 @@ struct KaraokeFeature {
                 }
                 .cancellable(id: CancelID.aiDebounce, cancelInFlight: true)
 
-                return .merge(restartStreamEffect, debounceEffect)
+                // We keep the live stream running, so only return the debounce effect.
+                return debounceEffect
 
             case ._requestAIResponse:
                 // Clear any existing AI response so the UI reflects that a new request is in progress.

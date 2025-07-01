@@ -75,6 +75,7 @@ struct GeminiProvider: AIProviderService {
                     ]
                 ]
             ],
+            
             "contents": contentsPayload,
             "generationConfig": ["temperature": temperature]
         ]

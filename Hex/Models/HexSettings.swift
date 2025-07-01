@@ -36,6 +36,7 @@ struct HexSettings: Codable, Equatable, Sendable {
     var enableScreenCapture: Bool = false // New setting for enabling screen capture
     var karaokeHotKey: HotKey = .init(key: .k, modifiers: [.command, .shift])
     var hasCompletedOnboarding: Bool = false // New setting for onboarding completion
+    var karaokeBackgroundText: String = ""
 
     // Model warm status tracking (only for transcription models that need prewarming)
     var transcriptionModelWarmStatus: ModelWarmStatus = .cold
@@ -102,6 +103,7 @@ struct HexSettings: Codable, Equatable, Sendable {
         case selectedRemoteImageModel
         case imageAnalysisPrompt
         case developerModeEnabled
+        case karaokeBackgroundText
 	}
 
 	/// Default initializer that relies on all stored-property default values.
@@ -140,31 +142,32 @@ struct HexSettings: Codable, Equatable, Sendable {
         enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? defaults.enableScreenCapture
         karaokeHotKey = try container.decodeIfPresent(HotKey.self, forKey: .karaokeHotKey) ?? defaults.karaokeHotKey
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? defaults.hasCompletedOnboarding
-
+        karaokeBackgroundText = try container.decodeIfPresent(String.self, forKey: .karaokeBackgroundText) ?? defaults.karaokeBackgroundText
+        
         // AI Enhancement
         useAIEnhancement = try container.decodeIfPresent(Bool.self, forKey: .useAIEnhancement) ?? defaults.useAIEnhancement
         selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? defaults.selectedAIModel
         aiEnhancementPrompt = try container.decodeIfPresent(String.self, forKey: .aiEnhancementPrompt) ?? defaults.aiEnhancementPrompt
         aiEnhancementTemperature = try container.decodeIfPresent(Double.self, forKey: .aiEnhancementTemperature) ?? defaults.aiEnhancementTemperature
-
+        
         // Remote AI provider settings
         aiProviderType = try container.decodeIfPresent(AIProviderType.self, forKey: .aiProviderType) ?? defaults.aiProviderType
         groqAPIKey = try container.decodeIfPresent(String.self, forKey: .groqAPIKey) ?? defaults.groqAPIKey
         geminiAPIKey = try container.decodeIfPresent(String.self, forKey: .geminiAPIKey) ?? defaults.geminiAPIKey
         selectedRemoteModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteModel) ?? defaults.selectedRemoteModel
-
+        
         // Voice Recognition
         voiceRecognitionPrompt = try container.decodeIfPresent(String.self, forKey: .voiceRecognitionPrompt) ?? defaults.voiceRecognitionPrompt
         liveResponsePrompt = try container.decodeIfPresent(String.self, forKey: .liveResponsePrompt) ?? defaults.liveResponsePrompt
-
+        
         // Model warm status
         transcriptionModelWarmStatus = try container.decodeIfPresent(ModelWarmStatus.self, forKey: .transcriptionModelWarmStatus) ?? defaults.transcriptionModelWarmStatus
-
+        
         // Image Recognition
         selectedImageModel = try container.decodeIfPresent(String.self, forKey: .selectedImageModel) ?? defaults.selectedImageModel
         selectedRemoteImageModel = try container.decodeIfPresent(String.self, forKey: .selectedRemoteImageModel) ?? defaults.selectedRemoteImageModel
         imageAnalysisPrompt = try container.decodeIfPresent(String.self, forKey: .imageAnalysisPrompt) ?? defaults.imageAnalysisPrompt
-
+        
         developerModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .developerModeEnabled) ?? defaults.developerModeEnabled
 	}
 }
