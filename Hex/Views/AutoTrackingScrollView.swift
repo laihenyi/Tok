@@ -11,15 +11,11 @@ public struct AutoTrackingScrollView<T: Equatable, Content: View>: View {
 
     // MARK: – State & constants (macOS 14 +)
     @State private var isAutoScrollEnabled = true
-    /// Bound to the `ScrollView` via the `scrollPosition(id:)` modifier.
-    /// When we want to stick to the bottom we assign this property the
-    /// identifier of the bottom sentinel view.
-    @State private var scrollTargetID: UUID?
-
-    /// Identifier for the invisible sentinel placed at the bottom of the
-    /// scroll content. When this view is visible, we consider ourselves "at
-    /// bottom".
-    private let bottomSentinelID = UUID()
+    @State private var scrollID: String?
+    
+    /// Identifier for the bottom of the scroll content
+    private let bottomID = "bottom"
+    private let contentID = "content"
 
     public init(trackedValue: T, @ViewBuilder content: @escaping () -> Content) {
         self.trackedValue = trackedValue
@@ -28,36 +24,42 @@ public struct AutoTrackingScrollView<T: Equatable, Content: View>: View {
 
     @available(macOS 14.0, *)
     public var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                content()
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 6) {
+                    content()
+                        .id(contentID)
 
-                // Invisible sentinel used to (re-)enable auto-scrolling when
-                // it becomes visible.
-                Color.clear
-                    .frame(height: 1)
-                    .id(bottomSentinelID)
-                    .onAppear { isAutoScrollEnabled = true }
-                    .onDisappear { isAutoScrollEnabled = false }
+                    // Bottom marker for scrolling
+                    Rectangle()
+                        .fill(.clear)
+                        .frame(height: 1)
+                        .id(bottomID)
+                }
+                .scrollTargetLayout()
             }
-            // Required so the sentinel (and any other child) can be targeted
-            // by the `ScrollPosition` APIs.
-            .scrollTargetLayout()
-        }
-        // Bind the new scrolling API.
-        .scrollPosition(id: $scrollTargetID)
-        .onChange(of: trackedValue) { _, _ in
-            guard isAutoScrollEnabled else { return }
-            withAnimation {
-                withTransaction(\.scrollTargetAnchor, .bottom) {
-                    scrollTargetID = bottomSentinelID
+            .scrollPosition(id: $scrollID, anchor: .bottom)
+            .defaultScrollAnchor(.bottom)
+            .onChange(of: scrollID) { _, newScrollID in
+                // When scrollID becomes nil, it means the view at the bottom edge has no ID.
+                // This indicates the user has scrolled away from the bottom sentinel.
+                // In this case, we disable auto-scrolling.
+                if let newScrollID = newScrollID {
+                    isAutoScrollEnabled = (newScrollID == bottomID)
+                } else {
+                    isAutoScrollEnabled = false
                 }
             }
-        }
-        .onAppear {
-            // Ensure we start at the bottom.
-            withTransaction(\.scrollTargetAnchor, .bottom) {
-                scrollTargetID = bottomSentinelID
+            .onChange(of: trackedValue) { _, _ in
+                guard isAutoScrollEnabled else { return }
+                withAnimation(.easeOut(duration: 0.3)) {
+                    proxy.scrollTo(bottomID, anchor: .bottom)
+                }
+            }
+            .onAppear {
+                // Ensure we start at the bottom and enable auto-scroll
+                isAutoScrollEnabled = true
+                proxy.scrollTo(bottomID, anchor: .bottom)
             }
         }
     }
