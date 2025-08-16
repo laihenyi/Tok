@@ -303,6 +303,7 @@ struct TranscriptionFeature {
       // MARK: - Recording Flow
 
       case .startRecording:
+        print("🔥 [DEBUG] Action.startRecording received - starting recording flow")
         return handleStartRecording(&state)
 
       case .stopRecording:
@@ -549,9 +550,11 @@ private extension TranscriptionFeature {
   /// Effect to start monitoring hotkey events through the `keyEventMonitor`.
   func startHotKeyMonitoringEffect() -> Effect<Action> {
     .run { send in
-      var hotKeyProcessor: HotKeyProcessor = .init(hotkey: HotKey(key: nil, modifiers: [.option]))
       @Shared(.isSettingHotKey) var isSettingHotKey: Bool
       @Shared(.hexSettings) var hexSettings: HexSettings
+      
+      // Initialize with current user settings instead of hardcoded Option key
+      var hotKeyProcessor: HotKeyProcessor = .init(hotkey: hexSettings.hotkey)
 
       // Handle incoming key events
       keyEventMonitor.handleKeyEvent { keyEvent in
@@ -576,7 +579,10 @@ private extension TranscriptionFeature {
         switch hotKeyProcessor.process(keyEvent: keyEvent) {
         case .startRecording:
           let hotkeyTriggerTime = Date()
-          print("🎙️ [TIMING] Hotkey triggered at: \(hotkeyTriggerTime.timeIntervalSince1970)")
+          print("🔥 [DEBUG] HotKeyProcessor triggered .startRecording at: \(hotkeyTriggerTime.timeIntervalSince1970)")
+          print("🔥 [DEBUG] Current hotkey config: key=\(hexSettings.hotkey.key?.rawValue ?? "nil"), modifiers=\(hexSettings.hotkey.modifiers)")
+          print("🔥 [DEBUG] KeyEvent that triggered: key=\(keyEvent.key?.rawValue ?? "nil"), modifiers=\(keyEvent.modifiers)")
+          print("🔥 [DEBUG] HotKeyProcessor state: \(hotKeyProcessor.state)")
           // If double-tap lock is triggered, we start recording immediately
           if hotKeyProcessor.state == .doubleTapLock {
             Task { await send(.startRecording) }

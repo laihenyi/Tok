@@ -157,7 +157,7 @@ struct HexSettings: Codable, Equatable {
 			try container.decodeIfPresent(Bool.self, forKey: .soundEffectsEnabled) ?? true
 		hotkey =
 			try container.decodeIfPresent(HotKey.self, forKey: .hotkey)
-			?? .init(key: nil, modifiers: [.option])
+			?? .init(key: .space, modifiers: [.command, .shift])
 		openOnLogin = try container.decodeIfPresent(Bool.self, forKey: .openOnLogin) ?? false
 		showDockIcon = try container.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? true
 		selectedModel =
