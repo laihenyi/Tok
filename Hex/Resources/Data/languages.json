@@ -35,8 +35,12 @@
         "name": "Catalan"
     },
     {
-        "code": "zh",
-        "name": "Chinese"
+        "code": "zh-cn",
+        "name": "Chinese (Simplified)"
+    },
+    {
+        "code": "zh-tw",
+        "name": "Chinese (Traditional)"
     },
     {
         "code": "hr",

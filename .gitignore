@@ -11,3 +11,40 @@ buildServer.json
 bin
 scripts
 ExportOptions.plist
+
+# Development and documentation files
+/.serena
+CLAUDE.md
+
+# Xcode derived data and build artifacts (development)
+DerivedData/
+*.xcresult
+*.app
+*.dSYM
+*.profraw
+*.profdata
+
+# Temporary development files
+.swiftpm/
+.build/
+*.tmp
+*.temp
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Log files
+*.log
+
+# Backup files
+*.bak
+*.backup

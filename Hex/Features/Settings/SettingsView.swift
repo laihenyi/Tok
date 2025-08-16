@@ -110,6 +110,12 @@ struct SettingsView: View {
 					}
 				}
 				.pickerStyle(.menu)
+				
+				// Show Traditional Chinese toggle when Chinese is selected
+				if store.hexSettings.outputLanguage?.hasPrefix("zh") == true {
+					Toggle("Convert to Traditional Chinese", isOn: $store.hexSettings.preferTraditionalChinese)
+						.help("Convert transcribed Chinese text to Traditional Chinese characters (繁體中文)")
+				}
 			} icon: {
 				Image(systemName: "globe")
 			}
@@ -163,6 +169,23 @@ struct SettingsView: View {
                         }
                     } icon: {
                         Image(systemName: "clock")
+                    }
+                }
+                
+                // Hotkey conflict warning
+                if store.hexSettings.hotkey.modifiers.contains(.option) && store.hexSettings.hotkey.key == nil {
+                    Label {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("⚠️ Option-only hotkey may conflict with other apps")
+                                .foregroundColor(.orange)
+                                .font(.caption)
+                            Text("Consider using Command+Shift+Space for better reliability")
+                                .foregroundColor(.secondary)
+                                .font(.caption2)
+                        }
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
                     }
                 }
 			}

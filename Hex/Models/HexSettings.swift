@@ -12,7 +12,7 @@ enum ModelWarmStatus: String, Codable, Equatable {
 // To add a new setting, add a new property to the struct, the CodingKeys enum, and the custom decoder
 struct HexSettings: Codable, Equatable {
 	var soundEffectsEnabled: Bool = true
-	var hotkey: HotKey = .init(key: nil, modifiers: [.option])
+	var hotkey: HotKey = .init(key: .space, modifiers: [.command, .shift])
 	var openOnLogin: Bool = false
 	var showDockIcon: Bool = true
 	var selectedModel: String = "openai_whisper-large-v3-v20240930"
@@ -27,6 +27,7 @@ struct HexSettings: Codable, Equatable {
     var disableAutoCapitalization: Bool = false // New setting for disabling auto-capitalization
     var enableScreenCapture: Bool = false // New setting for enabling screen capture
     var hasCompletedOnboarding: Bool = false // New setting for onboarding completion
+    var preferTraditionalChinese: Bool = false // Convert Chinese text to Traditional Chinese
 
     // Model warm status tracking (only for transcription models that need prewarming)
     var transcriptionModelWarmStatus: ModelWarmStatus = .cold
@@ -67,6 +68,7 @@ struct HexSettings: Codable, Equatable {
         case disableAutoCapitalization
         case enableScreenCapture
         case hasCompletedOnboarding
+        case preferTraditionalChinese
         case useAIEnhancement
         case selectedAIModel
         case aiEnhancementPrompt
@@ -84,7 +86,7 @@ struct HexSettings: Codable, Equatable {
 
 	init(
 		soundEffectsEnabled: Bool = true,
-		hotkey: HotKey = .init(key: nil, modifiers: [.option]),
+		hotkey: HotKey = .init(key: .space, modifiers: [.command, .shift]),
 		openOnLogin: Bool = false,
 		showDockIcon: Bool = true,
 		selectedModel: String = "openai_whisper-large-v3-v20240930",
@@ -99,6 +101,7 @@ struct HexSettings: Codable, Equatable {
         disableAutoCapitalization: Bool = false,
         enableScreenCapture: Bool = false,
         hasCompletedOnboarding: Bool = false,
+        preferTraditionalChinese: Bool = false,
         useAIEnhancement: Bool = false,
         selectedAIModel: String = "gemma3",
         aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt,
@@ -129,6 +132,7 @@ struct HexSettings: Codable, Equatable {
         self.disableAutoCapitalization = disableAutoCapitalization
         self.enableScreenCapture = enableScreenCapture
         self.hasCompletedOnboarding = hasCompletedOnboarding
+        self.preferTraditionalChinese = preferTraditionalChinese
         self.useAIEnhancement = useAIEnhancement
         self.selectedAIModel = selectedAIModel
         self.aiEnhancementPrompt = aiEnhancementPrompt
@@ -175,6 +179,7 @@ struct HexSettings: Codable, Equatable {
         disableAutoCapitalization = try container.decodeIfPresent(Bool.self, forKey: .disableAutoCapitalization) ?? false
         enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? false
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
+        preferTraditionalChinese = try container.decodeIfPresent(Bool.self, forKey: .preferTraditionalChinese) ?? false
         // AI Enhancement settings
         useAIEnhancement = try container.decodeIfPresent(Bool.self, forKey: .useAIEnhancement) ?? false
         selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? "gemma3"

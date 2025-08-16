@@ -747,9 +747,11 @@ private extension TranscriptionFeature {
       .run { send in
         do {
           // Create decoding options without context prompt (prompt will be applied later for the final transcription)
+          // Normalize Chinese language codes for WhisperKit
+          let normalizedLanguage = TranscriptionFeature.normalizeLanguageForWhisper(language)
           let decodeOptions = DecodingOptions(
-            language: language,
-            detectLanguage: language == nil,
+            language: normalizedLanguage,
+            detectLanguage: normalizedLanguage == nil,
             chunkingStrategy: .vad
           )
 
@@ -858,9 +860,11 @@ private extension TranscriptionFeature {
 
           // Build decoding options
           // 1) baseOptions (no prompt tokens) – identical to History view
+          // Normalize Chinese language codes for WhisperKit
+          let normalizedLanguage = TranscriptionFeature.normalizeLanguageForWhisper(language)
           let baseOptions = DecodingOptions(
-            language: language,
-            detectLanguage: language == nil,
+            language: normalizedLanguage,
+            detectLanguage: normalizedLanguage == nil,
             chunkingStrategy: .vad
           )
 
@@ -952,13 +956,16 @@ private extension TranscriptionFeature {
             preferredResult = preferredResult.replacingOccurrences(of: "Thank you", with: "", options: .caseInsensitive)
           }
 
-          let finalResult: String
+          let rawFinalResult: String
           if preferredResult.isEmpty && !streamingFallbackText.isEmpty {
             print("[TranscriptionFeature] Both transcription variants are empty, using streaming fallback: '\(streamingFallbackText)'")
-            finalResult = streamingFallbackText
+            rawFinalResult = streamingFallbackText
           } else {
-            finalResult = preferredResult
+            rawFinalResult = preferredResult
           }
+
+          // Clean Whisper tokens from the final result
+          let finalResult = transcription.cleanWhisperTokens(rawFinalResult)
 
           print("Chosen transcription result: \"\(finalResult)\"")
           TokLogger.log("Final transcription: \(finalResult)")
@@ -1421,5 +1428,21 @@ private extension TranscriptionFeature {
     }
 
     return true
+  }
+}
+
+// MARK: - Language Utilities
+private extension TranscriptionFeature {
+  /// Normalizes language codes for WhisperKit compatibility
+  /// Converts zh-cn/zh-tw to zh for WhisperKit processing
+  static func normalizeLanguageForWhisper(_ language: String?) -> String? {
+    guard let language = language else { return nil }
+    
+    // WhisperKit uses "zh" for all Chinese variants
+    if language.hasPrefix("zh") {
+      return "zh"
+    }
+    
+    return language
   }
 }

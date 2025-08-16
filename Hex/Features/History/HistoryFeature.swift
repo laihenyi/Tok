@@ -214,9 +214,11 @@ struct HistoryFeature {
 
 				return .run { _ in
 					do {
+						// Normalize Chinese language codes for WhisperKit
+						let normalizedLanguage = HistoryFeature.normalizeLanguageForWhisper(language)
 						let options = DecodingOptions(
-							language: language,
-							detectLanguage: language == nil,
+							language: normalizedLanguage,
+							detectLanguage: normalizedLanguage == nil,
 							chunkingStrategy: .vad
 						)
 						// Perform transcription
@@ -409,5 +411,21 @@ struct HistoryView: View {
 				Text("Are you sure you want to delete all transcripts? This action cannot be undone.")
 			}
 		}
+	}
+}
+
+// MARK: - Language Utilities
+private extension HistoryFeature {
+	/// Normalizes language codes for WhisperKit compatibility
+	/// Converts zh-cn/zh-tw to zh for WhisperKit processing
+	static func normalizeLanguageForWhisper(_ language: String?) -> String? {
+		guard let language = language else { return nil }
+		
+		// WhisperKit uses "zh" for all Chinese variants
+		if language.hasPrefix("zh") {
+			return "zh"
+		}
+		
+		return language
 	}
 }

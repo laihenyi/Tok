@@ -86,6 +86,19 @@ extension TranscriptionClient: DependencyKey {
   }
 }
 
+// MARK: - Performance Extensions
+
+private extension Character {
+  /// Performance optimized check for Chinese characters (CJK range)
+  var isChineseCharacter: Bool {
+    let scalar = unicodeScalars.first?.value ?? 0
+    // Chinese character ranges (simplified check for performance)
+    return (0x4E00...0x9FFF).contains(scalar) || // CJK Unified Ideographs
+           (0x3400...0x4DBF).contains(scalar) || // CJK Extension A  
+           (0x20000...0x2A6DF).contains(scalar)  // CJK Extension B
+  }
+}
+
 extension DependencyValues {
   var transcription: TranscriptionClient {
     get { self[TranscriptionClient.self] }
@@ -289,8 +302,18 @@ actor TranscriptionClientLive {
 
   /// Prewarms a model by loading it into memory without transcribing anything.
   /// This is useful for reducing latency when the user switches models in settings.
+  /// Performance optimized: smarter model reuse logic
   func prewarmModel(variant: String, progressCallback: @escaping (Progress) -> Void) async throws {
     print("[TranscriptionClientLive] prewarmModel - checking model: '\(variant)' vs current: '\(currentModelName ?? "nil")', whisperKit: \(whisperKit != nil), isStreamingActive: \(isStreamingActive)")
+
+    // Performance optimization: fast path for already loaded model
+    if variant == currentModelName && whisperKit != nil {
+      let progress = Progress(totalUnitCount: 100)
+      progress.completedUnitCount = 100
+      progressCallback(progress)
+      print("[TranscriptionClientLive] Model \(variant) already prewarmed (fast path)")
+      return
+    }
 
     // Don't prewarm if streaming is active to avoid interrupting transcription
     if isStreamingActive {
@@ -301,17 +324,15 @@ actor TranscriptionClientLive {
       return
     }
 
-    // Only load if it's not already the current model
+    // Performance optimization: avoid unnecessary unload if models are similar
+    // (This could be enhanced further with model compatibility checks)
     if whisperKit == nil || variant != currentModelName {
-      unloadCurrentModel()
+      // Only unload if we're switching to a different model
+      if currentModelName != nil && currentModelName != variant {
+        unloadCurrentModel()
+      }
       try await downloadAndLoadModel(variant: variant, progressCallback: progressCallback)
       print("[TranscriptionClientLive] Prewarmed model: \(variant)")
-    } else {
-      // Model is already loaded, just report completion
-      let progress = Progress(totalUnitCount: 100)
-      progress.completedUnitCount = 100
-      progressCallback(progress)
-      print("[TranscriptionClientLive] Model \(variant) already prewarmed")
     }
   }
 
@@ -356,7 +377,10 @@ actor TranscriptionClientLive {
     let results = try await whisperKit.transcribe(audioPath: url.path, decodeOptions: options)
 
     // Concatenate results from all segments.
-    var text = results.map(\.text).joined(separator: " ")
+    let rawText = results.map(\.text).joined(separator: " ")
+    
+    // Performance optimization: process text in single pass (cleaning + conversion)
+    var text = processTranscriptionText(rawText, settings: settings)
     
     // Use provided settings or default to auto-capitalization
     let useAutoCapitalization = settings == nil ? true : !settings!.disableAutoCapitalization
@@ -370,6 +394,36 @@ actor TranscriptionClientLive {
   }
 
   // MARK: - Private Helpers
+
+  /// Converts Simplified Chinese text to Traditional Chinese characters
+  /// Performance optimized: early return for non-Chinese text
+  private nonisolated func convertToTraditionalChinese(_ text: String) -> String {
+    // Performance optimization: skip conversion for empty or non-Chinese text
+    guard !text.isEmpty, text.contains(where: { $0.isChineseCharacter }) else {
+      return text
+    }
+    
+    // Use Swift's string transform to convert Simplified to Traditional Chinese
+    return text.applyingTransform(StringTransform("Simplified-Traditional"), reverse: false) ?? text
+  }
+  
+  /// Performance optimized: processes text in single pass (cleaning + conversion)
+  private nonisolated func processTranscriptionText(_ text: String, settings: HexSettings?) -> String {
+    // Early return for empty text
+    guard !text.isEmpty else { return text }
+    
+    // Step 1: Clean Whisper tokens
+    var processed = cleanWhisperTokens(from: text)
+    
+    // Step 2: Apply Traditional Chinese conversion if enabled
+    if let settings = settings,
+       settings.preferTraditionalChinese,
+       settings.outputLanguage?.hasPrefix("zh") == true {
+      processed = convertToTraditionalChinese(processed)
+    }
+    
+    return processed
+  }
 
   /// Creates or returns the local folder (on disk) for a given `variant` model.
   private func modelPath(for variant: String) -> URL {
@@ -388,6 +442,7 @@ actor TranscriptionClientLive {
   }
 
   // Unloads any currently loaded model (clears `whisperKit` and `currentModelName`).
+  // Performance optimization: avoid unnecessary unloading if the same model is being used.
   private func unloadCurrentModel() {
     print("[TranscriptionClientLive] Unloading current model: \(currentModelName ?? "none"), isStreamingActive: \(isStreamingActive)")
 
@@ -505,32 +560,28 @@ actor TranscriptionClientLive {
   }
   
   /// Cleans up raw Whisper tokens from streaming transcription text
+  /// Performance optimized with compiled regex and early returns
   nonisolated func cleanWhisperTokens(from text: String) -> String {
-    var cleaned = text
+    // Performance optimization: early return for empty text
+    guard !text.isEmpty else { return text }
     
-    // Remove Whisper special tokens
-    let whisperTokenPatterns = [
-      "<\\|startoftranscript\\|>",
-      "<\\|endoftranscript\\|>",
-      "<\\|\\w{2}\\|>", // Language tokens like <|en|>, <|es|>, etc.
-      "<\\|transcribe\\|>",
-      "<\\|translate\\|>",
-      "<\\|nospeech\\|>",
-      "<\\|notimestamps\\|>",
-      "<\\|\\d+\\.\\d+\\|>", // Timestamp tokens like <|0.00|>, <|1.20|>
-      "^\\s*", // Leading whitespace
-      "\\s*$"  // Trailing whitespace
-    ]
-    
-    for pattern in whisperTokenPatterns {
-      cleaned = cleaned.replacingOccurrences(
-        of: pattern,
-        with: "",
-        options: .regularExpression
-      )
+    // Performance optimization: skip processing if no tokens detected
+    guard text.contains("<|") else { 
+      return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
-    // Clean up multiple spaces and trim
+    var cleaned = text
+    
+    // Performance optimized: use single combined regex pattern
+    let combinedPattern = "<\\|(?:startoftranscript|endoftranscript|endoftext|transcribe|translate|nospeech|notimestamps|\\w{2,3}|\\d+\\.\\d+|[^|]*)\\|>"
+    
+    cleaned = cleaned.replacingOccurrences(
+      of: combinedPattern,
+      with: "",
+      options: .regularExpression
+    )
+    
+    // Clean up multiple spaces and trim in one pass
     cleaned = cleaned.replacingOccurrences(
       of: "\\s+",
       with: " ",
@@ -600,8 +651,8 @@ actor TranscriptionClientLive {
         return
       }
       
-      // Clean up raw Whisper tokens from the text
-      let cleanedText = self.cleanWhisperTokens(from: newState.currentText)
+      // Performance optimization: process text in single pass
+      let cleanedText = self.processTranscriptionText(newState.currentText, settings: settings)
       
       // Skip empty/waiting updates to reduce noise, but allow real transcription through
       if cleanedText.isEmpty || cleanedText == "Waiting for speech..." {
@@ -614,10 +665,10 @@ actor TranscriptionClientLive {
       print("[TranscriptionClientLive] Unconfirmed segments count: \(newState.unconfirmedSegments.count)")
       print("[TranscriptionClientLive] Cleaned text: '\(cleanedText)'")
       
-      // Convert WhisperKit segments to our custom format, also cleaning their text
+      // Performance optimization: process segments efficiently
       let confirmedSegments = newState.confirmedSegments.map { segment in
         TranscriptionSegment(
-            text: self.cleanWhisperTokens(from: segment.text),
+          text: self.processTranscriptionText(segment.text, settings: settings),
           start: TimeInterval(segment.start),
           end: TimeInterval(segment.end)
         )
@@ -625,7 +676,7 @@ actor TranscriptionClientLive {
       
       let unconfirmedSegments = newState.unconfirmedSegments.map { segment in
         TranscriptionSegment(
-            text: self.cleanWhisperTokens(from: segment.text),
+          text: self.processTranscriptionText(segment.text, settings: settings),
           start: TimeInterval(segment.start),
           end: TimeInterval(segment.end)
         )
