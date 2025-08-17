@@ -416,10 +416,14 @@ actor TranscriptionClientLive {
     var processed = cleanWhisperTokens(from: text)
     
     // Step 2: Apply Traditional Chinese conversion if enabled
-    if let settings = settings,
-       settings.preferTraditionalChinese,
-       settings.outputLanguage?.hasPrefix("zh") == true {
-      processed = convertToTraditionalChinese(processed)
+    if let settings = settings, settings.preferTraditionalChinese {
+      // Convert if language is explicitly set to Chinese OR if language not set but text contains Chinese
+      let languageIsChineseOrUnset = settings.outputLanguage?.hasPrefix("zh") == true || settings.outputLanguage == nil
+      let textContainsChinese = processed.contains(where: { $0.isChineseCharacter })
+      
+      if languageIsChineseOrUnset && textContainsChinese {
+        processed = convertToTraditionalChinese(processed)
+      }
     }
     
     return processed

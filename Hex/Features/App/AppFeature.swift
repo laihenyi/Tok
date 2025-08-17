@@ -13,7 +13,7 @@ import SwiftUI
 struct AppFeature {
   enum ActiveTab: Equatable {
     case settings
-    case history
+    // case history  // DISABLED: History功能暫時停用
     case about
     case aiEnhancement
     case developer
@@ -23,7 +23,7 @@ struct AppFeature {
   struct State {
     var transcription: TranscriptionFeature.State = .init()
     var settings: SettingsFeature.State = .init()
-    var history: HistoryFeature.State = .init()
+    // var history: HistoryFeature.State = .init()  // DISABLED: History功能暫時停用
     var onboarding: OnboardingFeature.State = .init()
     var developer: DeveloperFeature.State = .init()
     var activeTab: ActiveTab = .settings
@@ -34,7 +34,7 @@ struct AppFeature {
     case binding(BindingAction<State>)
     case transcription(TranscriptionFeature.Action)
     case settings(SettingsFeature.Action)
-    case history(HistoryFeature.Action)
+    // case history(HistoryFeature.Action)  // DISABLED: History功能暫時停用
     case developer(DeveloperFeature.Action)
     case onboarding(OnboardingFeature.Action)
     case setActiveTab(ActiveTab)
@@ -53,9 +53,10 @@ struct AppFeature {
       SettingsFeature()
     }
 
-    Scope(state: \.history, action: \.history) {
-      HistoryFeature()
-    }
+    // DISABLED: History功能暫時停用
+    // Scope(state: \.history, action: \.history) {
+    //   HistoryFeature()
+    // }
 
     Scope(state: \.developer, action: \.developer) {
       DeveloperFeature()
@@ -71,13 +72,14 @@ struct AppFeature {
         return .none
       case .transcription:
         return .none
-      case .settings(.openHistory):
-        state.activeTab = .history
-        return .none
+      // DISABLED: History功能暫時停用
+      // case .settings(.openHistory):
+      //   state.activeTab = .history
+      //   return .none
       case .settings:
         return .none
-      case .history:
-        return .none
+      // case .history:
+      //   return .none
       case .developer:
         return .none
       case .onboarding(.completeOnboarding):
@@ -120,12 +122,13 @@ struct AppView: View {
         }.buttonStyle(.plain)
           .tag(AppFeature.ActiveTab.aiEnhancement)
 
-        Button {
-          store.send(.setActiveTab(.history))
-        } label: {
-          Label("History", systemImage: "clock")
-        }.buttonStyle(.plain)
-          .tag(AppFeature.ActiveTab.history)
+        // DISABLED: History功能暫時停用
+        // Button {
+        //   store.send(.setActiveTab(.history))
+        // } label: {
+        //   Label("History", systemImage: "clock")
+        // }.buttonStyle(.plain)
+        //   .tag(AppFeature.ActiveTab.history)
           
         Button {
           store.send(.setActiveTab(.about))
@@ -152,9 +155,10 @@ struct AppView: View {
       case .aiEnhancement:
         AIEnhancementView(store: store.scope(state: \.settings.aiEnhancement, action: \.settings.aiEnhancement))
           .navigationTitle("AI Enhancement")
-      case .history:
-        HistoryView(store: store.scope(state: \.history, action: \.history))
-          .navigationTitle("History")
+      // DISABLED: History功能暫時停用
+      // case .history:
+      //   HistoryView(store: store.scope(state: \.history, action: \.history))
+      //     .navigationTitle("History")
       case .about:
         AboutView(store: store.scope(state: \.settings, action: \.settings))
           .navigationTitle("About")

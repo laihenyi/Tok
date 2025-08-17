@@ -27,7 +27,7 @@ struct HexSettings: Codable, Equatable {
     var disableAutoCapitalization: Bool = false // New setting for disabling auto-capitalization
     var enableScreenCapture: Bool = false // New setting for enabling screen capture
     var hasCompletedOnboarding: Bool = false // New setting for onboarding completion
-    var preferTraditionalChinese: Bool = false // Convert Chinese text to Traditional Chinese
+    var preferTraditionalChinese: Bool = true // Convert Chinese text to Traditional Chinese
 
     // Model warm status tracking (only for transcription models that need prewarming)
     var transcriptionModelWarmStatus: ModelWarmStatus = .cold
@@ -49,6 +49,10 @@ struct HexSettings: Codable, Equatable {
     var imageAnalysisPrompt: String = defaultImageAnalysisPrompt
     // Developer options
     var developerModeEnabled: Bool = false // Hidden developer mode flag
+    
+    // Streaming fallback options to prevent hallucination text
+    var enableStreamingFallback: Bool = false // Disabled by default to prevent hallucinations
+    var minimumFallbackLength: Int = 10 // Minimum length for fallback text to be used
 
 	// Define coding keys to match struct properties
 	enum CodingKeys: String, CodingKey {
@@ -82,6 +86,8 @@ struct HexSettings: Codable, Equatable {
         case selectedRemoteImageModel
         case imageAnalysisPrompt
         case developerModeEnabled
+        case enableStreamingFallback
+        case minimumFallbackLength
 	}
 
 	init(
@@ -101,7 +107,7 @@ struct HexSettings: Codable, Equatable {
         disableAutoCapitalization: Bool = false,
         enableScreenCapture: Bool = false,
         hasCompletedOnboarding: Bool = false,
-        preferTraditionalChinese: Bool = false,
+        preferTraditionalChinese: Bool = true,
         useAIEnhancement: Bool = false,
         selectedAIModel: String = "gemma3",
         aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt,
@@ -114,7 +120,9 @@ struct HexSettings: Codable, Equatable {
         selectedImageModel: String = "llava:latest",
         selectedRemoteImageModel: String = "llava-v1.5-7b-4096-preview",
         imageAnalysisPrompt: String = defaultImageAnalysisPrompt,
-        developerModeEnabled: Bool = false
+        developerModeEnabled: Bool = false,
+        enableStreamingFallback: Bool = false,
+        minimumFallbackLength: Int = 10
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
@@ -146,6 +154,8 @@ struct HexSettings: Codable, Equatable {
         self.selectedRemoteImageModel = selectedRemoteImageModel
         self.imageAnalysisPrompt = imageAnalysisPrompt
         self.developerModeEnabled = developerModeEnabled
+        self.enableStreamingFallback = enableStreamingFallback
+        self.minimumFallbackLength = minimumFallbackLength
 	}
 
 	// Custom decoder that handles missing fields
@@ -179,7 +189,7 @@ struct HexSettings: Codable, Equatable {
         disableAutoCapitalization = try container.decodeIfPresent(Bool.self, forKey: .disableAutoCapitalization) ?? false
         enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? false
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
-        preferTraditionalChinese = try container.decodeIfPresent(Bool.self, forKey: .preferTraditionalChinese) ?? false
+        preferTraditionalChinese = try container.decodeIfPresent(Bool.self, forKey: .preferTraditionalChinese) ?? true
         // AI Enhancement settings
         useAIEnhancement = try container.decodeIfPresent(Bool.self, forKey: .useAIEnhancement) ?? false
         selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? "gemma3"
@@ -200,6 +210,9 @@ struct HexSettings: Codable, Equatable {
         imageAnalysisPrompt = try container.decodeIfPresent(String.self, forKey: .imageAnalysisPrompt) ?? defaultImageAnalysisPrompt
         // Developer options
         developerModeEnabled = try container.decodeIfPresent(Bool.self, forKey: .developerModeEnabled) ?? false
+        // Streaming fallback options
+        enableStreamingFallback = try container.decodeIfPresent(Bool.self, forKey: .enableStreamingFallback) ?? false
+        minimumFallbackLength = try container.decodeIfPresent(Int.self, forKey: .minimumFallbackLength) ?? 10
 	}
 }
 

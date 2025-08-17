@@ -188,6 +188,29 @@ struct SettingsView: View {
                             .foregroundColor(.orange)
                     }
                 }
+                
+                // Streaming fallback controls (advanced)
+                Label {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle("Use streaming fallback", isOn: $store.hexSettings.enableStreamingFallback)
+                        Text("When formal transcription fails, use real-time transcription as backup. May include noise-generated text.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        if store.hexSettings.enableStreamingFallback {
+                            HStack {
+                                Text("Min length:")
+                                Stepper(value: $store.hexSettings.minimumFallbackLength, in: 5...50, step: 5) {
+                                    Text("\(store.hexSettings.minimumFallbackLength) chars")
+                                }
+                            }
+                            .font(.caption)
+                        }
+                    }
+                } icon: {
+                    Image(systemName: "waveform.and.mic")
+                        .foregroundColor(.blue)
+                }
 			}
 
 			// --- Sound Section ---

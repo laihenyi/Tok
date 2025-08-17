@@ -174,7 +174,8 @@ struct TranscriptionFeature {
     var showTranscriptionFailedAlert: Bool = false
     
     @Shared(.hexSettings) var hexSettings: HexSettings
-    @Shared(.transcriptionHistory) var transcriptionHistory: TranscriptionHistory
+    // DISABLED: History功能暫時停用
+    // @Shared(.transcriptionHistory) var transcriptionHistory: TranscriptionHistory
 
     // Manual Equatable conformance – we only care about fields that drive the
     // status-bar Pac-Man animation to avoid unnecessary view updates.
@@ -951,27 +952,55 @@ private extension TranscriptionFeature {
             preferredResult = ""
           }
 
-          // If the streamingFallbackText does not end with "thank you" (case-insensitive, with or without the trailing period),
-          // strip the same phrase from the preferredResult. We perform the comparison in lowercase so the check is case-insensitive.
+          // Remove common hallucination phrases from preferredResult
+          // Check if streamingFallbackText ends with hallucination phrases
           let fallbackLower = streamingFallbackText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-          let hasThankYouSuffix = fallbackLower.hasSuffix("thank you.") || fallbackLower.hasSuffix("thank you")
+          let hasHallucinationSuffix = fallbackLower.hasSuffix("thank you.") || fallbackLower.hasSuffix("thank you") ||
+                                       fallbackLower.hasSuffix("謝謝") || fallbackLower.hasSuffix("謝謝大家")
 
-          if !hasThankYouSuffix {
-            // Remove both "Thank you." and "Thank you" from the preferredResult, ignoring case.
+          if !hasHallucinationSuffix {
+            // Remove English hallucinations
             preferredResult = preferredResult.replacingOccurrences(of: "Thank you.", with: "", options: .caseInsensitive)
             preferredResult = preferredResult.replacingOccurrences(of: "Thank you", with: "", options: .caseInsensitive)
+            
+            // Remove Chinese hallucinations
+            preferredResult = preferredResult.replacingOccurrences(of: "謝謝大家", with: "", options: .caseInsensitive)
+            preferredResult = preferredResult.replacingOccurrences(of: "謝謝", with: "", options: .caseInsensitive)
+            preferredResult = preferredResult.replacingOccurrences(of: "感謝大家", with: "", options: .caseInsensitive)
+            preferredResult = preferredResult.replacingOccurrences(of: "感謝", with: "", options: .caseInsensitive)
           }
 
           let rawFinalResult: String
-          if preferredResult.isEmpty && !streamingFallbackText.isEmpty {
-            print("[TranscriptionFeature] Both transcription variants are empty, using streaming fallback: '\(streamingFallbackText)'")
-            rawFinalResult = streamingFallbackText
+          if preferredResult.isEmpty && 
+             !streamingFallbackText.isEmpty && 
+             settings.enableStreamingFallback &&
+             streamingFallbackText.trimmingCharacters(in: .whitespacesAndNewlines).count >= settings.minimumFallbackLength {
+            
+            // Additional check: filter out likely hallucination text
+            if !Self.isLikelyHallucinationText(streamingFallbackText) {
+              print("[TranscriptionFeature] Both transcription variants are empty, using streaming fallback: '\(streamingFallbackText)'")
+              rawFinalResult = streamingFallbackText
+            } else {
+              print("[TranscriptionFeature] Streaming fallback rejected as likely hallucination: '\(streamingFallbackText)'")
+              rawFinalResult = ""
+            }
           } else {
             rawFinalResult = preferredResult
           }
 
           // Clean Whisper tokens from the final result
-          let finalResult = transcription.cleanWhisperTokens(rawFinalResult)
+          var finalResult = transcription.cleanWhisperTokens(rawFinalResult)
+          
+          // Smart hallucination filtering: Only filter if the result is likely pure hallucination
+          let trimmedResult = finalResult.trimmingCharacters(in: .whitespacesAndNewlines)
+          
+          // Only apply filtering if the result is short and matches common hallucination patterns
+          if trimmedResult.count <= 15 && Self.isLikelyHallucinationText(trimmedResult) {
+            print("[TranscriptionFeature] Filtering out short hallucination text: '\(trimmedResult)'")
+            finalResult = ""
+          } else {
+            finalResult = trimmedResult
+          }
 
           print("Chosen transcription result: \"\(finalResult)\"")
           TokLogger.log("Final transcription: \(finalResult)")
@@ -1063,12 +1092,18 @@ private extension TranscriptionFeature {
       // Compute how long we recorded
       let duration = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
 
-      // Continue with storing the final result in the background
-      return finalizeRecordingAndStoreTranscript(
-        result: trimmedResult,
-        duration: duration,
-        transcriptionHistory: state.$transcriptionHistory
-      )
+      // DISABLED: History功能暫時停用
+      // return finalizeRecordingAndStoreTranscript(
+      //   result: trimmedResult,
+      //   duration: duration,
+      //   transcriptionHistory: state.$transcriptionHistory
+      // )
+      
+      // 只粘貼結果，不保存歷史記錄
+      return .run { _ in
+        await pasteboard.paste(trimmedResult)
+        await soundEffect.play(.pasteTranscript)
+      }
     }
   }
   
@@ -1179,11 +1214,18 @@ private extension TranscriptionFeature {
         await soundEffect.play(.enhancementComplete)
       },
       
-      finalizeRecordingAndStoreTranscript(
-        result: result,
-        duration: duration,
-        transcriptionHistory: state.$transcriptionHistory
-      ),
+      // DISABLED: History功能暫時停用
+      // finalizeRecordingAndStoreTranscript(
+      //   result: result,
+      //   duration: duration,
+      //   transcriptionHistory: state.$transcriptionHistory
+      // ),
+      
+      // 只粘貼結果，不保存歷史記錄
+      .run { _ in
+        await pasteboard.paste(result)
+        await soundEffect.play(.pasteTranscript)
+      },
       .run { send in
         // Clear progress after a short delay
         try await Task.sleep(for: .milliseconds(1000))
@@ -1205,62 +1247,63 @@ private extension TranscriptionFeature {
     }
   }
 
-  /// Move file to permanent location, create a transcript record, paste text, and play sound.
-  func finalizeRecordingAndStoreTranscript(
-    result: String,
-    duration: TimeInterval,
-    transcriptionHistory: Shared<TranscriptionHistory>
-  ) -> Effect<Action> {
-    .run { send in
-      // Detect potential transcription failure (long recording but short/empty text)
-      let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
-      if duration >= 10 && trimmed.count < 10 {
-        await send(.setTranscriptionFailedAlert(true))
-      }
-
-      do {
-        let originalURL = await recording.stopRecording()
-
-        // Move the file to a permanent location
-        let fm = FileManager.default
-        let supportDir = try fm.url(
-          for: .applicationSupportDirectory,
-          in: .userDomainMask,
-          appropriateFor: nil,
-          create: true
-        )
-        let ourAppFolder = supportDir.appendingPathComponent("com.kitlangton.Hex", isDirectory: true)
-        let recordingsFolder = ourAppFolder.appendingPathComponent("Recordings", isDirectory: true)
-        try fm.createDirectory(at: recordingsFolder, withIntermediateDirectories: true)
-
-        // Create a unique file name
-        let filename = "\(Date().timeIntervalSince1970).wav"
-        let finalURL = recordingsFolder.appendingPathComponent(filename)
-
-        // Move temp => final
-        try fm.moveItem(at: originalURL, to: finalURL)
-
-        // Build a transcript object
-        let transcript = Transcript(
-          timestamp: Date(),
-          text: result,
-          audioPath: finalURL,
-          duration: duration
-        )
-
-        // Append to the in-memory shared history
-        transcriptionHistory.withLock {
-          $0.history.insert(transcript, at: 0)
-        }
-
-        // Paste text (and copy if enabled via pasteWithClipboard)
-        await pasteboard.paste(result)
-        await soundEffect.play(.pasteTranscript)
-      } catch {
-        await send(.transcriptionError(error))
-      }
-    }
-  }
+  // DISABLED: History功能暫時停用
+  // /// Move file to permanent location, create a transcript record, paste text, and play sound.
+  // func finalizeRecordingAndStoreTranscript(
+  //   result: String,
+  //   duration: TimeInterval,
+  //   transcriptionHistory: Shared<TranscriptionHistory>
+  // ) -> Effect<Action> {
+  //   .run { send in
+  //     // Detect potential transcription failure (long recording but short/empty text)
+  //     let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+  //     if duration >= 10 && trimmed.count < 10 {
+  //       await send(.setTranscriptionFailedAlert(true))
+  //     }
+  //
+  //     do {
+  //       let originalURL = await recording.stopRecording()
+  //
+  //       // Move the file to a permanent location
+  //       let fm = FileManager.default
+  //       let supportDir = try fm.url(
+  //         for: .applicationSupportDirectory,
+  //         in: .userDomainMask,
+  //         appropriateFor: nil,
+  //         create: true
+  //       )
+  //       let ourAppFolder = supportDir.appendingPathComponent("com.kitlangton.Hex", isDirectory: true)
+  //       let recordingsFolder = ourAppFolder.appendingPathComponent("Recordings", isDirectory: true)
+  //       try fm.createDirectory(at: recordingsFolder, withIntermediateDirectories: true)
+  //
+  //       // Create a unique file name
+  //       let filename = "\(Date().timeIntervalSince1970).wav"
+  //       let finalURL = recordingsFolder.appendingPathComponent(filename)
+  //
+  //       // Move temp => final
+  //       try fm.moveItem(at: originalURL, to: finalURL)
+  //
+  //       // Build a transcript object
+  //       let transcript = Transcript(
+  //         timestamp: Date(),
+  //         text: result,
+  //         audioPath: finalURL,
+  //         duration: duration
+  //       )
+  //
+  //       // Append to the in-memory shared history
+  //       transcriptionHistory.withLock {
+  //         $0.history.insert(transcript, at: 0)
+  //       }
+  //
+  //       // Paste text (and copy if enabled via pasteWithClipboard)
+  //       await pasteboard.paste(result)
+  //       await soundEffect.play(.pasteTranscript)
+  //     } catch {
+  //       await send(.transcriptionError(error))
+  //     }
+  //   }
+  // }
 }
 
 // MARK: - Cancel Handler
@@ -1450,5 +1493,85 @@ private extension TranscriptionFeature {
     }
     
     return language
+  }
+}
+
+// MARK: - Hallucination Text Filtering
+
+private extension TranscriptionFeature {
+  /// Checks if the given text is likely to be hallucination from Whisper
+  static func isLikelyHallucinationText(_ text: String) -> Bool {
+    let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    
+    // Return true for empty or very short text
+    guard cleaned.count >= 2 else { return true }
+    
+    // Common Whisper hallucination phrases (Chinese and English)
+    let commonHallucinations = [
+      // English common hallucinations
+      "thank you", "thank you.", "thanks", "thanks.",
+      "goodbye", "bye", "bye.", "see you", 
+      "okay", "ok", "ok.", "alright",
+      "hello", "hi", "hey", "hey.",
+      "subtitle", "subtitles", "caption", "captions",
+      "music", "bgm", "background music",
+      "applause", "clapping", "silence",
+      "the end", "end", "that's it", "done",
+      // Chinese common hallucinations  
+      "謝謝", "謝謝大家", "感謝", "感謝大家",
+      "再見", "拜拜", "掰掰", "下次見",
+      "好的", "好", "沒問題", "知道了",
+      "你好", "哈囉", "嗨", "大家好",
+      "字幕", "音樂", "背景音樂", "掌聲",
+      "結束", "完了", "就這樣", "沒了"
+    ]
+    
+    // Check exact matches with common hallucinations
+    if commonHallucinations.contains(cleaned) {
+      return true
+    }
+    
+    // Check for repeating patterns (like "好好好", "謝謝謝謝")
+    if hasRepeatingPattern(cleaned) {
+      return true
+    }
+    
+    // Check for sequences of single repeated characters
+    if isRepeatedSingleCharacter(cleaned) {
+      return true
+    }
+    
+    return false
+  }
+  
+  /// Detects repeating patterns in text
+  private static func hasRepeatingPattern(_ text: String) -> Bool {
+    guard text.count >= 4 else { return false }
+    
+    let chars = Array(text)
+    let maxPatternLength = chars.count / 2
+    
+    // Check for patterns of length 1 to maxPatternLength
+    for patternLength in 1...maxPatternLength {
+      let pattern = String(chars[0..<patternLength])
+      let expectedRepeats = chars.count / patternLength
+      
+      // If we can repeat this pattern to fill most of the string, it's likely repetitive
+      if expectedRepeats >= 2 {
+        let reconstructed = String(repeating: pattern, count: expectedRepeats)
+        if text.hasPrefix(reconstructed) && reconstructed.count >= chars.count * 3 / 4 {
+          return true
+        }
+      }
+    }
+    
+    return false
+  }
+  
+  /// Detects text that's just a single character repeated
+  private static func isRepeatedSingleCharacter(_ text: String) -> Bool {
+    guard text.count >= 3 else { return false }
+    let firstChar = text.first
+    return text.allSatisfy { $0 == firstChar }
   }
 }
