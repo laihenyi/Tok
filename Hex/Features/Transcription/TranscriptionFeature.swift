@@ -556,6 +556,8 @@ private extension TranscriptionFeature {
       
       // Initialize with current user settings instead of hardcoded Option key
       var hotKeyProcessor: HotKeyProcessor = .init(hotkey: hexSettings.hotkey)
+      var lastTriggerTime: Date = .distantPast
+      let minimumTriggerInterval: TimeInterval = 0.1 // 100ms minimum between triggers
 
       // Handle incoming key events
       keyEventMonitor.handleKeyEvent { keyEvent in
@@ -576,9 +578,26 @@ private extension TranscriptionFeature {
         hotKeyProcessor.hotkey = hexSettings.hotkey
         hotKeyProcessor.useDoubleTapOnly = hexSettings.useDoubleTapOnly
 
+        // Add debouncing to prevent rapid fire triggers
+        let now = Date()
+
         // Process the key event
         switch hotKeyProcessor.process(keyEvent: keyEvent) {
         case .startRecording:
+          // Additional safety check: prevent triggers that are too close together
+          guard now.timeIntervalSince(lastTriggerTime) >= minimumTriggerInterval else {
+            print("🔥 [DEBUG] Hotkey trigger blocked - too soon after last trigger")
+            return true
+          }
+          
+          // TODO: Re-enable system state check after debugging
+          // Verify hotkey is actually pressed using system state
+          // guard Self.isHotKeyCurrentlyPressed(hexSettings.hotkey) else {
+          //   print("🔥 [DEBUG] Hotkey trigger blocked - system state check failed")
+          //   return true
+          // }
+          
+          lastTriggerTime = now
           let hotkeyTriggerTime = Date()
           print("🔥 [DEBUG] HotKeyProcessor triggered .startRecording at: \(hotkeyTriggerTime.timeIntervalSince1970)")
           print("🔥 [DEBUG] Current hotkey config: key=\(hexSettings.hotkey.key?.rawValue ?? "nil"), modifiers=\(hexSettings.hotkey.modifiers)")
