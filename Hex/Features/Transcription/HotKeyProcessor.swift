@@ -206,9 +206,17 @@ extension HotKeyProcessor {
 
     /// "Dirty" if chord includes any extra modifiers or a different key.
     private func chordIsDirty(_ e: KeyEvent) -> Bool {
-        let isSubset = e.modifiers.isSubset(of: hotkey.modifiers)
+        // Check if event has extra modifiers beyond what the hotkey requires
+        let hasExtraModifiers = !e.modifiers.isSubset(of: hotkey.modifiers)
+        
+        // Check if event has a different key when hotkey expects a specific key
         let isWrongKey = (hotkey.key != nil && e.key != nil && e.key != hotkey.key)
-        return !isSubset || isWrongKey
+        
+        // Check if event has a key when hotkey is modifier-only, BUT exclude the case where
+        // event modifiers are empty (like arrow keys with no modifiers)
+        let hasKeyForModifierOnlyHotkey = (hotkey.key == nil && e.key != nil && !e.modifiers.isEmpty)
+        
+        return hasExtraModifiers || isWrongKey || hasKeyForModifierOnlyHotkey
     }
 
     private func chordIsFullyReleased(_ e: KeyEvent) -> Bool {
