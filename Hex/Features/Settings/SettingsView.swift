@@ -111,11 +111,9 @@ struct SettingsView: View {
 				}
 				.pickerStyle(.menu)
 				
-				// Show Traditional Chinese toggle when Chinese is selected
-				if store.hexSettings.outputLanguage?.hasPrefix("zh") == true {
-					Toggle("Convert to Traditional Chinese", isOn: $store.hexSettings.preferTraditionalChinese)
-						.help("Convert transcribed Chinese text to Traditional Chinese characters (繁體中文)")
-				}
+				// Show Traditional Chinese toggle (works for auto-detected Chinese text too)
+				Toggle("Convert to Traditional Chinese", isOn: $store.hexSettings.preferTraditionalChinese)
+					.help("Convert transcribed Chinese text to Traditional Chinese characters (繁體中文)\nWorks with auto-detected Chinese text when output language is not specified")
 			} icon: {
 				Image(systemName: "globe")
 			}
