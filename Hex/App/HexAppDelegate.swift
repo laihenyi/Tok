@@ -35,6 +35,9 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 			object: nil
 		)
 
+		// Send app launch action to check permissions and onboarding status
+		HexApp.appStore.send(.appDidLaunch)
+
 		// Then present main views
 		presentMainView()
 		presentSettingsView()

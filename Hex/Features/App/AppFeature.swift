@@ -40,6 +40,7 @@ struct AppFeature {
     case setActiveTab(ActiveTab)
     case checkShouldShowOnboarding
     case dismissOnboarding
+    case appDidLaunch
   }
 
   var body: some ReducerOf<Self> {
@@ -96,6 +97,12 @@ struct AppFeature {
       case .dismissOnboarding:
         state.shouldShowOnboarding = false
         return .none
+      case .appDidLaunch:
+        // Check permissions on app launch to sync with system state
+        return .merge(
+          .send(.settings(.checkPermissions)),
+          .send(.checkShouldShowOnboarding)
+        )
       }
     }
   }
