@@ -4,6 +4,8 @@
 <dict>
 	<key>NSAccessibilityUsageDescription</key>
 	<string>Tok needs accessibility access to monitor keyboard events for hotkey detection.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Tok needs microphone access to record and transcribe your speech.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>

@@ -10,6 +10,9 @@
     "%@ API Key" : {
 
     },
+    "%lld chars" : {
+
+    },
     "•" : {
       "shouldTranslate" : false
     },
@@ -29,6 +32,9 @@
 
     },
     "• Start recording from any app" : {
+
+    },
+    "⚠️ Option-only hotkey may conflict with other apps" : {
 
     },
     "About" : {
@@ -188,7 +194,16 @@
     "Connection Status" : {
 
     },
+    "Consider using Command+Shift+Space for better reliability" : {
+
+    },
     "Continue" : {
+
+    },
+    "Convert to Traditional Chinese" : {
+
+    },
+    "Convert transcribed Chinese text to Traditional Chinese characters (繁體中文)\nWorks with auto-detected Chinese text when output language is not specified" : {
 
     },
     "Copied" : {
@@ -403,6 +418,7 @@
     },
     "History" : {
       "comment" : "History View Title",
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -472,6 +488,9 @@
       }
     },
     "Microphone Selection" : {
+
+    },
+    "Min length:" : {
 
     },
     "Model" : {
@@ -869,6 +888,9 @@
     "Use double-tap only" : {
 
     },
+    "Use streaming fallback" : {
+
+    },
     "Use This Hotkey" : {
 
     },
@@ -904,6 +926,9 @@
 
     },
     "When enabled, screenshots will be captured and analyzed to provide better transcription context. This requires screen recording permission." : {
+
+    },
+    "When formal transcription fails, use real-time transcription as backup. May include noise-generated text." : {
 
     },
     "You're using a full keyboard shortcut. Double-tap is recommended." : {
