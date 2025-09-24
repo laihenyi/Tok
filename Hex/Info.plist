@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDisplayName</key>
+	<string>Tok (Fixed)</string>
 	<key>NSAccessibilityUsageDescription</key>
 	<string>Tok needs accessibility access to monitor keyboard events for hotkey detection.</string>
 	<key>NSMicrophoneUsageDescription</key>
