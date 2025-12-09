@@ -58,6 +58,8 @@ public struct HotKeyProcessor {
     }
 
     public mutating func process(keyEvent: KeyEvent) -> Output? {
+        debugLogHotKey("[HotKeyProcessor] process - key: \(keyEvent.key?.rawValue ?? "nil"), modifiers: \(keyEvent.modifiers), state: \(state), isDirty: \(isDirty)")
+
         // 1) ESC => immediate cancel
         if keyEvent.key == .escape {
             print("ESCAPE HIT IN STATE: \(state)")
@@ -70,18 +72,22 @@ public struct HotKeyProcessor {
         // 2) If dirty, ignore until full release (nil, [])
         if isDirty {
             if chordIsFullyReleased(keyEvent) {
+                debugLogHotKey("[HotKeyProcessor] isDirty cleared - full release detected")
                 isDirty = false
             } else {
+                debugLogHotKey("[HotKeyProcessor] IGNORING event - isDirty=true, waiting for full release")
                 return nil
             }
         }
 
         // 3) Matching chord => handle as "press"
         if chordMatchesHotkey(keyEvent) {
+            debugLogHotKey("[HotKeyProcessor] chord matches hotkey - calling handleMatchingChord")
             return handleMatchingChord()
         } else {
             // Potentially become dirty if chord has extra mods or different key
             if chordIsDirty(keyEvent) {
+                debugLogHotKey("[HotKeyProcessor] setting isDirty=true")
                 isDirty = true
             }
             return handleNonmatchingChord(keyEvent)
@@ -239,5 +245,24 @@ extension HotKeyProcessor {
     private mutating func resetToIdle() {
         state = .idle
         lastTapAt = nil
+    }
+}
+
+// MARK: - Debug Logging Helper
+
+private func debugLogHotKey(_ message: String) {
+    let logFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tok_overlay_debug.log")
+    let timestamp = ISO8601DateFormatter().string(from: Date())
+    let line = "[\(timestamp)] \(message)\n"
+    if let data = line.data(using: .utf8) {
+        if FileManager.default.fileExists(atPath: logFile.path) {
+            if let handle = try? FileHandle(forWritingTo: logFile) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            }
+        } else {
+            try? data.write(to: logFile)
+        }
     }
 }

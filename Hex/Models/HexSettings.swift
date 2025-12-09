@@ -15,6 +15,7 @@ struct HexSettings: Codable, Equatable {
 	var hotkey: HotKey = .init(key: .space, modifiers: [.command, .shift])
 	var openOnLogin: Bool = false
 	var showDockIcon: Bool = true
+	var minimizeToMenuBarOnLaunch: Bool = false
 	var selectedModel: String = "openai_whisper-large-v3-v20240930"
 	var useClipboardPaste: Bool = true
 	var preventSystemSleep: Bool = true
@@ -54,12 +55,17 @@ struct HexSettings: Codable, Equatable {
     var enableStreamingFallback: Bool = false // Disabled by default to prevent hallucinations
     var minimumFallbackLength: Int = 10 // Minimum length for fallback text to be used
 
+    // Edit Overlay options (輸入法風格的編輯視窗)
+    var useEditOverlay: Bool = true // Show edit overlay before pasting
+    var autoLearnFromCorrections: Bool = true // Auto-learn from user corrections
+
 	// Define coding keys to match struct properties
 	enum CodingKeys: String, CodingKey {
 		case soundEffectsEnabled
 		case hotkey
 		case openOnLogin
 		case showDockIcon
+		case minimizeToMenuBarOnLaunch
 		case selectedModel
 		case useClipboardPaste
 		case preventSystemSleep
@@ -88,6 +94,8 @@ struct HexSettings: Codable, Equatable {
         case developerModeEnabled
         case enableStreamingFallback
         case minimumFallbackLength
+        case useEditOverlay
+        case autoLearnFromCorrections
 	}
 
 	init(
@@ -95,6 +103,7 @@ struct HexSettings: Codable, Equatable {
 		hotkey: HotKey = .init(key: .space, modifiers: [.command, .shift]),
 		openOnLogin: Bool = false,
 		showDockIcon: Bool = true,
+		minimizeToMenuBarOnLaunch: Bool = false,
 		selectedModel: String = "openai_whisper-large-v3-v20240930",
 		useClipboardPaste: Bool = true,
 		preventSystemSleep: Bool = true,
@@ -122,12 +131,15 @@ struct HexSettings: Codable, Equatable {
         imageAnalysisPrompt: String = defaultImageAnalysisPrompt,
         developerModeEnabled: Bool = false,
         enableStreamingFallback: Bool = false,
-        minimumFallbackLength: Int = 10
+        minimumFallbackLength: Int = 10,
+        useEditOverlay: Bool = true,
+        autoLearnFromCorrections: Bool = true
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
 		self.openOnLogin = openOnLogin
 		self.showDockIcon = showDockIcon
+		self.minimizeToMenuBarOnLaunch = minimizeToMenuBarOnLaunch
 		self.selectedModel = selectedModel
 		self.useClipboardPaste = useClipboardPaste
 		self.preventSystemSleep = preventSystemSleep
@@ -156,6 +168,8 @@ struct HexSettings: Codable, Equatable {
         self.developerModeEnabled = developerModeEnabled
         self.enableStreamingFallback = enableStreamingFallback
         self.minimumFallbackLength = minimumFallbackLength
+        self.useEditOverlay = useEditOverlay
+        self.autoLearnFromCorrections = autoLearnFromCorrections
 	}
 
 	// Custom decoder that handles missing fields
@@ -170,6 +184,7 @@ struct HexSettings: Codable, Equatable {
 			?? .init(key: .space, modifiers: [.command, .shift])
 		openOnLogin = try container.decodeIfPresent(Bool.self, forKey: .openOnLogin) ?? false
 		showDockIcon = try container.decodeIfPresent(Bool.self, forKey: .showDockIcon) ?? true
+		minimizeToMenuBarOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .minimizeToMenuBarOnLaunch) ?? false
 		selectedModel =
 			try container.decodeIfPresent(String.self, forKey: .selectedModel)
 			?? "openai_whisper-large-v3-v20240930"
@@ -213,6 +228,9 @@ struct HexSettings: Codable, Equatable {
         // Streaming fallback options
         enableStreamingFallback = try container.decodeIfPresent(Bool.self, forKey: .enableStreamingFallback) ?? false
         minimumFallbackLength = try container.decodeIfPresent(Int.self, forKey: .minimumFallbackLength) ?? 10
+        // Edit Overlay options
+        useEditOverlay = try container.decodeIfPresent(Bool.self, forKey: .useEditOverlay) ?? true
+        autoLearnFromCorrections = try container.decodeIfPresent(Bool.self, forKey: .autoLearnFromCorrections) ?? true
 	}
 }
 

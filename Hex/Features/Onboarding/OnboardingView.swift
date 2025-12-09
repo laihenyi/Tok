@@ -162,6 +162,7 @@ struct OnboardingView: View {
       
       if store.microphonePermission != .granted {
         Button("Grant Microphone Access") {
+          NSLog("🎙️ [VIEW] Button tapped - sending requestMicrophonePermission action")
           store.send(.requestMicrophonePermission)
         }
         .buttonStyle(.borderedProminent)

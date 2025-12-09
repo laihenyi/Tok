@@ -35,9 +35,12 @@ struct SettingsFeature {
 
     // Model Management
     var modelDownload = ModelDownloadFeature.State()
-    
+
     // AI Enhancement
     var aiEnhancement = AIEnhancementFeature.State()
+
+    // Custom Words Dictionary
+    var customWords = CustomWordsFeature.State()
   }
 
   enum Action: BindableAction {
@@ -56,16 +59,19 @@ struct SettingsFeature {
     case requestMicrophonePermission
     case requestAccessibilityPermission
     case accessibilityStatusDidChange
-    
+
     // Microphone selection
     case loadAvailableInputDevices
     case availableInputDevicesLoaded([AudioInputDevice])
 
     // Model Management
     case modelDownload(ModelDownloadFeature.Action)
-    
+
     // AI Enhancement
     case aiEnhancement(AIEnhancementFeature.Action)
+
+    // Custom Words Dictionary
+    case customWords(CustomWordsFeature.Action)
 
     // Navigation
     case openHistory
@@ -82,9 +88,13 @@ struct SettingsFeature {
     Scope(state: \.modelDownload, action: \.modelDownload) {
       ModelDownloadFeature()
     }
-    
+
     Scope(state: \.aiEnhancement, action: \.aiEnhancement) {
       AIEnhancementFeature()
+    }
+
+    Scope(state: \.customWords, action: \.customWords) {
+      CustomWordsFeature()
     }
 
     Reduce { state, action in
@@ -301,7 +311,11 @@ struct SettingsFeature {
       // AI Enhancement
       case .aiEnhancement:
         return .none
-      
+
+      // Custom Words Dictionary
+      case .customWords:
+        return .none
+
       // Microphone device selection
       case .loadAvailableInputDevices:
         return .run { send in

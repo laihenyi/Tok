@@ -241,6 +241,13 @@ struct SettingsView: View {
 				}
 
 				Label {
+					Toggle("Minimize to Menu Bar on Launch", isOn: $store.hexSettings.minimizeToMenuBarOnLaunch)
+					Text("Start minimized in the menu bar instead of showing the settings window")
+				} icon: {
+					Image(systemName: "menubar.arrow.up.rectangle")
+				}
+
+				Label {
 					Toggle("Use clipboard to insert", isOn: $store.hexSettings.useClipboardPaste)
 					Text("Use clipboard to insert text. Fast but may not restore all clipboard content.\nTurn off to use simulated keypresses. Slower, but doesn't need to restore clipboard")
 				} icon: {
@@ -260,6 +267,44 @@ struct SettingsView: View {
                 } icon: {
                     Image(systemName: "textformat.abc")
                 }
+
+				Divider()
+					.padding(.vertical, 4)
+
+				// Edit Overlay Settings
+				Label {
+					Toggle("顯示編輯浮窗", isOn: $store.hexSettings.useEditOverlay)
+					Text("轉錄後顯示編輯浮窗，讓您在貼上前可以檢視和修改文字")
+				} icon: {
+					Image(systemName: "rectangle.and.pencil.and.ellipsis")
+				}
+
+				Label {
+					Toggle("自動學習修正", isOn: $store.hexSettings.autoLearnFromCorrections)
+					Text("自動學習您的修正，頻繁修正的詞彙會自動加入詞庫")
+				} icon: {
+					Image(systemName: "brain.head.profile")
+				}
+				.disabled(!store.hexSettings.useEditOverlay)
+
+				// Custom Words Dictionary link
+				NavigationLink {
+					CustomWordsView(store: store.scope(state: \.customWords, action: \.customWords))
+				} label: {
+					Label {
+						VStack(alignment: .leading) {
+							Text("個人專屬詞彙")
+							Text("管理提示詞與替換規則，提升辨識準確度")
+								.font(.caption)
+								.foregroundColor(.secondary)
+						}
+					} icon: {
+						Image(systemName: "character.book.closed.fill")
+					}
+				}
+
+				Divider()
+					.padding(.vertical, 4)
 
 				Label {
 					Toggle(

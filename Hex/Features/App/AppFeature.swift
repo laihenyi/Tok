@@ -16,6 +16,7 @@ struct AppFeature {
     // case history  // DISABLED: History功能暫時停用
     case about
     case aiEnhancement
+    case customWords
     case developer
   }
 
@@ -129,6 +130,13 @@ struct AppView: View {
         }.buttonStyle(.plain)
           .tag(AppFeature.ActiveTab.aiEnhancement)
 
+        Button {
+          store.send(.setActiveTab(.customWords))
+        } label: {
+          Label("Custom Words", systemImage: "text.book.closed")
+        }.buttonStyle(.plain)
+          .tag(AppFeature.ActiveTab.customWords)
+
         // DISABLED: History功能暫時停用
         // Button {
         //   store.send(.setActiveTab(.history))
@@ -162,6 +170,9 @@ struct AppView: View {
       case .aiEnhancement:
         AIEnhancementView(store: store.scope(state: \.settings.aiEnhancement, action: \.settings.aiEnhancement))
           .navigationTitle("AI Enhancement")
+      case .customWords:
+        CustomWordsView(store: store.scope(state: \.settings.customWords, action: \.settings.customWords))
+          .navigationTitle("Custom Words")
       // DISABLED: History功能暫時停用
       // case .history:
       //   HistoryView(store: store.scope(state: \.history, action: \.history))

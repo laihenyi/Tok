@@ -407,25 +407,29 @@ actor TranscriptionClientLive {
     return text.applyingTransform(StringTransform("Simplified-Traditional"), reverse: false) ?? text
   }
   
-  /// Performance optimized: processes text in single pass (cleaning + conversion)
+  /// Performance optimized: processes text in single pass (cleaning + conversion + custom words)
   private nonisolated func processTranscriptionText(_ text: String, settings: HexSettings?) -> String {
     // Early return for empty text
     guard !text.isEmpty else { return text }
-    
+
     // Step 1: Clean Whisper tokens
     var processed = cleanWhisperTokens(from: text)
-    
+
     // Step 2: Apply Traditional Chinese conversion if enabled
     if let settings = settings, settings.preferTraditionalChinese {
       // Convert if language is explicitly set to Chinese OR if language not set but text contains Chinese
       let languageIsChineseOrUnset = settings.outputLanguage?.hasPrefix("zh") == true || settings.outputLanguage == nil
       let textContainsChinese = processed.contains(where: { $0.isChineseCharacter })
-      
+
       if languageIsChineseOrUnset && textContainsChinese {
         processed = convertToTraditionalChinese(processed)
       }
     }
-    
+
+    // Step 3: Apply custom word replacements
+    let customWordDictionary = getCachedCustomWordDictionary()
+    processed = customWordDictionary.applyReplacements(to: processed)
+
     return processed
   }
 

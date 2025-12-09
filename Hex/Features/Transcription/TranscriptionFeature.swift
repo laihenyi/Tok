@@ -14,6 +14,17 @@ import IOKit.pwr_mgt
 import Carbon
 import Sauce
 
+// MARK: - Notification Names for Edit Overlay
+
+extension Notification.Name {
+    static let editOverlayConfirmed = Notification.Name("editOverlayConfirmed")
+    static let editOverlayCancelled = Notification.Name("editOverlayCancelled")
+    static let editOverlayTextChanged = Notification.Name("editOverlayTextChanged")
+    // Hotkey events from overlay (when overlay has keyboard focus)
+    static let overlayHotkeyPressed = Notification.Name("overlayHotkeyPressed")
+    static let overlayHotkeyReleased = Notification.Name("overlayHotkeyReleased")
+}
+
 // MARK: - Progress Tracking Structures
 
 struct RecordingProgress: Equatable {
@@ -172,7 +183,10 @@ struct TranscriptionFeature {
     
     // Alert state – set to true when a transcription potentially failed
     var showTranscriptionFailedAlert: Bool = false
-    
+
+    // Track if edit overlay is currently visible (allows appending recordings)
+    var isOverlayVisible: Bool = false
+
     @Shared(.hexSettings) var hexSettings: HexSettings
     // DISABLED: History功能暫時停用
     // @Shared(.transcriptionHistory) var transcriptionHistory: TranscriptionHistory
@@ -229,6 +243,13 @@ struct TranscriptionFeature {
 
     // Alert actions
     case setTranscriptionFailedAlert(Bool)
+
+    // Edit Overlay actions
+    case showEditOverlay(String)
+    case appendToOverlay(String)
+    case editOverlayConfirmed(String)
+    case editOverlayCancelled
+    case editOverlayTextChanged(original: String, edited: String)
   }
 
   enum CancelID {
@@ -252,6 +273,7 @@ struct TranscriptionFeature {
   @Dependency(\.soundEffects) var soundEffect
   @Dependency(\.aiEnhancement) var aiEnhancement
   @Dependency(\.screenCapture) var screenCapture
+  @Dependency(\.overlayClient) var overlayClient
 
   var body: some ReducerOf<Self> {
     Reduce { state, action in
@@ -286,15 +308,28 @@ struct TranscriptionFeature {
       // MARK: - HotKey Flow
 
       case .hotKeyPressed:
-        // Ignore hotkey presses if we're already recording or transcribing to prevent
-        // accidental double-clicks from cancelling ongoing operations
-        guard !state.isRecording && !state.isTranscribing else {
-          print("🎙️ [WARNING] Hotkey press ignored - recording or transcription already in progress")
+        // Ignore hotkey presses if we're already recording
+        // But allow new recording if overlay is visible (for appending text)
+        print("🔑 [TCA] hotKeyPressed - isRecording: \(state.isRecording), isTranscribing: \(state.isTranscribing), isOverlayVisible: \(state.isOverlayVisible)")
+        debugLog("[TCA] hotKeyPressed - isRecording: \(state.isRecording), isTranscribing: \(state.isTranscribing), isOverlayVisible: \(state.isOverlayVisible)")
+
+        // If already recording, ignore
+        guard !state.isRecording else {
+          print("🔑 [TCA] Hotkey press IGNORED - recording already in progress")
           return .none
         }
-        
-        // Otherwise, proceed with normal hotkey handling
-        return handleHotKeyPressed(isTranscribing: false)
+
+        // If transcribing but overlay is NOT visible, ignore (still processing)
+        // If overlay IS visible, allow new recording for appending
+        if state.isTranscribing && !state.isOverlayVisible {
+          print("🔑 [TCA] Hotkey press IGNORED - transcription in progress, overlay not visible")
+          return .none
+        }
+
+        print("🔑 [TCA] Hotkey press ACCEPTED - proceeding with recording (overlay visible: \(state.isOverlayVisible))")
+        // Proceed with recording - if overlay is visible, result will be appended
+        // Skip caret capture if overlay is already visible (no need to recapture position)
+        return handleHotKeyPressed(isTranscribing: false, skipCaretCapture: state.isOverlayVisible)
 
       case .hotKeyReleased:
         // If we're currently recording, then stop. Otherwise, just cancel
@@ -487,6 +522,141 @@ struct TranscriptionFeature {
       case let .setTranscriptionFailedAlert(flag):
         state.showTranscriptionFailedAlert = flag
         return .none
+
+      // MARK: - Edit Overlay Actions
+
+      case let .showEditOverlay(text):
+        // Show the edit overlay with the transcribed text
+        // Reset transcribing state so new recordings can be started
+        state.isTranscribing = false
+        state.isOverlayVisible = true
+        print("📝 [TCA] showEditOverlay - setting isOverlayVisible=true, isTranscribing=false")
+        debugLog("[TCA] showEditOverlay - setting isOverlayVisible=true, isTranscribing=false")
+        return .run { _ in
+          // Set up callbacks before showing
+          await overlayClient.setOnConfirm { confirmedText in
+            Task { @MainActor in
+              // This will be handled by the TCA store through a different mechanism
+              // For now, we use a notification-based approach
+              NotificationCenter.default.post(
+                name: .editOverlayConfirmed,
+                object: nil,
+                userInfo: ["text": confirmedText]
+              )
+            }
+          }
+          await overlayClient.setOnCancel {
+            Task { @MainActor in
+              NotificationCenter.default.post(name: .editOverlayCancelled, object: nil)
+            }
+          }
+          await overlayClient.setOnTextChanged { original, edited in
+            Task { @MainActor in
+              NotificationCenter.default.post(
+                name: .editOverlayTextChanged,
+                object: nil,
+                userInfo: ["original": original, "edited": edited]
+              )
+            }
+          }
+          await overlayClient.show(text)
+        }
+
+      case let .editOverlayConfirmed(text):
+        // User confirmed the edited text - paste it
+        // Reset ALL states to allow new recording (same as handleCancel)
+        debugLog("[TCA] editOverlayConfirmed BEFORE - isRecording: \(state.isRecording), isTranscribing: \(state.isTranscribing), isOverlayVisible: \(state.isOverlayVisible)")
+        state.isTranscribing = false
+        state.isRecording = false
+        state.isPrewarming = false
+        state.isEnhancing = false
+        state.shouldShowRecordingPulse = false
+        state.isStreamingTranscription = false
+        state.isOverlayVisible = false
+        state.meter = .init(averagePower: 0, peakPower: 0)
+        state.recordingProgress = RecordingProgress()
+        state.enhancementProgress.updateStage(.idle)
+        state.streamingTranscription.reset()
+        state.realTimeTranscription = nil
+        debugLog("[TCA] editOverlayConfirmed AFTER - isRecording: \(state.isRecording), isTranscribing: \(state.isTranscribing), isOverlayVisible: \(state.isOverlayVisible)")
+
+        return .merge(
+          .cancel(id: CancelID.transcription),
+          .cancel(id: CancelID.delayedRecord),
+          .cancel(id: CancelID.recordingPulse),
+          .cancel(id: CancelID.recordingFeedback),
+          .cancel(id: CancelID.enhancementFeedback),
+          .cancel(id: CancelID.streamTranscription),
+          .cancel(id: CancelID.screenshotCapture),
+          .cancel(id: CancelID.hotKeyWatchdog),
+          .run { _ in
+            await transcription.stopStreamTranscription()
+          },
+          .run { _ in
+            await pasteboard.paste(text)
+            await soundEffect.play(.pasteTranscript)
+          }
+        )
+
+      case .editOverlayCancelled:
+        // User cancelled - reset ALL states to allow new recording (same as handleCancel)
+        debugLog("[TCA] editOverlayCancelled - resetting all states")
+        state.isTranscribing = false
+        state.isRecording = false
+        state.isPrewarming = false
+        state.isEnhancing = false
+        state.shouldShowRecordingPulse = false
+        state.isStreamingTranscription = false
+        state.isOverlayVisible = false
+        state.meter = .init(averagePower: 0, peakPower: 0)
+        state.recordingProgress = RecordingProgress()
+        state.enhancementProgress.updateStage(.idle)
+        state.streamingTranscription.reset()
+        state.realTimeTranscription = nil
+
+        return .merge(
+          .cancel(id: CancelID.transcription),
+          .cancel(id: CancelID.delayedRecord),
+          .cancel(id: CancelID.recordingPulse),
+          .cancel(id: CancelID.recordingFeedback),
+          .cancel(id: CancelID.enhancementFeedback),
+          .cancel(id: CancelID.streamTranscription),
+          .cancel(id: CancelID.screenshotCapture),
+          .cancel(id: CancelID.hotKeyWatchdog),
+          .run { _ in
+            await transcription.stopStreamTranscription()
+          },
+          .run { _ in
+            await soundEffect.play(.cancel)
+          }
+        )
+
+      case let .appendToOverlay(text):
+        // Append new transcription to existing overlay text
+        debugLog("[TCA] appendToOverlay - appending text: \(text)")
+        // Reset transcribing state so user can record again
+        state.isTranscribing = false
+        return .run { _ in
+          await overlayClient.appendText(text)
+        }
+
+      case let .editOverlayTextChanged(original, edited):
+        // Track the correction for auto-learning
+        guard state.hexSettings.autoLearnFromCorrections else {
+          return .none
+        }
+        return .run { _ in
+          // Use CorrectionHistory to track and potentially auto-learn
+          let history = CorrectionHistory.shared
+          let diffTracker = DiffTracker()
+          let corrections = diffTracker.findCorrections(original: original, edited: edited)
+
+          for correction in corrections {
+            // This will automatically trigger auto-learning via notifications
+            // when correction count reaches threshold
+            history.recordCorrection(original: correction.original, edited: correction.corrected)
+          }
+        }
       }
     }
   }
@@ -639,11 +809,23 @@ private extension TranscriptionFeature {
 // MARK: - HotKey Press/Release Handlers
 
 private extension TranscriptionFeature {
-  func handleHotKeyPressed(isTranscribing: Bool) -> Effect<Action> {
+  func handleHotKeyPressed(isTranscribing: Bool, skipCaretCapture: Bool = false) -> Effect<Action> {
     let hotkeyPressedTime = Date()
-    print("🎙️ [TIMING] HotKey pressed handler triggered at: \(hotkeyPressedTime.timeIntervalSince1970)")
+    print("🎙️ [TIMING] HotKey pressed handler triggered at: \(hotkeyPressedTime.timeIntervalSince1970), skipCaretCapture: \(skipCaretCapture)")
 
     let maybeCancel = isTranscribing ? Effect.send(Action.cancel) : .none
+
+    // Capture caret position IMMEDIATELY before anything else changes focus
+    // This is critical for showing the overlay at the correct position later
+    // Skip this if overlay is already visible (we're appending, position already known)
+    let capturePosition: Effect<Action>
+    if skipCaretCapture {
+      capturePosition = .none
+    } else {
+      capturePosition = .run { _ in
+        await overlayClient.captureCaretPosition()
+      }
+    }
 
     // Kick off a quick microphone warm-up immediately so the hardware path is
     // already open by the time we call `recording.startRecording()` 200 ms later.
@@ -654,10 +836,12 @@ private extension TranscriptionFeature {
     // We wait 200ms before actually sending `.startRecording`
     // so the user can do a quick press => do something else
     // (like a double-tap).
+    // When appending (overlay visible), reduce delay to 100ms for faster response
+    let delayMs = skipCaretCapture ? 100 : 200
     let delayedStart = Effect.run { send in
-      print("🎙️ [TIMING] Starting 200ms delay at: \(Date().timeIntervalSince1970)")
-      try await Task.sleep(for: .milliseconds(200))
-      print("🎙️ [TIMING] 200ms delay completed, sending startRecording at: \(Date().timeIntervalSince1970)")
+      print("🎙️ [TIMING] Starting \(delayMs)ms delay at: \(Date().timeIntervalSince1970)")
+      try await Task.sleep(for: .milliseconds(delayMs))
+      print("🎙️ [TIMING] \(delayMs)ms delay completed, sending startRecording at: \(Date().timeIntervalSince1970)")
       await send(Action.startRecording)
     }
     .cancellable(id: CancelID.delayedRecord, cancelInFlight: true)
@@ -678,7 +862,7 @@ private extension TranscriptionFeature {
     }
     .cancellable(id: CancelID.hotKeyWatchdog, cancelInFlight: true)
 
-    return .merge(maybeCancel, warmUp, delayedStart, watchdog)
+    return .merge(capturePosition, maybeCancel, warmUp, delayedStart, watchdog)
   }
 
   func handleHotKeyReleased(isRecording: Bool) -> Effect<Action> {
@@ -737,9 +921,17 @@ private extension TranscriptionFeature {
         print("🎙️ [TIMING] recording.startRecording() completed in: \(String(format: "%.3f", recordingClientCallDuration))s")
       },
       .send(.startRecordingPulse),
-      // Schedule screenshot capture 1s after recording starts (if enabled)
+      // Schedule screenshot capture 1s after recording starts (if enabled and has permission)
       .run { send in
         guard settings.enableScreenCapture else { return }
+
+        // Check if we have screen capture permission before attempting capture
+        // CGPreflightScreenCaptureAccess() checks without triggering a permission dialog
+        guard CGPreflightScreenCaptureAccess() else {
+          print("[TranscriptionFeature] Screen capture permission not granted, skipping screenshot")
+          return
+        }
+
         try await Task.sleep(for: .seconds(1))
 
         guard !Task.isCancelled else { return }
@@ -772,14 +964,26 @@ private extension TranscriptionFeature {
       // Start streaming transcription for real-time feedback during recording
       .run { send in
         do {
-          // Create decoding options without context prompt (prompt will be applied later for the final transcription)
+          // Create decoding options with custom word prompts for streaming
           // Normalize Chinese language codes for WhisperKit
           let normalizedLanguage = TranscriptionFeature.normalizeLanguageForWhisper(language)
-          let decodeOptions = DecodingOptions(
+          var decodeOptions = DecodingOptions(
             language: normalizedLanguage,
             detectLanguage: normalizedLanguage == nil,
             chunkingStrategy: .vad
           )
+
+          // Add custom word prompt entries (提示詞) for streaming transcription
+          // promptTokens are prepended to prefill tokens to bias transcription
+          let customWordDict = getCachedCustomWordDictionary()
+          let customWordPrompt = customWordDict.promptText
+          if !customWordPrompt.isEmpty, let tokenizer = await transcription.getTokenizer() {
+            let promptTokens = tokenizer.encode(text: " " + customWordPrompt)
+              .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+            decodeOptions.promptTokens = promptTokens
+            // Keep usePrefillPrompt as default (true) - promptTokens will be prepended
+            print("[TranscriptionFeature] Streaming: Added \(customWordDict.enabledPromptEntries.count) custom word prompts (\(promptTokens.count) tokens): '\(customWordPrompt)'")
+          }
 
           print("Starting streaming transcription for real-time feedback…")
 
@@ -905,11 +1109,19 @@ private extension TranscriptionFeature {
             combinedPrompt += " " + prompt.trimmingCharacters(in: .whitespaces)
           }
 
+          // Add custom word prompt entries (提示詞) to bias Whisper transcription
+          let customWordDict = getCachedCustomWordDictionary()
+          let customWordPrompt = customWordDict.promptText
+          if !customWordPrompt.isEmpty {
+            combinedPrompt += " " + customWordPrompt
+            print("[TranscriptionFeature] Added \(customWordDict.enabledPromptEntries.count) custom word prompts")
+          }
+
           if !combinedPrompt.isEmpty, let tokenizer = await transcription.getTokenizer() {
             decodeOptionsWithPrefill.promptTokens = tokenizer.encode(text: " " + combinedPrompt)
               .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
             decodeOptionsWithPrefill.usePrefillPrompt = false
-            print("[TranscriptionFeature] Applied combined prompt with \(decodeOptionsWithPrefill.promptTokens?.count ?? 0) tokens: '\(combinedPrompt)'")
+            print("[TranscriptionFeature] Applied combined prompt with \(decodeOptionsWithPrefill.promptTokens?.count ?? 0) tokens: '\(combinedPrompt.prefix(100))...'")
           }
 
           // Transcription WITH prefill prompt
@@ -1009,13 +1221,15 @@ private extension TranscriptionFeature {
 
           // Clean Whisper tokens from the final result
           var finalResult = transcription.cleanWhisperTokens(rawFinalResult)
-          
+
           // Smart hallucination filtering: Only filter if the result is likely pure hallucination
           let trimmedResult = finalResult.trimmingCharacters(in: .whitespacesAndNewlines)
-          
-          // Only apply filtering if the result is short and matches common hallucination patterns
-          if trimmedResult.count <= 15 && Self.isLikelyHallucinationText(trimmedResult) {
-            print("[TranscriptionFeature] Filtering out short hallucination text: '\(trimmedResult)'")
+
+          // Apply filtering for hallucination patterns:
+          // - Short text (<=15 chars) matching common patterns
+          // - Any length text matching known long hallucination patterns (e.g., YouTube/Bilibili phrases)
+          if Self.isLikelyHallucinationText(trimmedResult) {
+            print("[TranscriptionFeature] Filtering out hallucination text: '\(trimmedResult)'")
             finalResult = ""
           } else {
             finalResult = trimmedResult
@@ -1099,12 +1313,11 @@ private extension TranscriptionFeature {
         contextPrompt: combinedContext
       )
     } else {
-      state.isTranscribing = false
-      state.isPrewarming = false
-      state.realTimeTranscription = nil
-
       // If empty text, nothing else to do
       guard !trimmedResult.isEmpty else {
+        state.isTranscribing = false
+        state.isPrewarming = false
+        state.realTimeTranscription = nil
         return .none
       }
 
@@ -1117,11 +1330,26 @@ private extension TranscriptionFeature {
       //   duration: duration,
       //   transcriptionHistory: state.$transcriptionHistory
       // )
-      
-      // 只粘貼結果，不保存歷史記錄
-      return .run { _ in
-        await pasteboard.paste(trimmedResult)
-        await soundEffect.play(.pasteTranscript)
+
+      // Check if edit overlay is enabled
+      if state.hexSettings.useEditOverlay {
+        // If overlay is already visible, append text instead of replacing
+        if state.isOverlayVisible {
+          debugLog("[TCA] handleTranscriptionResult - overlay visible, appending text")
+          return .send(.appendToOverlay(trimmedResult))
+        }
+        // Show edit overlay for user to review/edit before pasting
+        // Keep transcribing state until overlay is dismissed
+        return .send(.showEditOverlay(trimmedResult))
+      } else {
+        // Direct paste without overlay
+        state.isTranscribing = false
+        state.isPrewarming = false
+        state.realTimeTranscription = nil
+        return .run { _ in
+          await pasteboard.paste(trimmedResult)
+          await soundEffect.play(.pasteTranscript)
+        }
       }
     }
   }
@@ -1224,33 +1452,66 @@ private extension TranscriptionFeature {
     // Compute how long we recorded
     let duration = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
 
-    // Continue with storing the final result in the background
-    return .merge(
-      .send(.updateEnhancementProgress(.completed)),
-      
-      // Play enhancement complete sound
-      .run { _ in
-        await soundEffect.play(.enhancementComplete)
-      },
-      
-      // DISABLED: History功能暫時停用
-      // finalizeRecordingAndStoreTranscript(
-      //   result: result,
-      //   duration: duration,
-      //   transcriptionHistory: state.$transcriptionHistory
-      // ),
-      
-      // 只粘貼結果，不保存歷史記錄
-      .run { _ in
-        await pasteboard.paste(result)
-        await soundEffect.play(.pasteTranscript)
-      },
-      .run { send in
-        // Clear progress after a short delay
-        try await Task.sleep(for: .milliseconds(1000))
-        await send(.updateEnhancementProgress(.idle))
+    // DISABLED: History功能暫時停用
+    // finalizeRecordingAndStoreTranscript(
+    //   result: result,
+    //   duration: duration,
+    //   transcriptionHistory: state.$transcriptionHistory
+    // ),
+
+    // Check if edit overlay is enabled
+    if state.hexSettings.useEditOverlay {
+      // If overlay is already visible, append text instead of replacing
+      if state.isOverlayVisible {
+        debugLog("[TCA] handleAIEnhancement - overlay visible, appending text")
+        return .merge(
+          .send(.updateEnhancementProgress(.completed)),
+          .run { _ in
+            await soundEffect.play(.enhancementComplete)
+          },
+          .send(.appendToOverlay(result)),
+          .run { send in
+            // Clear progress after a short delay
+            try await Task.sleep(for: .milliseconds(1000))
+            await send(.updateEnhancementProgress(.idle))
+          }
+        )
       }
-    )
+      // Show edit overlay for user to review/edit before pasting
+      return .merge(
+        .send(.updateEnhancementProgress(.completed)),
+        .run { _ in
+          await soundEffect.play(.enhancementComplete)
+        },
+        .send(.showEditOverlay(result)),
+        .run { send in
+          // Clear progress after a short delay
+          try await Task.sleep(for: .milliseconds(1000))
+          await send(.updateEnhancementProgress(.idle))
+        }
+      )
+    } else {
+      // Direct paste without overlay
+      return .merge(
+        .send(.updateEnhancementProgress(.completed)),
+
+        // Play enhancement complete sound
+        .run { _ in
+          await soundEffect.play(.enhancementComplete)
+        },
+
+        // 只粘貼結果，不保存歷史記錄
+        .run { _ in
+          await pasteboard.paste(result)
+          await soundEffect.play(.pasteTranscript)
+        },
+        .run { send in
+          // Clear progress after a short delay
+          try await Task.sleep(for: .milliseconds(1000))
+          await send(.updateEnhancementProgress(.idle))
+        }
+      )
+    }
   }
 
   func handleTranscriptionError(
@@ -1521,22 +1782,48 @@ private extension TranscriptionFeature {
   /// Checks if the given text is likely to be hallucination from Whisper
   static func isLikelyHallucinationText(_ text: String) -> Bool {
     let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    
+
     // Return true for empty or very short text
     guard cleaned.count >= 2 else { return true }
-    
+
+    // Known long hallucination patterns from Whisper models (substring match)
+    // These are notorious hallucinations from Chinese YouTube/Bilibili training data
+    // Check these FIRST regardless of text length
+    let longHallucinationPatterns = [
+      "請不吝點贊",
+      "訂閱轉發",
+      "打賞支持",
+      "明鏡與點點",
+      "點點欄目",
+      "支持明鏡",
+      "歡迎訂閱",
+      "記得點贊",
+      "喜歡就訂閱"
+    ]
+
+    for pattern in longHallucinationPatterns {
+      if cleaned.contains(pattern) {
+        return true
+      }
+    }
+
+    // For longer text (>15 chars), only check long hallucination patterns above
+    // Don't apply short phrase checks to avoid false positives
+    guard cleaned.count <= 15 else { return false }
+
     // Common Whisper hallucination phrases (Chinese and English)
+    // Only check these for short text to avoid false positives
     let commonHallucinations = [
       // English common hallucinations
       "thank you", "thank you.", "thanks", "thanks.",
-      "goodbye", "bye", "bye.", "see you", 
+      "goodbye", "bye", "bye.", "see you",
       "okay", "ok", "ok.", "alright",
       "hello", "hi", "hey", "hey.",
       "subtitle", "subtitles", "caption", "captions",
       "music", "bgm", "background music",
       "applause", "clapping", "silence",
       "the end", "end", "that's it", "done",
-      // Chinese common hallucinations  
+      // Chinese common hallucinations
       "謝謝", "謝謝大家", "感謝", "感謝大家",
       "再見", "拜拜", "掰掰", "下次見",
       "好的", "好", "沒問題", "知道了",
@@ -1544,22 +1831,22 @@ private extension TranscriptionFeature {
       "字幕", "音樂", "背景音樂", "掌聲",
       "結束", "完了", "就這樣", "沒了"
     ]
-    
+
     // Check exact matches with common hallucinations
     if commonHallucinations.contains(cleaned) {
       return true
     }
-    
+
     // Check for repeating patterns (like "好好好", "謝謝謝謝")
     if hasRepeatingPattern(cleaned) {
       return true
     }
-    
+
     // Check for sequences of single repeated characters
     if isRepeatedSingleCharacter(cleaned) {
       return true
     }
-    
+
     return false
   }
   
@@ -1592,5 +1879,24 @@ private extension TranscriptionFeature {
     guard text.count >= 3 else { return false }
     let firstChar = text.first
     return text.allSatisfy { $0 == firstChar }
+  }
+}
+
+// MARK: - Debug Logging Helper
+
+private func debugLog(_ message: String) {
+  let logFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tok_overlay_debug.log")
+  let timestamp = ISO8601DateFormatter().string(from: Date())
+  let line = "[\(timestamp)] \(message)\n"
+  if let data = line.data(using: .utf8) {
+    if FileManager.default.fileExists(atPath: logFile.path) {
+      if let handle = try? FileHandle(forWritingTo: logFile) {
+        handle.seekToEndOfFile()
+        handle.write(data)
+        handle.closeFile()
+      }
+    } else {
+      try? data.write(to: logFile)
+    }
   }
 }

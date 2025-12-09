@@ -19,5 +19,9 @@
 	<string>https://post-ci-update.doubleqsun.workers.dev/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>Tvo3tYgr75QhBuf7CzSHl0+jsZPXEq4LItEmC5czaMs=</string>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
 </dict>
 </plist>

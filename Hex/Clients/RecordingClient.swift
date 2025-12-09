@@ -479,7 +479,31 @@ actor RecordingClientLive {
   }
 
   func requestMicrophoneAccess() async -> Bool {
-    await AVCaptureDevice.requestAccess(for: .audio)
+    let currentStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+    print("🎙️ [MIC] Current authorization status: \(currentStatus.rawValue) (0=notDetermined, 1=restricted, 2=denied, 3=authorized)")
+
+    switch currentStatus {
+    case .authorized:
+      print("🎙️ [MIC] Already authorized")
+      return true
+    case .denied, .restricted:
+      print("🎙️ [MIC] Permission denied/restricted - opening System Settings")
+      // Open System Settings to let user manually enable
+      if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+        await MainActor.run {
+          NSWorkspace.shared.open(url)
+        }
+      }
+      return false
+    case .notDetermined:
+      print("🎙️ [MIC] Status not determined - requesting access...")
+      let granted = await AVCaptureDevice.requestAccess(for: .audio)
+      print("🎙️ [MIC] Request result: \(granted)")
+      return granted
+    @unknown default:
+      print("🎙️ [MIC] Unknown status - requesting access...")
+      return await AVCaptureDevice.requestAccess(for: .audio)
+    }
   }
 
   func warmUpAudioInput() async {

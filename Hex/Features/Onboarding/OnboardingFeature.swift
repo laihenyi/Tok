@@ -30,31 +30,31 @@ struct OnboardingFeature {
       case hotkey = 4
       case test = 5
       
-      var title: String {
+      var title: LocalizedStringKey {
         switch self {
-        case .modelSelection: return "Select a Model"
-        case .microphone: return "Microphone Access"
-        case .accessibility: return "Accessibility Permissions"
-        case .screenCapture: return "Screen Capture"
-        case .hotkey: return "Set Up Your Hotkey"
-        case .test: return "Test It Out"
+        case .modelSelection: return "onboarding.step.modelSelection.title"
+        case .microphone: return "onboarding.step.microphone.title"
+        case .accessibility: return "onboarding.step.accessibility.title"
+        case .screenCapture: return "onboarding.step.screenCapture.title"
+        case .hotkey: return "onboarding.step.hotkey.title"
+        case .test: return "onboarding.step.test.title"
         }
       }
-      
-      var description: String {
+
+      var description: LocalizedStringKey {
         switch self {
         case .modelSelection:
-          return "Choose a speech-to-text model to download and warm up so transcription is ready when you need it."
+          return "onboarding.step.modelSelection.description"
         case .microphone:
-          return "Tok needs access to your microphone to record and transcribe your speech."
+          return "onboarding.step.microphone.description"
         case .accessibility:
-          return "Accessibility permissions allow Tok to monitor your hotkey presses so you can quickly start recording."
+          return "onboarding.step.accessibility.description"
         case .screenCapture:
-          return "Screen capture helps provide context for better transcription accuracy by analyzing what you're working on."
+          return "onboarding.step.screenCapture.description"
         case .hotkey:
-          return "Set up a convenient hotkey combination to quickly start and stop recording."
+          return "onboarding.step.hotkey.description"
         case .test:
-          return "Test It Out"
+          return "onboarding.step.test.description"
         }
       }
       
@@ -139,8 +139,11 @@ struct OnboardingFeature {
         return .send(.nextStep)
         
       case .requestMicrophonePermission:
-        return .run { send in
+        NSLog("🎙️ [ONBOARDING] requestMicrophonePermission action received")
+        return .run { [recording] send in
+          NSLog("🎙️ [ONBOARDING] Starting microphone access request...")
           let granted = await recording.requestMicrophoneAccess()
+          NSLog("🎙️ [ONBOARDING] Microphone access result: \(granted)")
           await send(.microphonePermissionUpdated(granted ? .granted : .denied))
         }
         
@@ -153,13 +156,10 @@ struct OnboardingFeature {
         
       case .requestScreenCapturePermission:
         return .run { send in
-          do {
-            // Try to capture screen to trigger permission prompt
-            _ = try await screenCapture.captureScreen()
-            await send(.screenCapturePermissionUpdated(.granted))
-          } catch {
-            await send(.screenCapturePermissionUpdated(.denied))
-          }
+          // Use CGRequestScreenCaptureAccess to properly request permission
+          // This will open System Settings if permission is not granted
+          let granted = CGRequestScreenCaptureAccess()
+          await send(.screenCapturePermissionUpdated(granted ? .granted : .notDetermined))
         }
         
       case let .microphonePermissionUpdated(status):
@@ -206,18 +206,15 @@ struct OnboardingFeature {
           @unknown default: .notDetermined
           }
           await send(.microphonePermissionUpdated(micPermission))
-          
+
           // Check accessibility
           let accPermission: PermissionStatus = AXIsProcessTrusted() ? .granted : .denied
           await send(.accessibilityPermissionUpdated(accPermission))
-          
-          // Check screen capture by attempting capture
-          do {
-            _ = try await screenCapture.captureScreen()
-            await send(.screenCapturePermissionUpdated(.granted))
-          } catch {
-            await send(.screenCapturePermissionUpdated(.denied))
-          }
+
+          // Check screen capture permission using CGPreflightScreenCaptureAccess
+          // This checks permission status without triggering a system prompt
+          let hasScreenCapturePermission = CGPreflightScreenCaptureAccess()
+          await send(.screenCapturePermissionUpdated(hasScreenCapturePermission ? .granted : .notDetermined))
         }
         
       case .completeOnboarding:
