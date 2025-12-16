@@ -160,31 +160,22 @@ struct CustomWordDictionary: Codable, Equatable {
     /// Apply word replacements to text (only processes replacement-type entries)
     func applyReplacements(to text: String) -> String {
         guard isEnabled, !entries.isEmpty, !text.isEmpty else {
-            print("[CustomWordDictionary] Skipping replacements: isEnabled=\(isEnabled), entries=\(entries.count), textEmpty=\(text.isEmpty)")
             return text
         }
 
         var result = text
         let replacementEntries = enabledReplacementEntries
-        print("[CustomWordDictionary] Applying \(replacementEntries.count) replacement rules to text: \(text.prefix(50))...")
 
         // Only apply replacement entries, not prompt entries
         for entry in replacementEntries {
             let options: String.CompareOptions = entry.caseSensitive ? [] : [.caseInsensitive]
-            let before = result
             result = result.replacingOccurrences(
                 of: entry.original,
                 with: entry.replacement,
                 options: options
             )
-            if before != result {
-                print("[CustomWordDictionary] Replaced '\(entry.original)' → '\(entry.replacement)'")
-            }
         }
 
-        if result != text {
-            print("[CustomWordDictionary] Final result: \(result.prefix(100))...")
-        }
         return result
     }
 }
@@ -379,28 +370,25 @@ func getCachedCustomWordDictionary() -> CustomWordDictionary {
     // Otherwise read from disk
     do {
         let url = URL.documentsDirectory.appending(component: "hex_custom_words.json")
-        print("[CustomWordDictionary] Loading from: \(url.path)")
         if FileManager.default.fileExists(atPath: url.path) {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+            // Use deferredToDate strategy - it handles numeric timestamps (timeIntervalSinceReferenceDate)
+            // The JSON file contains numeric timestamps like 1765378628.012882 for lastModified
+            decoder.dateDecodingStrategy = .deferredToDate
             let dictionary = try decoder.decode(CustomWordDictionary.self, from: data)
-            print("[CustomWordDictionary] Loaded \(dictionary.entries.count) entries, \(dictionary.enabledReplacementEntries.count) replacement rules enabled")
 
             // Update cache
             cachedCustomWordDictionary = dictionary
             lastDictionaryLoadTime = Date()
 
             return dictionary
-        } else {
-            print("[CustomWordDictionary] File does not exist at path")
         }
     } catch {
-        print("[CustomWordDictionary] Error loading: \(error)")
+        // Silently fall through to return default dictionary
     }
 
     // On error or if file doesn't exist, return default empty dictionary
-    print("[CustomWordDictionary] Returning empty default dictionary")
     let defaultDictionary = CustomWordDictionary()
     cachedCustomWordDictionary = defaultDictionary
     lastDictionaryLoadTime = Date()
