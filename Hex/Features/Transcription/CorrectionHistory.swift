@@ -92,7 +92,6 @@ final class CorrectionHistory: ObservableObject {
     func processPendingLearning() {
         let pending = getCorrectionsReadyForLearning()
         for record in pending {
-            print("[CorrectionHistory] Processing pending: '\(record.original)' → '\(record.corrected)'")
             notifyReadyForLearning(record)
         }
     }
@@ -120,32 +119,19 @@ final class CorrectionHistory: ObservableObject {
     // MARK: - Private Methods
 
     private func addOrUpdateRecord(original: String, corrected: String) {
-        // Check if this correction already exists
         if let index = records.firstIndex(where: { $0.original == original && $0.corrected == corrected }) {
-            // Update existing record
             records[index].occurrenceCount += 1
             records[index].lastOccurrence = Date()
-
-            print("[CorrectionHistory] Updated: '\(original)' → '\(corrected)' (count: \(records[index].occurrenceCount))")
-
-            // Check if ready for learning
             if records[index].shouldSuggestForLearning && !records[index].addedToDictionary {
                 notifyReadyForLearning(records[index])
             }
         } else {
-            // Add new record
             let record = CorrectionRecord(original: original, corrected: corrected)
             records.append(record)
-
-            print("[CorrectionHistory] New correction: '\(original)' → '\(corrected)'")
         }
     }
 
     private func notifyReadyForLearning(_ record: CorrectionRecord) {
-        print("[CorrectionHistory] Ready for learning: '\(record.original)' → '\(record.corrected)' (occurred \(record.occurrenceCount) times)")
-
-        // Post notification for UI to show suggestion
-        // Pass individual properties since CorrectionRecord struct can't bridge to Obj-C
         NotificationCenter.default.post(
             name: .correctionReadyForLearning,
             object: nil,
@@ -160,19 +146,14 @@ final class CorrectionHistory: ObservableObject {
     // MARK: - Persistence
 
     private func loadHistory() {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            print("[CorrectionHistory] No history file found, starting fresh")
-            return
-        }
-
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         do {
             let data = try Data(contentsOf: fileURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             records = try decoder.decode([CorrectionRecord].self, from: data)
-            print("[CorrectionHistory] Loaded \(records.count) correction records")
         } catch {
-            print("[CorrectionHistory] Error loading history: \(error)")
+            // Failed to load history - start fresh
         }
     }
 
@@ -183,9 +164,8 @@ final class CorrectionHistory: ObservableObject {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(records)
             try data.write(to: fileURL)
-            print("[CorrectionHistory] Saved \(records.count) correction records")
         } catch {
-            print("[CorrectionHistory] Error saving history: \(error)")
+            // Failed to save history
         }
     }
 }
@@ -214,33 +194,10 @@ final class AutoLearningManager {
     }
 
     private func processPendingCorrections() {
-        // Debug log to file
-        let debugLog = { (msg: String) in
-            let logURL = URL.documentsDirectory.appendingPathComponent("autolearn_debug.log")
-            let timestamp = ISO8601DateFormatter().string(from: Date())
-            let line = "[\(timestamp)] \(msg)\n"
-            if let data = line.data(using: .utf8) {
-                if FileManager.default.fileExists(atPath: logURL.path) {
-                    if let handle = try? FileHandle(forWritingTo: logURL) {
-                        handle.seekToEndOfFile()
-                        handle.write(data)
-                        handle.closeFile()
-                    }
-                } else {
-                    try? data.write(to: logURL)
-                }
-            }
-        }
-
-        debugLog("processPendingCorrections called")
-        debugLog("Total records in history: \(correctionHistory.records.count)")
         let pending = correctionHistory.getCorrectionsReadyForLearning()
-        debugLog("Pending corrections found: \(pending.count)")
         for record in pending {
-            debugLog("Processing: '\(record.original)' → '\(record.corrected)' (count: \(record.occurrenceCount), added: \(record.addedToDictionary))")
             addToDictionary(record)
         }
-        debugLog("processPendingCorrections completed")
     }
 
     private func setupNotifications() {
@@ -254,20 +211,11 @@ final class AutoLearningManager {
 
     @objc private func handleCorrectionReady(_ notification: Notification) {
         guard let idString = notification.userInfo?["id"] as? String,
-              let id = UUID(uuidString: idString),
-              let original = notification.userInfo?["original"] as? String,
-              let corrected = notification.userInfo?["corrected"] as? String else {
-            print("[AutoLearning] Failed to parse notification userInfo")
+              let id = UUID(uuidString: idString) else {
             return
         }
-
-        print("[AutoLearning] Received notification for: '\(original)' → '\(corrected)'")
-
-        // Find the record by ID and add to dictionary
         if let record = correctionHistory.records.first(where: { $0.id == id }) {
             addToDictionary(record)
-        } else {
-            print("[AutoLearning] Record not found for id: \(idString)")
         }
     }
 
@@ -295,7 +243,6 @@ final class AutoLearningManager {
             }
 
             guard !exists else {
-                print("[AutoLearning] Entry already exists: '\(record.original)' → '\(record.corrected)'")
                 correctionHistory.markAsAddedToDictionary(record)
                 return
             }
@@ -324,20 +271,15 @@ final class AutoLearningManager {
             // Mark as added
             correctionHistory.markAsAddedToDictionary(record)
 
-            // Invalidate cache
             invalidateCustomWordDictionaryCache()
 
-            print("[AutoLearning] Added to dictionary: '\(record.original)' → '\(record.corrected)'")
-
-            // Post notification for UI feedback
             NotificationCenter.default.post(
                 name: .wordAddedToDictionary,
                 object: nil,
                 userInfo: ["original": record.original, "corrected": record.corrected]
             )
-
         } catch {
-            print("[AutoLearning] Error adding to dictionary: \(error)")
+            // Failed to add to dictionary
         }
     }
 }

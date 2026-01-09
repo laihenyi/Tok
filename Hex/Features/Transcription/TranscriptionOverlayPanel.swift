@@ -102,10 +102,6 @@ final class TranscriptionOverlayPanel: NSPanel {
     }
 
     private func setupLocalEventMonitor() {
-        debugLog("setupLocalEventMonitor: Setting up global event monitor")
-
-        // Use global monitor to detect hotkeys when the panel doesn't receive keyboard events directly
-        // (e.g., when using nonactivatingPanel style)
         globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
             guard let self = self, self.isVisible else { return }
 
@@ -123,71 +119,42 @@ final class TranscriptionOverlayPanel: NSPanel {
 
                 if event.type == .keyDown && matches && !self.isHotkeyPressed {
                     self.isHotkeyPressed = true
-                    self.debugLog("GlobalMonitor: HOTKEY PRESSED")
                     self.postHotkeyNotification(pressed: true)
                 } else if event.type == .keyUp && self.isHotkeyPressed {
                     let releasedKey = Sauce.shared.key(for: Int(event.keyCode))
                     if releasedKey == hotkeyKey {
                         self.isHotkeyPressed = false
-                        self.debugLog("GlobalMonitor: HOTKEY RELEASED")
                         self.postHotkeyNotification(pressed: false)
                     }
                 }
             } else {
-                // Handle modifier-only hotkeys
                 if event.type == .flagsChanged {
                     if eventModifiers == hotkey.modifiers && !self.isHotkeyPressed {
                         self.isHotkeyPressed = true
-                        self.debugLog("GlobalMonitor: MODIFIER HOTKEY PRESSED")
                         self.postHotkeyNotification(pressed: true)
                     } else if self.isHotkeyPressed && eventModifiers != hotkey.modifiers {
                         self.isHotkeyPressed = false
-                        self.debugLog("GlobalMonitor: MODIFIER HOTKEY RELEASED")
                         self.postHotkeyNotification(pressed: false)
                     }
                 }
             }
         }
-
-        debugLog("setupLocalEventMonitor: Global monitor set up")
     }
 
-    /// Post hotkey notification with deduplication
     private func postHotkeyNotification(pressed: Bool) {
         let now = Date()
-
         // Deduplicate: ignore if we just posted the same notification within 50ms
         if let lastTime = lastHotkeyEventTime, now.timeIntervalSince(lastTime) < 0.05 {
-            debugLog("postHotkeyNotification: SKIPPED (dedupe) - pressed=\(pressed)")
             return
         }
-
         lastHotkeyEventTime = now
-
         if pressed {
             NotificationCenter.default.post(name: .overlayHotkeyPressed, object: nil)
         } else {
             NotificationCenter.default.post(name: .overlayHotkeyReleased, object: nil)
         }
-        debugLog("postHotkeyNotification: POSTED - pressed=\(pressed)")
     }
 
-    private func debugLog(_ message: String) {
-        let logFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tok_overlay_debug.log")
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let line = "[\(timestamp)] [Panel] \(message)\n"
-        if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: logFile.path) {
-                if let handle = try? FileHandle(forWritingTo: logFile) {
-                    handle.seekToEndOfFile()
-                    handle.write(data)
-                    handle.closeFile()
-                }
-            } else {
-                try? data.write(to: logFile)
-            }
-        }
-    }
 
     // MARK: - Public Methods
 
@@ -229,13 +196,8 @@ final class TranscriptionOverlayPanel: NSPanel {
         level = .floating
         alphaValue = 1.0
 
-        // Show and focus - use makeKeyAndOrderFront for better focus handling
         makeKeyAndOrderFront(nil)
-        debugLog("show: Panel shown, isKeyWindow=\(isKeyWindow)")
-
-        // Explicitly make text field the first responder
-        let focusSuccess = makeFirstResponder(textField)
-        debugLog("show: makeFirstResponder result=\(focusSuccess), firstResponder=\(String(describing: firstResponder))")
+        makeFirstResponder(textField)
 
         // Select all text (this also ensures field editor is created)
         textField.selectText(nil)
@@ -319,12 +281,9 @@ final class TranscriptionOverlayPanel: NSPanel {
     // MARK: - Key Handling
 
     override func sendEvent(_ event: NSEvent) {
-        // Intercept keyboard events at the window level to detect hotkeys
-        // This works even when the text field's field editor has focus
         if event.type == .keyDown || event.type == .keyUp || event.type == .flagsChanged {
-            debugLog("sendEvent: type=\(event.type.rawValue), keyCode=\(event.keyCode), isKeyWindow=\(isKeyWindow)")
             if handleHotkeyEvent(event) {
-                return  // Consumed - don't pass to super
+                return
             }
         }
         super.sendEvent(event)
@@ -338,26 +297,17 @@ final class TranscriptionOverlayPanel: NSPanel {
         // Handle Enter and Escape specially
         if event.type == .keyDown {
             switch event.keyCode {
-            case 36:  // Enter
-                // Check if IME is composing (has marked/provisional text)
-                // If so, let the Enter pass through to confirm IME selection
-                if let editor = textField.currentEditor() as? NSTextView {
-                    let markedRange = editor.markedRange()
-                    if markedRange.length > 0 {
-                        debugLog("handleHotkeyEvent: Enter ignored - IME composing (markedRange=\(markedRange))")
-                        return false  // Let Enter pass to IME
-                    }
+            case 36:  // Enter - check if IME is composing
+                if let editor = textField.currentEditor() as? NSTextView,
+                   editor.markedRange().length > 0 {
+                    return false  // Let Enter pass to IME
                 }
                 confirmText()
                 return true
-            case 53:  // Escape
-                // Also check for IME - Escape might be used to cancel IME composition
-                if let editor = textField.currentEditor() as? NSTextView {
-                    let markedRange = editor.markedRange()
-                    if markedRange.length > 0 {
-                        debugLog("handleHotkeyEvent: Escape ignored - IME composing (markedRange=\(markedRange))")
-                        return false  // Let Escape pass to IME
-                    }
+            case 53:  // Escape - check if IME is composing
+                if let editor = textField.currentEditor() as? NSTextView,
+                   editor.markedRange().length > 0 {
+                    return false  // Let Escape pass to IME
                 }
                 cancelEdit()
                 return true
@@ -373,12 +323,10 @@ final class TranscriptionOverlayPanel: NSPanel {
             if event.type == .flagsChanged {
                 if eventModifiers == hotkey.modifiers && !isHotkeyPressed {
                     isHotkeyPressed = true
-                    debugLog("Panel sendEvent: MODIFIER HOTKEY PRESSED")
                     postHotkeyNotification(pressed: true)
                     return true
                 } else if isHotkeyPressed && eventModifiers != hotkey.modifiers {
                     isHotkeyPressed = false
-                    debugLog("Panel sendEvent: MODIFIER HOTKEY RELEASED")
                     postHotkeyNotification(pressed: false)
                     return true
                 }
@@ -392,14 +340,11 @@ final class TranscriptionOverlayPanel: NSPanel {
 
         if event.type == .keyDown && matches && !isHotkeyPressed {
             isHotkeyPressed = true
-            debugLog("Panel sendEvent: HOTKEY PRESSED - key=\(eventKey?.rawValue ?? "nil")")
             postHotkeyNotification(pressed: true)
             return true
         } else if event.type == .keyUp && isHotkeyPressed {
-            let releasedKey = Sauce.shared.key(for: Int(event.keyCode))
-            if releasedKey == hotkey.key {
+            if Sauce.shared.key(for: Int(event.keyCode)) == hotkey.key {
                 isHotkeyPressed = false
-                debugLog("Panel sendEvent: HOTKEY RELEASED")
                 postHotkeyNotification(pressed: false)
                 return true
             }
@@ -506,12 +451,10 @@ extension TranscriptionOverlayPanel: NSTextFieldDelegate {
 
 extension TranscriptionOverlayPanel: HotkeyAwareTextFieldDelegate {
     func hotkeyPressed() {
-        debugLog("Panel: hotkeyPressed delegate callback - posting notification")
         NotificationCenter.default.post(name: .overlayHotkeyPressed, object: nil)
     }
 
     func hotkeyReleased() {
-        debugLog("Panel: hotkeyReleased delegate callback - posting notification")
         NotificationCenter.default.post(name: .overlayHotkeyReleased, object: nil)
     }
 }
@@ -524,7 +467,6 @@ final class TranscriptionOverlayController {
     static let shared = TranscriptionOverlayController()
 
     private var panel: TranscriptionOverlayPanel?
-    private var correctionTracker: CorrectionTracker?
 
     // External callbacks (set by TCA through OverlayClient)
     private var externalOnConfirm: ((String) -> Void)?
@@ -548,7 +490,6 @@ final class TranscriptionOverlayController {
     private var appSpecificHandlers: [String: AppCaretHandler] = [:]
 
     private init() {
-        correctionTracker = CorrectionTracker()
         setupAppSpecificHandlers()
     }
 
@@ -598,33 +539,8 @@ final class TranscriptionOverlayController {
         capturedMousePosition = NSEvent.mouseLocation
         capturedAppBundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
 
-        debugLog("captureCaretPosition: Mouse at \(capturedMousePosition ?? .zero), app: \(capturedAppBundleId ?? "nil")")
-
         // Try to get actual caret position
         capturedCaretPosition = getCaretPosition()
-        if let pos = capturedCaretPosition {
-            debugLog("Captured caret position: \(pos)")
-        } else {
-            debugLog("Failed to capture caret position - will use mouse position fallback")
-        }
-    }
-
-    /// Debug logging to file
-    private func debugLog(_ message: String) {
-        let logFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tok_overlay_debug.log")
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let line = "[\(timestamp)] [Controller] \(message)\n"
-        if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: logFile.path) {
-                if let handle = try? FileHandle(forWritingTo: logFile) {
-                    handle.seekToEndOfFile()
-                    handle.write(data)
-                    handle.closeFile()
-                }
-            } else {
-                try? data.write(to: logFile)
-            }
-        }
     }
 
     /// Clear captured position
@@ -657,68 +573,28 @@ final class TranscriptionOverlayController {
 
         // Priority: explicit position > captured mouse > captured caret > live detection > center
         // Mouse position is most reliable as AX API often fails or returns wrong positions
-        var positionSource = "unknown"
         let displayPosition: NSPoint
 
         if let pos = position {
             displayPosition = pos
-            positionSource = "explicit"
         } else if let mousePos = capturedMousePosition {
             // Use captured mouse position - most reliable across all apps
             displayPosition = mousePos
-            positionSource = "captured mouse"
         } else if let captured = capturedCaretPosition {
             // Use AX-detected caret if available
             displayPosition = captured
-            positionSource = "captured caret"
         } else if let live = getCaretPosition() {
             displayPosition = live
-            positionSource = "live"
         } else {
             displayPosition = getCenterPosition()
-            positionSource = "center (fallback)"
         }
 
-        debugLog("showOverlay - source: \(positionSource), position: \(displayPosition)")
         panel?.show(text: text, at: displayPosition)
 
         // Clear captured positions after use
         capturedCaretPosition = nil
         capturedMousePosition = nil
         capturedAppBundleId = nil
-    }
-
-    /// Check if bundle ID is a terminal or Electron app
-    private func isTerminalOrElectronApp(bundleId: String?) -> Bool {
-        guard let id = bundleId else { return false }
-
-        // Terminal apps
-        let terminalApps = [
-            "com.apple.Terminal",
-            "com.googlecode.iterm2",
-            "io.alacritty",
-            "com.github.wez.wezterm",
-            "net.kovidgoyal.kitty"
-        ]
-
-        // Electron/Chromium apps
-        let electronApps = [
-            "com.microsoft.VSCode",
-            "com.microsoft.VSCodeInsiders",
-            "com.google.Chrome",
-            "com.google.Chrome.canary",
-            "com.brave.Browser",
-            "com.microsoft.edgemac",
-            "org.chromium.Chromium",
-            "com.operasoftware.Opera",
-            "com.vivaldi.Vivaldi",
-            "company.thebrowser.Browser",
-            "com.tinyspeck.slackmacgap",
-            "com.hnc.Discord"
-        ]
-
-        return terminalApps.contains(id) || electronApps.contains(id) ||
-               id.contains("Terminal") || id.contains("Electron")
     }
 
     /// Update overlay text (for streaming)
@@ -728,7 +604,6 @@ final class TranscriptionOverlayController {
 
     /// Append text to overlay (for multiple recordings)
     func appendOverlayText(_ text: String) {
-        debugLog("appendOverlayText called with text: \(text)")
         panel?.appendText(text)
     }
 
@@ -753,8 +628,6 @@ final class TranscriptionOverlayController {
     }
 
     private func setupCallbacks() {
-        debugLog("setupCallbacks: Setting up panel callbacks, panel exists: \(panel != nil)")
-
         panel?.onConfirm = { [weak self] text in
             self?.handleConfirm(text: text)
         }
@@ -766,21 +639,15 @@ final class TranscriptionOverlayController {
         panel?.onTextChanged = { [weak self] original, edited in
             self?.handleTextChanged(original: original, edited: edited)
         }
-
-        debugLog("setupCallbacks: Callbacks set, panel.onConfirm is now: \(panel?.onConfirm != nil)")
     }
 
     private func handleConfirm(text: String) {
-        debugLog("handleConfirm called with text: \(text)")
-        debugLog("externalOnConfirm is set: \(externalOnConfirm != nil)")
         // Call external callback if set (TCA handles paste)
         if let external = externalOnConfirm {
-            debugLog("Calling external onConfirm callback")
             external(text)
             return
         }
 
-        debugLog("No external callback, using fallback paste")
         // Fallback: Paste the text using pasteboard
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -793,32 +660,22 @@ final class TranscriptionOverlayController {
     }
 
     private func handleCancel() {
-        debugLog("handleCancel called")
-        debugLog("externalOnCancel is set: \(externalOnCancel != nil)")
         // Call external callback if set
         if let external = externalOnCancel {
-            debugLog("Calling external onCancel callback")
             external()
             return
         }
-
         // Just hide, don't paste
-        debugLog("No external callback, edit cancelled")
     }
 
     private func handleTextChanged(original: String, edited: String) {
-        debugLog("handleTextChanged: original='\(original)', edited='\(edited)'")
-
         // Call external callback if set
         if let callback = externalOnTextChanged {
-            debugLog("handleTextChanged: Calling externalOnTextChanged")
             callback(original, edited)
-        } else {
-            debugLog("handleTextChanged: No externalOnTextChanged callback set")
         }
 
         // Track corrections for learning
-        correctionTracker?.trackCorrection(original: original, edited: edited)
+        CorrectionHistory.shared.recordCorrection(original: original, edited: edited)
     }
 
     private func simulatePaste() {
@@ -838,21 +695,14 @@ final class TranscriptionOverlayController {
     /// Get caret position using Accessibility API with app-specific handling
     private func getCaretPosition() -> NSPoint? {
         // Check if we have accessibility permission
-        let trusted = AXIsProcessTrusted()
-        debugLog("getCaretPosition: AXIsProcessTrusted = \(trusted)")
-
-        if !trusted {
-            debugLog("getCaretPosition: No accessibility permission!")
+        guard AXIsProcessTrusted() else {
             return nil
         }
 
         // Get frontmost app info for app-specific handling
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let bundleId = frontmostApp?.bundleIdentifier ?? ""
-        let appName = frontmostApp?.localizedName ?? "unknown"
         let handler = appSpecificHandlers[bundleId] ?? .standardApp
-
-        debugLog("getCaretPosition: Frontmost app: \(appName) (\(bundleId)), handler: \(handler)")
 
         // For Electron apps, prioritize mouse position within focused window bounds
         if handler == .electronApp {
@@ -892,32 +742,24 @@ final class TranscriptionOverlayController {
 
         let result = AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedElement)
         if result == .success, let element = focusedElement {
-            debugLog("getCaretPosition: Got focused element from system-wide")
             if let position = extractPositionFromElement(element as! AXUIElement) {
                 saveSuccessfulPosition(position)
                 return position
             }
-        } else {
-            debugLog("getCaretPosition: System-wide focused element failed, error: \(result.rawValue)")
         }
 
         // Method B: Get focused app, then focused element from app
         var focusedApp: CFTypeRef?
         let appResult = AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &focusedApp)
         if appResult == .success, let app = focusedApp {
-            debugLog("getCaretPosition: Got focused application")
-
             // Get focused window
             var focusedWindow: CFTypeRef?
             if AXUIElementCopyAttributeValue(app as! AXUIElement, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
                let window = focusedWindow {
-                debugLog("getCaretPosition: Got focused window")
-
                 // Try to get focused element from window
                 var windowFocusedElement: CFTypeRef?
                 if AXUIElementCopyAttributeValue(window as! AXUIElement, kAXFocusedUIElementAttribute as CFString, &windowFocusedElement) == .success,
                    let winElem = windowFocusedElement {
-                    debugLog("getCaretPosition: Got focused element from window")
                     if let position = extractPositionFromElement(winElem as! AXUIElement) {
                         saveSuccessfulPosition(position)
                         return position
@@ -926,7 +768,6 @@ final class TranscriptionOverlayController {
 
                 // Fallback: use window position
                 if let position = getElementPosition(window as! AXUIElement) {
-                    debugLog("getCaretPosition: Using window position as fallback")
                     saveSuccessfulPosition(position)
                     return position
                 }
@@ -936,14 +777,11 @@ final class TranscriptionOverlayController {
             var appFocusedElement: CFTypeRef?
             if AXUIElementCopyAttributeValue(app as! AXUIElement, kAXFocusedUIElementAttribute as CFString, &appFocusedElement) == .success,
                let appElem = appFocusedElement {
-                debugLog("getCaretPosition: Got focused element from app")
                 if let position = extractPositionFromElement(appElem as! AXUIElement) {
                     saveSuccessfulPosition(position)
                     return position
                 }
             }
-        } else {
-            debugLog("getCaretPosition: Failed to get focused app, error: \(appResult.rawValue)")
         }
 
         // Method C: Find the frontmost app (excluding Tok) and get its focused element
@@ -956,11 +794,9 @@ final class TranscriptionOverlayController {
         if let lastPosition = lastSuccessfulCaretPosition,
            let lastTime = lastSuccessfulCaretTime,
            Date().timeIntervalSince(lastTime) < 30 {
-            debugLog("getCaretPosition: Using last successful position from \(Date().timeIntervalSince(lastTime))s ago")
             return lastPosition
         }
 
-        debugLog("getCaretPosition: All methods failed")
         return nil
     }
 
@@ -968,7 +804,6 @@ final class TranscriptionOverlayController {
     private func saveSuccessfulPosition(_ position: NSPoint) {
         lastSuccessfulCaretPosition = position
         lastSuccessfulCaretTime = Date()
-        debugLog("saveSuccessfulPosition: Saved position \(position)")
     }
 
     /// Get caret position for Electron apps (VS Code, etc.)
@@ -976,28 +811,23 @@ final class TranscriptionOverlayController {
     private func getElectronAppCaretPosition(app: NSRunningApplication?) -> NSPoint? {
         guard let app = app else { return nil }
 
-        debugLog("getElectronAppCaretPosition: Handling Electron app")
-
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
 
         // Get focused window
         var focusedWindow: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
               let window = focusedWindow else {
-            debugLog("getElectronAppCaretPosition: No focused window")
             return nil
         }
 
         // Get window position and size
         guard let windowPosition = getElementPosition(window as! AXUIElement) else {
-            debugLog("getElectronAppCaretPosition: Couldn't get window position")
             return nil
         }
 
         var sizeValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(window as! AXUIElement, kAXSizeAttribute as CFString, &sizeValue) == .success,
               let szValue = sizeValue else {
-            debugLog("getElectronAppCaretPosition: Couldn't get window size")
             return nil
         }
 
@@ -1009,25 +839,20 @@ final class TranscriptionOverlayController {
         let windowRect = NSRect(origin: windowPosition, size: windowSize)
 
         if windowRect.contains(mouseLocation) {
-            debugLog("getElectronAppCaretPosition: Mouse is within window, using mouse position")
             return mouseLocation
         }
 
         // Otherwise, position at a reasonable location in the window
         // Typically the editor area is in the center-right of VS Code
-        let editorPosition = NSPoint(
+        return NSPoint(
             x: windowPosition.x + windowSize.width * 0.4,
             y: windowPosition.y + windowSize.height * 0.5
         )
-        debugLog("getElectronAppCaretPosition: Using estimated editor position")
-        return editorPosition
     }
 
     /// Get caret position for terminal apps
     private func getTerminalAppCaretPosition(app: NSRunningApplication?) -> NSPoint? {
         guard let app = app else { return nil }
-
-        debugLog("getTerminalAppCaretPosition: Handling terminal app")
 
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
 
@@ -1057,28 +882,23 @@ final class TranscriptionOverlayController {
     private func getBrowserCaretPosition(app: NSRunningApplication?, tryAXFirst: Bool) -> NSPoint? {
         guard let app = app else { return nil }
 
-        debugLog("getBrowserCaretPosition: Handling browser app (tryAXFirst: \(tryAXFirst))")
-
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
 
         // Get focused window
         var focusedWindow: CFTypeRef?
         guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
               let window = focusedWindow else {
-            debugLog("getBrowserCaretPosition: No focused window")
             return nil
         }
 
         // Get window position and size for bounds checking
         guard let windowPosition = getElementPosition(window as! AXUIElement) else {
-            debugLog("getBrowserCaretPosition: Couldn't get window position")
             return nil
         }
 
         var sizeValue: CFTypeRef?
         guard AXUIElementCopyAttributeValue(window as! AXUIElement, kAXSizeAttribute as CFString, &sizeValue) == .success,
               let szValue = sizeValue else {
-            debugLog("getBrowserCaretPosition: Couldn't get window size")
             return nil
         }
 
@@ -1089,8 +909,6 @@ final class TranscriptionOverlayController {
 
         // For Safari/Firefox, try AX methods first (they have better accessibility support)
         if tryAXFirst {
-            debugLog("getBrowserCaretPosition: Trying AX methods first")
-
             // Try to find focused web area or text field
             var focusedElement: CFTypeRef?
             if AXUIElementCopyAttributeValue(window as! AXUIElement, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success,
@@ -1100,12 +918,9 @@ final class TranscriptionOverlayController {
                 var roleValue: CFTypeRef?
                 if AXUIElementCopyAttributeValue(elem as! AXUIElement, kAXRoleAttribute as CFString, &roleValue) == .success,
                    let role = roleValue as? String {
-                    debugLog("getBrowserCaretPosition: Focused element role: \(role)")
-
                     // For text fields and text areas, try to get caret position
                     if role == "AXTextField" || role == "AXTextArea" || role == "AXWebArea" || role == "AXComboBox" {
                         if let position = extractPositionFromElement(elem as! AXUIElement) {
-                            debugLog("getBrowserCaretPosition: Got position from AX: \(position)")
                             return position
                         }
                     }
@@ -1113,37 +928,30 @@ final class TranscriptionOverlayController {
 
                 // Try to get position from the focused element anyway
                 if let position = extractPositionFromElement(elem as! AXUIElement) {
-                    debugLog("getBrowserCaretPosition: Got position from focused element: \(position)")
                     return position
                 }
             }
 
             // Try searching deeper in the hierarchy for focused web content
             if let position = findWebContentInputPosition(in: window as! AXUIElement) {
-                debugLog("getBrowserCaretPosition: Got position from web content search: \(position)")
                 return position
             }
         }
 
         // Use mouse position if it's within the browser window
         let mouseLocation = NSEvent.mouseLocation
-        debugLog("getBrowserCaretPosition: Mouse location: \(mouseLocation), window rect: \(windowRect)")
 
         if windowRect.contains(mouseLocation) {
-            debugLog("getBrowserCaretPosition: Using mouse position (within window)")
             return mouseLocation
         }
 
         // Mouse is outside window - estimate position near the content area
         // Browsers typically have tab bar + address bar at top (~100px) and content below
         let estimatedContentY = windowPosition.y + windowSize.height - 150  // Below toolbar area
-        let estimatedPosition = NSPoint(
+        return NSPoint(
             x: windowPosition.x + windowSize.width * 0.3,  // Roughly where content starts
             y: estimatedContentY
         )
-
-        debugLog("getBrowserCaretPosition: Using estimated content position: \(estimatedPosition)")
-        return estimatedPosition
     }
 
     /// Search for focused input elements in web content
@@ -1172,7 +980,6 @@ final class TranscriptionOverlayController {
                 var focusedValue: CFTypeRef?
                 if AXUIElementCopyAttributeValue(child, kAXFocusedAttribute as CFString, &focusedValue) == .success,
                    let focused = focusedValue as? Bool, focused {
-                    debugLog("findWebContentInputPosition: Found focused \(role)")
                     if let position = extractPositionFromElement(child) {
                         return position
                     }
@@ -1202,21 +1009,15 @@ final class TranscriptionOverlayController {
         let runningApps = NSWorkspace.shared.runningApplications
         let myBundleId = Bundle.main.bundleIdentifier ?? ""
 
-        debugLog("getPositionFromFrontmostApp: Looking for frontmost app (excluding \(myBundleId))")
-
         // Get ordered list of apps by activation
         for app in runningApps where app.isActive && app.bundleIdentifier != myBundleId {
-            debugLog("getPositionFromFrontmostApp: Found active app: \(app.localizedName ?? "unknown") (\(app.bundleIdentifier ?? ""))")
-
             let axApp = AXUIElementCreateApplication(app.processIdentifier)
 
             // Try to get focused element directly from the app first
             var appFocusedElement: CFTypeRef?
             let appFocusedResult = AXUIElementCopyAttributeValue(axApp, kAXFocusedUIElementAttribute as CFString, &appFocusedElement)
-            debugLog("getPositionFromFrontmostApp: App focused element result: \(appFocusedResult.rawValue)")
 
             if appFocusedResult == .success, let elem = appFocusedElement {
-                debugLog("getPositionFromFrontmostApp: Got focused element from app")
                 if let position = extractPositionFromElement(elem as! AXUIElement) {
                     return position
                 }
@@ -1226,15 +1027,11 @@ final class TranscriptionOverlayController {
             var focusedWindow: CFTypeRef?
             if AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
                let window = focusedWindow {
-                debugLog("getPositionFromFrontmostApp: Got focused window")
-
                 // Get focused element from window
                 var windowFocusedElement: CFTypeRef?
                 let windowFocusedResult = AXUIElementCopyAttributeValue(window as! AXUIElement, kAXFocusedUIElementAttribute as CFString, &windowFocusedElement)
-                debugLog("getPositionFromFrontmostApp: Window focused element result: \(windowFocusedResult.rawValue)")
 
                 if windowFocusedResult == .success, let elem = windowFocusedElement {
-                    debugLog("getPositionFromFrontmostApp: Got focused element from window")
                     if let position = extractPositionFromElement(elem as! AXUIElement) {
                         return position
                     }
@@ -1247,7 +1044,6 @@ final class TranscriptionOverlayController {
 
                 // Try using mouse cursor position (usually near the text input when typing)
                 let mouseLocation = NSEvent.mouseLocation
-                debugLog("getPositionFromFrontmostApp: Mouse location: \(mouseLocation)")
 
                 // Check if mouse is within the window bounds
                 if let windowPos = getElementPosition(window as! AXUIElement) {
@@ -1260,7 +1056,6 @@ final class TranscriptionOverlayController {
                         // Window bounds in screen coordinates
                         let windowRect = NSRect(origin: windowPos, size: size)
                         if windowRect.contains(mouseLocation) {
-                            debugLog("getPositionFromFrontmostApp: Using mouse position (within window)")
                             return mouseLocation
                         }
                     }
@@ -1268,7 +1063,6 @@ final class TranscriptionOverlayController {
 
                 // Use window position as fallback
                 if let position = getElementPosition(window as! AXUIElement) {
-                    debugLog("getPositionFromFrontmostApp: Using window position as final fallback")
                     return position
                 }
             }
@@ -1285,8 +1079,6 @@ final class TranscriptionOverlayController {
                 // Check if this window is on screen (has a valid position)
                 var posValue: CFTypeRef?
                 if AXUIElementCopyAttributeValue(window as! AXUIElement, kAXPositionAttribute as CFString, &posValue) == .success {
-                    debugLog("getPositionFromFrontmostApp: Found window from \(app.localizedName ?? "unknown")")
-
                     // Get focused element
                     var elem: CFTypeRef?
                     if AXUIElementCopyAttributeValue(window as! AXUIElement, kAXFocusedUIElementAttribute as CFString, &elem) == .success,
@@ -1304,7 +1096,6 @@ final class TranscriptionOverlayController {
             }
         }
 
-        debugLog("getPositionFromFrontmostApp: No suitable app found")
         return nil
     }
 
@@ -1326,13 +1117,10 @@ final class TranscriptionOverlayController {
 
             // Check if this is a text input element
             if role == "AXTextArea" || role == "AXTextField" || role == "AXWebArea" || role == "AXTextView" {
-                debugLog("findTextInputPosition: Found text element with role: \(role)")
-
                 // Check if it has focus
                 var focusedValue: CFTypeRef?
                 if AXUIElementCopyAttributeValue(child, kAXFocusedAttribute as CFString, &focusedValue) == .success,
                    let focused = focusedValue as? Bool, focused {
-                    debugLog("findTextInputPosition: Element is focused")
                     if let position = extractPositionFromElement(child) {
                         return position
                     }
@@ -1350,31 +1138,18 @@ final class TranscriptionOverlayController {
 
     /// Extract position from an AX element using various methods
     private func extractPositionFromElement(_ element: AXUIElement) -> NSPoint? {
-        // Log element role
-        var roleValue: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue) == .success {
-            debugLog("extractPosition: Element role: \(roleValue as? String ?? "unknown")")
-        }
-
         // Method 1: Try to get bounds for selected text range
         if let position = getPositionFromSelectedTextRange(element) {
-            debugLog("extractPosition: Got position from selected text range: \(position)")
             return position
         }
 
         // Method 2: Try to get caret bounds directly
         if let position = getCaretBoundsPosition(element) {
-            debugLog("extractPosition: Got position from caret bounds: \(position)")
             return position
         }
 
         // Method 3: Fallback to element position
-        if let position = getElementPosition(element) {
-            debugLog("extractPosition: Got position from element: \(position)")
-            return position
-        }
-
-        return nil
+        return getElementPosition(element)
     }
 
     /// Get position from selected text range
@@ -1476,49 +1251,6 @@ final class TranscriptionOverlayController {
     }
 }
 
-// MARK: - Correction Tracker (Placeholder)
-
-/// Tracks corrections made by the user for learning
-class CorrectionTracker {
-
-    func trackCorrection(original: String, edited: String) {
-        guard original != edited else { return }
-
-        print("[CorrectionTracker] Detected correction:")
-        print("  Original: \(original)")
-        print("  Edited: \(edited)")
-
-        // Find word-level differences
-        let diffs = findWordDifferences(original: original, edited: edited)
-        for diff in diffs {
-            print("  Diff: '\(diff.original)' → '\(diff.corrected)'")
-        }
-
-        // TODO: Save corrections and implement learning logic
-    }
-
-    private func findWordDifferences(original: String, edited: String) -> [(original: String, corrected: String)] {
-        // Simple word-level diff (can be improved with proper diff algorithm)
-        let originalWords = original.components(separatedBy: CharacterSet.whitespaces)
-        let editedWords = edited.components(separatedBy: CharacterSet.whitespaces)
-
-        var diffs: [(original: String, corrected: String)] = []
-
-        // For now, just compare word by word
-        let maxLen = max(originalWords.count, editedWords.count)
-        for i in 0..<maxLen {
-            let origWord = i < originalWords.count ? originalWords[i] : ""
-            let editWord = i < editedWords.count ? editedWords[i] : ""
-
-            if origWord != editWord && !origWord.isEmpty && !editWord.isEmpty {
-                diffs.append((original: origWord, corrected: editWord))
-            }
-        }
-
-        return diffs
-    }
-}
-
 // MARK: - Hotkey Aware TextField
 
 /// Protocol for hotkey detection in text field
@@ -1558,12 +1290,10 @@ final class HotkeyAwareTextField: NSTextField {
 
             if eventModifiers == hotkey.modifiers && !isHotkeyActive {
                 isHotkeyActive = true
-                debugLog("HotkeyAwareTextField: MODIFIER HOTKEY PRESSED")
                 hotkeyDelegate?.hotkeyPressed()
                 return
             } else if isHotkeyActive && eventModifiers != hotkey.modifiers {
                 isHotkeyActive = false
-                debugLog("HotkeyAwareTextField: MODIFIER HOTKEY RELEASED")
                 hotkeyDelegate?.hotkeyReleased()
                 return
             }
@@ -1586,36 +1316,17 @@ final class HotkeyAwareTextField: NSTextField {
 
         if isKeyDown && matches && !isHotkeyActive {
             isHotkeyActive = true
-            debugLog("HotkeyAwareTextField: HOTKEY PRESSED - key=\(eventKey?.rawValue ?? "nil")")
             hotkeyDelegate?.hotkeyPressed()
             return true
         } else if !isKeyDown && isHotkeyActive {
             let releasedKey = Sauce.shared.key(for: Int(event.keyCode))
             if releasedKey == hotkey.key {
                 isHotkeyActive = false
-                debugLog("HotkeyAwareTextField: HOTKEY RELEASED")
                 hotkeyDelegate?.hotkeyReleased()
                 return true
             }
         }
 
         return false
-    }
-
-    private func debugLog(_ message: String) {
-        let logFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tok_overlay_debug.log")
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let line = "[\(timestamp)] \(message)\n"
-        if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: logFile.path) {
-                if let handle = try? FileHandle(forWritingTo: logFile) {
-                    handle.seekToEndOfFile()
-                    handle.write(data)
-                    handle.closeFile()
-                }
-            } else {
-                try? data.write(to: logFile)
-            }
-        }
     }
 }
