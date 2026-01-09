@@ -348,6 +348,7 @@ struct TranscriptionFeature {
       // MARK: - Transcription Results
 
       case let .transcriptionResult(result):
+        debugLog("[TCA] transcriptionResult received: \(result)")
         return handleTranscriptionResult(&state, result: result)
 
       case let .transcriptionError(error):
@@ -511,7 +512,11 @@ struct TranscriptionFeature {
       // MARK: - Cancel Entire Flow
 
       case .cancel:
-        // Only cancel if we're in the middle of recording or transcribing
+        // Cancel if recording, transcribing, or overlay is visible
+        // 當 overlay 顯示時按 ESC，應該關閉 overlay
+        if state.isOverlayVisible {
+          return .send(.editOverlayCancelled)
+        }
         guard state.isRecording || state.isTranscribing else {
           return .none
         }
@@ -565,7 +570,6 @@ struct TranscriptionFeature {
       case let .editOverlayConfirmed(text):
         // User confirmed the edited text - paste it
         // Reset ALL states to allow new recording (same as handleCancel)
-        debugLog("[TCA] editOverlayConfirmed BEFORE - isRecording: \(state.isRecording), isTranscribing: \(state.isTranscribing), isOverlayVisible: \(state.isOverlayVisible)")
         state.isTranscribing = false
         state.isRecording = false
         state.isPrewarming = false
@@ -578,7 +582,6 @@ struct TranscriptionFeature {
         state.enhancementProgress.updateStage(.idle)
         state.streamingTranscription.reset()
         state.realTimeTranscription = nil
-        debugLog("[TCA] editOverlayConfirmed AFTER - isRecording: \(state.isRecording), isTranscribing: \(state.isTranscribing), isOverlayVisible: \(state.isOverlayVisible)")
 
         return .merge(
           .cancel(id: CancelID.transcription),
@@ -593,6 +596,7 @@ struct TranscriptionFeature {
             await transcription.stopStreamTranscription()
           },
           .run { _ in
+            await overlayClient.hide()
             await pasteboard.paste(text)
             await soundEffect.play(.pasteTranscript)
           }
@@ -600,7 +604,6 @@ struct TranscriptionFeature {
 
       case .editOverlayCancelled:
         // User cancelled - reset ALL states to allow new recording (same as handleCancel)
-        debugLog("[TCA] editOverlayCancelled - resetting all states")
         state.isTranscribing = false
         state.isRecording = false
         state.isPrewarming = false
@@ -627,6 +630,7 @@ struct TranscriptionFeature {
             await transcription.stopStreamTranscription()
           },
           .run { _ in
+            await overlayClient.hide()
             await soundEffect.play(.cancel)
           }
         )
@@ -646,16 +650,11 @@ struct TranscriptionFeature {
           return .none
         }
         return .run { _ in
-          // Use CorrectionHistory to track and potentially auto-learn
+          // CorrectionHistory handles diff analysis internally
+          // Pass the full original and edited strings, not individual corrections
           let history = CorrectionHistory.shared
-          let diffTracker = DiffTracker()
-          let corrections = diffTracker.findCorrections(original: original, edited: edited)
-
-          for correction in corrections {
-            // This will automatically trigger auto-learning via notifications
-            // when correction count reaches threshold
-            history.recordCorrection(original: correction.original, edited: correction.corrected)
-          }
+          history.recordCorrection(original: original, edited: edited)
+          print("[AutoLearn] Recorded correction: '\(original)' → '\(edited)'")
         }
       }
     }

@@ -412,8 +412,11 @@ actor TranscriptionClientLive {
     // Early return for empty text
     guard !text.isEmpty else { return text }
 
+    print("[processTranscriptionText] Input: '\(text)'")
+
     // Step 1: Clean Whisper tokens
     var processed = cleanWhisperTokens(from: text)
+    print("[processTranscriptionText] After cleaning: '\(processed)'")
 
     // Step 2: Apply Traditional Chinese conversion if enabled
     if let settings = settings, settings.preferTraditionalChinese {
@@ -423,12 +426,16 @@ actor TranscriptionClientLive {
 
       if languageIsChineseOrUnset && textContainsChinese {
         processed = convertToTraditionalChinese(processed)
+        print("[processTranscriptionText] After Traditional Chinese conversion: '\(processed)'")
       }
     }
 
     // Step 3: Apply custom word replacements
     let customWordDictionary = getCachedCustomWordDictionary()
+    print("[processTranscriptionText] Dictionary isEnabled: \(customWordDictionary.isEnabled), entries: \(customWordDictionary.entries.count), replacementEntries: \(customWordDictionary.enabledReplacementEntries.count)")
+    let beforeReplacement = processed
     processed = customWordDictionary.applyReplacements(to: processed)
+    print("[processTranscriptionText] After replacements: '\(processed)' (changed: \(beforeReplacement != processed))")
 
     return processed
   }

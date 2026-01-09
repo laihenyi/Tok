@@ -43,10 +43,32 @@ struct PasteboardClientLive {
 
     @MainActor
     func paste(text: String) async {
+        debugLog("[Pasteboard] paste called with text: \(text)")
+        debugLog("[Pasteboard] useClipboardPaste: \(hexSettings.useClipboardPaste)")
         if hexSettings.useClipboardPaste {
+            debugLog("[Pasteboard] Using clipboard paste method")
             await pasteWithClipboard(text)
         } else {
+            debugLog("[Pasteboard] Using AppleScript typing method")
             simulateTypingWithAppleScript(text)
+        }
+        debugLog("[Pasteboard] paste completed")
+    }
+
+    private func debugLog(_ message: String) {
+        let logFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tok_overlay_debug.log")
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(timestamp)] \(message)\n"
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: logFile.path) {
+                if let handle = try? FileHandle(forWritingTo: logFile) {
+                    handle.seekToEndOfFile()
+                    handle.write(data)
+                    handle.closeFile()
+                }
+            } else {
+                try? data.write(to: logFile)
+            }
         }
     }
     
@@ -193,55 +215,170 @@ struct PasteboardClientLive {
         return false
     }
 
+    /// Paste using AppleScript keystroke command (Cmd+V)
+    /// This is more reliable for Electron/Chromium apps than CGEvent
+    static func pasteWithAppleScriptKeystroke() -> Bool {
+        let script = """
+        tell application "System Events"
+            keystroke "v" using command down
+        end tell
+        """
+
+        var error: NSDictionary?
+        if let scriptObject = NSAppleScript(source: script) {
+            scriptObject.executeAndReturnError(&error)
+            if let error = error {
+                print("Error executing AppleScript keystroke: \(error)")
+                return false
+            }
+            return true
+        }
+        return false
+    }
+
     func pasteWithClipboard(_ text: String) async {
+        debugLog("[Pasteboard] pasteWithClipboard started")
+
+        // Wait a moment for the target app to be fully activated
+        // This is crucial when paste is called right after overlay closes
+        try? await Task.sleep(for: .milliseconds(50))
+
         let pasteboard = NSPasteboard.general
-        
+
         // Save the original pasteboard only if we need to restore it
         let backupPasteboard = hexSettings.copyToClipboard ? nil : savePasteboardState(pasteboard: pasteboard)
-        
+
         // Set our text in the clipboard
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
+        debugLog("[Pasteboard] Text set in clipboard")
+
+        // Get frontmost app for debugging and determine paste strategy
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        let bundleID = frontApp?.bundleIdentifier ?? ""
+        if let frontApp = frontApp {
+            debugLog("[Pasteboard] Frontmost app: \(frontApp.localizedName ?? "unknown") (bundleID: \(bundleID))")
+        } else {
+            debugLog("[Pasteboard] WARNING: No frontmost application detected!")
+        }
+
+        // Check if this is an Electron/Chromium app (AppleScript menu paste won't work)
+        let isElectronOrChromium = bundleID.contains("microsoft.VSCode") ||
+                                   bundleID.contains("Electron") ||
+                                   bundleID.contains("com.google.Chrome") ||
+                                   bundleID.contains("com.brave.Browser") ||
+                                   bundleID.contains("com.microsoft.edgemac") ||
+                                   bundleID.contains("Slack") ||
+                                   bundleID.contains("Discord")
+
+        // Check if this is specifically VS Code (needs special handling)
+        let isVSCode = bundleID.contains("microsoft.VSCode")
 
         let source = CGEventSource(stateID: .combinedSessionState)
-        
-        // First try the AppleScript approach - it's more reliable in most apps
-        var pasteSucceeded = PasteboardClientLive.pasteToFrontmostApp()
-        
+        var pasteSucceeded = false
+
+        // For Electron/Chromium apps, skip AppleScript and go directly to CGEvent keypresses
+        if isElectronOrChromium {
+            debugLog("[Pasteboard] Electron/Chromium app detected, using CGEvent keypresses directly")
+        } else {
+            // First try the AppleScript approach - it's more reliable in most native apps
+            debugLog("[Pasteboard] Trying AppleScript paste method")
+            pasteSucceeded = PasteboardClientLive.pasteToFrontmostApp()
+            debugLog("[Pasteboard] AppleScript paste result: \(pasteSucceeded)")
+        }
+
         // If menu-based paste failed, try simulated keypresses
         if !pasteSucceeded {
-            print("Failed to paste to frontmost app, falling back to simulated keypresses")
-            
-            // Add a small delay to allow system to process
-            try? await Task.sleep(for: .milliseconds(100))
+            debugLog("[Pasteboard] Using keystroke simulation for paste")
+            print("Using simulated keypresses for paste")
 
-            // Obtain the key code on the main actor to avoid blocking synchronous dispatches
-            let vKeyCode: CGKeyCode = await MainActor.run { Sauce.shared.keyCode(for: .v) }
-            let cmdKeyCode: CGKeyCode = 55 // Command key
+            // Add a delay to allow system to process and target app to be ready
+            // Use longer delay for VS Code as it needs more time to regain focus
+            let delayMs = isVSCode ? 200 : 100
+            debugLog("[Pasteboard] Waiting \(delayMs)ms for app to be ready")
+            try? await Task.sleep(for: .milliseconds(delayMs))
 
-            // Create and post key events with small delays between
-            autoreleasepool {
-                // Command down
-                let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: true)
-                cmdDown?.post(tap: .cghidEventTap)
-                
-                // V down with command flag
-                let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true)
-                vDown?.flags = .maskCommand
-                vDown?.post(tap: .cghidEventTap)
-                
-                // V up with command flag
-                let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false)
-                vUp?.flags = .maskCommand
-                vUp?.post(tap: .cghidEventTap)
-                
-                // Command up
-                let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: false)
-                cmdUp?.post(tap: .cghidEventTap)
+            // For VS Code and other Electron apps, click at current mouse position first
+            // to ensure the correct pane has keyboard focus, then use AppleScript keystroke
+            if isVSCode {
+                debugLog("[Pasteboard] VS Code detected, clicking at mouse position first")
+
+                // Click at current mouse position to ensure focus
+                let mouseLocation = NSEvent.mouseLocation
+                debugLog("[Pasteboard] Mouse position: \(mouseLocation)")
+
+                // Convert to screen coordinates for CGEvent (flip Y axis)
+                if let mainScreen = NSScreen.main {
+                    let screenHeight = mainScreen.frame.height
+                    let cgPoint = CGPoint(x: mouseLocation.x, y: screenHeight - mouseLocation.y)
+
+                    // Post a mouse click at current position
+                    if let mouseDown = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: cgPoint, mouseButton: .left) {
+                        mouseDown.post(tap: .cgSessionEventTap)
+                    }
+                    usleep(20000) // 20ms
+                    if let mouseUp = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: cgPoint, mouseButton: .left) {
+                        mouseUp.post(tap: .cgSessionEventTap)
+                    }
+                    debugLog("[Pasteboard] Mouse click posted at \(cgPoint)")
+                }
+
+                // Wait for click to be processed
+                try? await Task.sleep(for: .milliseconds(100))
+
+                // Now use AppleScript keystroke
+                debugLog("[Pasteboard] Using AppleScript keystroke Cmd+V for VS Code")
+                let keystrokeSucceeded = PasteboardClientLive.pasteWithAppleScriptKeystroke()
+                debugLog("[Pasteboard] AppleScript keystroke result: \(keystrokeSucceeded)")
+                pasteSucceeded = keystrokeSucceeded
+            } else if isElectronOrChromium {
+                // For other Electron/Chromium apps, use AppleScript keystroke which is more reliable
+                // for apps with complex input handling (like xterm.js terminals)
+                debugLog("[Pasteboard] Using AppleScript keystroke Cmd+V for Electron app")
+                let keystrokeSucceeded = PasteboardClientLive.pasteWithAppleScriptKeystroke()
+                debugLog("[Pasteboard] AppleScript keystroke result: \(keystrokeSucceeded)")
+                pasteSucceeded = keystrokeSucceeded
+            } else {
+                // For other apps, use CGEvent
+                let vKeyCode: CGKeyCode = await MainActor.run { Sauce.shared.keyCode(for: .v) }
+                let cmdKeyCode: CGKeyCode = 55 // Command key
+
+                debugLog("[Pasteboard] Posting CGEvent Cmd+V (vKeyCode=\(vKeyCode))")
+
+                // Create and post key events with proper timing
+                autoreleasepool {
+                    // Command down
+                    if let cmdDown = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: true) {
+                        cmdDown.post(tap: .cgSessionEventTap)
+                    }
+
+                    usleep(10000) // 10ms
+
+                    // V down with command flag
+                    if let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true) {
+                        vDown.flags = .maskCommand
+                        vDown.post(tap: .cgSessionEventTap)
+                    }
+
+                    usleep(10000) // 10ms
+
+                    // V up with command flag
+                    if let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false) {
+                        vUp.flags = .maskCommand
+                        vUp.post(tap: .cgSessionEventTap)
+                    }
+
+                    usleep(10000) // 10ms
+
+                    // Command up
+                    if let cmdUp = CGEvent(keyboardEventSource: source, virtualKey: cmdKeyCode, keyDown: false) {
+                        cmdUp.post(tap: .cgSessionEventTap)
+                    }
+                }
+
+                debugLog("[Pasteboard] CGEvent Cmd+V posted")
+                pasteSucceeded = true
             }
-            
-            // Assume keypress-based paste succeeded - text will remain in clipboard as fallback
-            pasteSucceeded = true
         }
         
         // Only restore original pasteboard contents if:

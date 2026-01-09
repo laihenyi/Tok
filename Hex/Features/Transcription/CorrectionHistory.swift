@@ -87,6 +87,16 @@ final class CorrectionHistory: ObservableObject {
         records.filter { $0.shouldSuggestForLearning && !$0.addedToDictionary }
     }
 
+    /// Process any pending corrections that are ready for learning
+    /// Called at startup to catch any that were missed
+    func processPendingLearning() {
+        let pending = getCorrectionsReadyForLearning()
+        for record in pending {
+            print("[CorrectionHistory] Processing pending: '\(record.original)' → '\(record.corrected)'")
+            notifyReadyForLearning(record)
+        }
+    }
+
     /// Mark a correction as added to dictionary
     func markAsAddedToDictionary(_ record: CorrectionRecord) {
         if let index = records.firstIndex(where: { $0.id == record.id }) {
@@ -135,10 +145,15 @@ final class CorrectionHistory: ObservableObject {
         print("[CorrectionHistory] Ready for learning: '\(record.original)' → '\(record.corrected)' (occurred \(record.occurrenceCount) times)")
 
         // Post notification for UI to show suggestion
+        // Pass individual properties since CorrectionRecord struct can't bridge to Obj-C
         NotificationCenter.default.post(
             name: .correctionReadyForLearning,
             object: nil,
-            userInfo: ["record": record]
+            userInfo: [
+                "id": record.id.uuidString,
+                "original": record.original,
+                "corrected": record.corrected
+            ]
         )
     }
 
@@ -192,6 +207,40 @@ final class AutoLearningManager {
 
     private init() {
         setupNotifications()
+        // Process any pending corrections that were missed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.processPendingCorrections()
+        }
+    }
+
+    private func processPendingCorrections() {
+        // Debug log to file
+        let debugLog = { (msg: String) in
+            let logURL = URL.documentsDirectory.appendingPathComponent("autolearn_debug.log")
+            let timestamp = ISO8601DateFormatter().string(from: Date())
+            let line = "[\(timestamp)] \(msg)\n"
+            if let data = line.data(using: .utf8) {
+                if FileManager.default.fileExists(atPath: logURL.path) {
+                    if let handle = try? FileHandle(forWritingTo: logURL) {
+                        handle.seekToEndOfFile()
+                        handle.write(data)
+                        handle.closeFile()
+                    }
+                } else {
+                    try? data.write(to: logURL)
+                }
+            }
+        }
+
+        debugLog("processPendingCorrections called")
+        debugLog("Total records in history: \(correctionHistory.records.count)")
+        let pending = correctionHistory.getCorrectionsReadyForLearning()
+        debugLog("Pending corrections found: \(pending.count)")
+        for record in pending {
+            debugLog("Processing: '\(record.original)' → '\(record.corrected)' (count: \(record.occurrenceCount), added: \(record.addedToDictionary))")
+            addToDictionary(record)
+        }
+        debugLog("processPendingCorrections completed")
     }
 
     private func setupNotifications() {
@@ -204,10 +253,22 @@ final class AutoLearningManager {
     }
 
     @objc private func handleCorrectionReady(_ notification: Notification) {
-        guard let record = notification.userInfo?["record"] as? CorrectionRecord else { return }
+        guard let idString = notification.userInfo?["id"] as? String,
+              let id = UUID(uuidString: idString),
+              let original = notification.userInfo?["original"] as? String,
+              let corrected = notification.userInfo?["corrected"] as? String else {
+            print("[AutoLearning] Failed to parse notification userInfo")
+            return
+        }
 
-        // Auto-add to dictionary
-        addToDictionary(record)
+        print("[AutoLearning] Received notification for: '\(original)' → '\(corrected)'")
+
+        // Find the record by ID and add to dictionary
+        if let record = correctionHistory.records.first(where: { $0.id == id }) {
+            addToDictionary(record)
+        } else {
+            print("[AutoLearning] Record not found for id: \(idString)")
+        }
     }
 
     /// Add a correction to the custom word dictionary
@@ -221,7 +282,8 @@ final class AutoLearningManager {
             if FileManager.default.fileExists(atPath: dictionaryURL.path) {
                 let data = try Data(contentsOf: dictionaryURL)
                 let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
+                // Use deferredToDate to handle numeric timestamps (timeIntervalSinceReferenceDate)
+                decoder.dateDecodingStrategy = .deferredToDate
                 dictionary = try decoder.decode(CustomWordDictionary.self, from: data)
             } else {
                 dictionary = CustomWordDictionary()
@@ -253,7 +315,8 @@ final class AutoLearningManager {
 
             // Save dictionary
             let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
+            // Use deferredToDate to match the existing file format
+            encoder.dateEncodingStrategy = .deferredToDate
             encoder.outputFormatting = [.prettyPrinted]
             let data = try encoder.encode(dictionary)
             try data.write(to: dictionaryURL)

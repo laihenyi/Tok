@@ -26,6 +26,9 @@ final class TranscriptionOverlayPanel: NSPanel {
 
     private var originalText: String = ""
 
+    /// The app that was active before the overlay was shown (target for paste)
+    private var targetApp: NSRunningApplication?
+
     // MARK: - Initialization
 
     init() {
@@ -58,7 +61,8 @@ final class TranscriptionOverlayPanel: NSPanel {
         hidesOnDeactivate = false
 
         // Allow the panel to become key without activating the app
-        becomesKeyOnlyIfNeeded = true
+        // Set to false so the panel can accept keyboard focus immediately when makeKey() is called
+        becomesKeyOnlyIfNeeded = false
 
         // Ignore mouse events outside the text field
         ignoresMouseEvents = false
@@ -189,6 +193,9 @@ final class TranscriptionOverlayPanel: NSPanel {
 
     /// Show the overlay with transcribed text at the specified position
     func show(text: String, at position: NSPoint) {
+        // Save the target app before showing overlay
+        targetApp = NSWorkspace.shared.frontmostApplication
+
         originalText = text
         textField.stringValue = text
 
@@ -218,29 +225,51 @@ final class TranscriptionOverlayPanel: NSPanel {
 
         setFrameOrigin(adjustedPosition)
 
-        // Show and focus
-        orderFront(nil)
-        makeKey()
+        // Restore panel properties that were changed during hide
+        level = .floating
+        alphaValue = 1.0
+
+        // Show and focus - use makeKeyAndOrderFront for better focus handling
+        makeKeyAndOrderFront(nil)
+        debugLog("show: Panel shown, isKeyWindow=\(isKeyWindow)")
+
+        // Explicitly make text field the first responder
+        let focusSuccess = makeFirstResponder(textField)
+        debugLog("show: makeFirstResponder result=\(focusSuccess), firstResponder=\(String(describing: firstResponder))")
+
+        // Select all text (this also ensures field editor is created)
         textField.selectText(nil)
 
-        // Position cursor at end
-        if let editor = textField.currentEditor() {
-            editor.selectedRange = NSRange(location: text.count, length: 0)
+        // Position cursor at end after a brief delay to ensure field editor is ready
+        DispatchQueue.main.async { [weak self] in
+            if let editor = self?.textField.currentEditor() {
+                let textLength = self?.textField.stringValue.count ?? 0
+                editor.selectedRange = NSRange(location: textLength, length: 0)
+            }
         }
-
-        // Debug: verify panel state
-        debugLog("show() completed - isKeyWindow: \(isKeyWindow), isVisible: \(isVisible), canBecomeKey: \(canBecomeKey)")
     }
 
     /// Hide the overlay
     func hide() {
-        // Resign key window status before hiding to return focus to previous app
+        // Only do work if panel is actually visible (avoid double-hide issues)
+        let wasVisible = isVisible || alphaValue > 0
+
+        // Reset hotkey state
+        isHotkeyPressed = false
+
+        // Multi-step hide approach for reliable panel hiding:
         resignKey()
+        setFrameOrigin(NSPoint(x: -10000, y: -10000))
+        alphaValue = 0
+        level = .normal
         orderOut(nil)
 
-        // Activate the previous application to ensure hotkey monitoring works
-        if let frontApp = NSWorkspace.shared.frontmostApplication {
-            frontApp.activate()
+        // Only activate previous app if panel was actually visible
+        // This prevents re-activation when hide() is called multiple times
+        if wasVisible {
+            if let frontApp = NSWorkspace.shared.frontmostApplication {
+                frontApp.activate()
+            }
         }
     }
 
@@ -310,9 +339,26 @@ final class TranscriptionOverlayPanel: NSPanel {
         if event.type == .keyDown {
             switch event.keyCode {
             case 36:  // Enter
+                // Check if IME is composing (has marked/provisional text)
+                // If so, let the Enter pass through to confirm IME selection
+                if let editor = textField.currentEditor() as? NSTextView {
+                    let markedRange = editor.markedRange()
+                    if markedRange.length > 0 {
+                        debugLog("handleHotkeyEvent: Enter ignored - IME composing (markedRange=\(markedRange))")
+                        return false  // Let Enter pass to IME
+                    }
+                }
                 confirmText()
                 return true
             case 53:  // Escape
+                // Also check for IME - Escape might be used to cancel IME composition
+                if let editor = textField.currentEditor() as? NSTextView {
+                    let markedRange = editor.markedRange()
+                    if markedRange.length > 0 {
+                        debugLog("handleHotkeyEvent: Escape ignored - IME composing (markedRange=\(markedRange))")
+                        return false  // Let Escape pass to IME
+                    }
+                }
                 cancelEdit()
                 return true
             default:
@@ -363,11 +409,27 @@ final class TranscriptionOverlayPanel: NSPanel {
     }
 
     override func keyDown(with event: NSEvent) {
+        // Check if IME is composing before handling Enter/Escape
+        let isIMEComposing: Bool = {
+            if let editor = textField.currentEditor() as? NSTextView {
+                return editor.markedRange().length > 0
+            }
+            return false
+        }()
+
         switch event.keyCode {
         case 36:  // Enter
-            confirmText()
+            if isIMEComposing {
+                super.keyDown(with: event)  // Let IME handle it
+            } else {
+                confirmText()
+            }
         case 53:  // Escape
-            cancelEdit()
+            if isIMEComposing {
+                super.keyDown(with: event)  // Let IME handle it
+            } else {
+                cancelEdit()
+            }
         default:
             super.keyDown(with: event)
         }
@@ -375,19 +437,43 @@ final class TranscriptionOverlayPanel: NSPanel {
 
     private func confirmText() {
         let editedText = textField.stringValue
-
-        debugLog("confirmText: originalText='\(originalText)', editedText='\(editedText)'")
+        let savedTargetApp = targetApp
 
         // Notify about text changes for learning
         if editedText != originalText {
-            debugLog("confirmText: Text was modified! Calling onTextChanged")
             onTextChanged?(originalText, editedText)
-        } else {
-            debugLog("confirmText: No changes detected")
         }
 
-        onConfirm?(editedText)
-        hide()
+        // IMPORTANT: Hide the overlay FIRST, then activate target app, THEN paste
+        // This ensures focus is properly returned before paste commands are sent
+        hideForConfirm()
+
+        // Activate the target app explicitly
+        if let app = savedTargetApp {
+            app.activate(options: [.activateIgnoringOtherApps])
+
+            // Check if this is VS Code (needs longer delay for focus to settle)
+            let bundleId = app.bundleIdentifier ?? ""
+            let isVSCode = bundleId.contains("microsoft.VSCode")
+            let delay = isVSCode ? 0.25 : 0.15  // 250ms for VS Code, 150ms for others
+
+            // Wait for the app to become active before calling callback
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.onConfirm?(editedText)
+            }
+        } else {
+            onConfirm?(editedText)
+        }
+    }
+
+    /// Hide overlay without activating any app (used during confirm sequence)
+    private func hideForConfirm() {
+        // Simpler hide approach that preserves window focus behavior:
+        // Just make it visually disappear, don't change level (which affects focus)
+        resignKey()
+        alphaValue = 0
+        setFrameOrigin(NSPoint(x: -10000, y: -10000))
+        orderOut(nil)
     }
 
     private func cancelEdit() {
@@ -448,19 +534,78 @@ final class TranscriptionOverlayController {
     // Captured caret position (captured before recording starts)
     private var capturedCaretPosition: NSPoint?
 
+    // Captured mouse position at hotkey press time (useful for terminals)
+    private var capturedMousePosition: NSPoint?
+
+    // Captured app info at hotkey press time
+    private var capturedAppBundleId: String?
+
+    // Last successful caret position (for better fallback)
+    private var lastSuccessfulCaretPosition: NSPoint?
+    private var lastSuccessfulCaretTime: Date?
+
+    // App-specific handling cache
+    private var appSpecificHandlers: [String: AppCaretHandler] = [:]
+
     private init() {
         correctionTracker = CorrectionTracker()
+        setupAppSpecificHandlers()
+    }
+
+    /// Setup handlers for apps that need special treatment
+    private func setupAppSpecificHandlers() {
+        // VS Code and VS Code Insiders use Electron, need special handling
+        appSpecificHandlers["com.microsoft.VSCode"] = .electronApp
+        appSpecificHandlers["com.microsoft.VSCodeInsiders"] = .electronApp
+
+        // Chrome-based apps - web content has poor AX support, use mouse position
+        appSpecificHandlers["com.google.Chrome"] = .chromiumApp
+        appSpecificHandlers["com.google.Chrome.canary"] = .chromiumApp
+        appSpecificHandlers["com.brave.Browser"] = .chromiumApp
+        appSpecificHandlers["com.microsoft.edgemac"] = .chromiumApp
+        appSpecificHandlers["org.chromium.Chromium"] = .chromiumApp
+        appSpecificHandlers["com.operasoftware.Opera"] = .chromiumApp
+        appSpecificHandlers["com.vivaldi.Vivaldi"] = .chromiumApp
+        appSpecificHandlers["company.thebrowser.Browser"] = .chromiumApp  // Arc
+
+        // Safari and Firefox - try AX first, fallback to mouse
+        appSpecificHandlers["com.apple.Safari"] = .browserApp
+        appSpecificHandlers["com.apple.SafariTechnologyPreview"] = .browserApp
+        appSpecificHandlers["org.mozilla.firefox"] = .browserApp
+        appSpecificHandlers["org.mozilla.firefoxdeveloperedition"] = .browserApp
+
+        // Terminal apps
+        appSpecificHandlers["com.apple.Terminal"] = .terminalApp
+        appSpecificHandlers["com.googlecode.iterm2"] = .terminalApp
+        appSpecificHandlers["io.alacritty"] = .terminalApp
+        appSpecificHandlers["com.github.wez.wezterm"] = .terminalApp
+    }
+
+    /// App-specific caret handling strategies
+    enum AppCaretHandler {
+        case standardApp      // Use standard AX methods
+        case electronApp      // Electron apps: prefer mouse position + element bounds
+        case chromiumApp      // Chrome/browsers: use mouse position (web content lacks AX support)
+        case terminalApp      // Terminal: use window position
+        case browserApp       // Safari/Firefox: similar to chromium but may have better AX
     }
 
     // MARK: - Caret Position Capture
 
     /// Capture current caret position - call this BEFORE recording starts
     func captureCaretPosition() {
+        // Always capture mouse position and app info for fallback
+        capturedMousePosition = NSEvent.mouseLocation
+        capturedAppBundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+
+        debugLog("captureCaretPosition: Mouse at \(capturedMousePosition ?? .zero), app: \(capturedAppBundleId ?? "nil")")
+
+        // Try to get actual caret position
         capturedCaretPosition = getCaretPosition()
         if let pos = capturedCaretPosition {
             debugLog("Captured caret position: \(pos)")
         } else {
-            debugLog("Failed to capture caret position - will use fallback")
+            debugLog("Failed to capture caret position - will use mouse position fallback")
         }
     }
 
@@ -468,7 +613,7 @@ final class TranscriptionOverlayController {
     private func debugLog(_ message: String) {
         let logFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tok_overlay_debug.log")
         let timestamp = ISO8601DateFormatter().string(from: Date())
-        let line = "[\(timestamp)] \(message)\n"
+        let line = "[\(timestamp)] [Controller] \(message)\n"
         if let data = line.data(using: .utf8) {
             if FileManager.default.fileExists(atPath: logFile.path) {
                 if let handle = try? FileHandle(forWritingTo: logFile) {
@@ -505,19 +650,27 @@ final class TranscriptionOverlayController {
     func showOverlay(text: String, at position: NSPoint? = nil) {
         if panel == nil {
             panel = TranscriptionOverlayPanel()
-            setupCallbacks()
         }
+        // Always setup callbacks to ensure they are connected
+        // (externalOnConfirm may have been set before showOverlay is called)
+        setupCallbacks()
 
-        // Priority: explicit position > captured position > live detection > center
+        // Priority: explicit position > captured mouse > captured caret > live detection > center
+        // Mouse position is most reliable as AX API often fails or returns wrong positions
         var positionSource = "unknown"
         let displayPosition: NSPoint
 
         if let pos = position {
             displayPosition = pos
             positionSource = "explicit"
+        } else if let mousePos = capturedMousePosition {
+            // Use captured mouse position - most reliable across all apps
+            displayPosition = mousePos
+            positionSource = "captured mouse"
         } else if let captured = capturedCaretPosition {
+            // Use AX-detected caret if available
             displayPosition = captured
-            positionSource = "captured"
+            positionSource = "captured caret"
         } else if let live = getCaretPosition() {
             displayPosition = live
             positionSource = "live"
@@ -529,8 +682,43 @@ final class TranscriptionOverlayController {
         debugLog("showOverlay - source: \(positionSource), position: \(displayPosition)")
         panel?.show(text: text, at: displayPosition)
 
-        // Clear captured position after use
+        // Clear captured positions after use
         capturedCaretPosition = nil
+        capturedMousePosition = nil
+        capturedAppBundleId = nil
+    }
+
+    /// Check if bundle ID is a terminal or Electron app
+    private func isTerminalOrElectronApp(bundleId: String?) -> Bool {
+        guard let id = bundleId else { return false }
+
+        // Terminal apps
+        let terminalApps = [
+            "com.apple.Terminal",
+            "com.googlecode.iterm2",
+            "io.alacritty",
+            "com.github.wez.wezterm",
+            "net.kovidgoyal.kitty"
+        ]
+
+        // Electron/Chromium apps
+        let electronApps = [
+            "com.microsoft.VSCode",
+            "com.microsoft.VSCodeInsiders",
+            "com.google.Chrome",
+            "com.google.Chrome.canary",
+            "com.brave.Browser",
+            "com.microsoft.edgemac",
+            "org.chromium.Chromium",
+            "com.operasoftware.Opera",
+            "com.vivaldi.Vivaldi",
+            "company.thebrowser.Browser",
+            "com.tinyspeck.slackmacgap",
+            "com.hnc.Discord"
+        ]
+
+        return terminalApps.contains(id) || electronApps.contains(id) ||
+               id.contains("Terminal") || id.contains("Electron")
     }
 
     /// Update overlay text (for streaming)
@@ -565,6 +753,8 @@ final class TranscriptionOverlayController {
     }
 
     private func setupCallbacks() {
+        debugLog("setupCallbacks: Setting up panel callbacks, panel exists: \(panel != nil)")
+
         panel?.onConfirm = { [weak self] text in
             self?.handleConfirm(text: text)
         }
@@ -576,6 +766,8 @@ final class TranscriptionOverlayController {
         panel?.onTextChanged = { [weak self] original, edited in
             self?.handleTextChanged(original: original, edited: edited)
         }
+
+        debugLog("setupCallbacks: Callbacks set, panel.onConfirm is now: \(panel?.onConfirm != nil)")
     }
 
     private func handleConfirm(text: String) {
@@ -643,7 +835,7 @@ final class TranscriptionOverlayController {
         keyUp?.post(tap: .cghidEventTap)
     }
 
-    /// Get caret position using Accessibility API
+    /// Get caret position using Accessibility API with app-specific handling
     private func getCaretPosition() -> NSPoint? {
         // Check if we have accessibility permission
         let trusted = AXIsProcessTrusted()
@@ -654,6 +846,46 @@ final class TranscriptionOverlayController {
             return nil
         }
 
+        // Get frontmost app info for app-specific handling
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
+        let bundleId = frontmostApp?.bundleIdentifier ?? ""
+        let appName = frontmostApp?.localizedName ?? "unknown"
+        let handler = appSpecificHandlers[bundleId] ?? .standardApp
+
+        debugLog("getCaretPosition: Frontmost app: \(appName) (\(bundleId)), handler: \(handler)")
+
+        // For Electron apps, prioritize mouse position within focused window bounds
+        if handler == .electronApp {
+            if let position = getElectronAppCaretPosition(app: frontmostApp) {
+                saveSuccessfulPosition(position)
+                return position
+            }
+        }
+
+        // For Chrome-based browsers, use mouse position (web content lacks proper AX)
+        if handler == .chromiumApp {
+            if let position = getBrowserCaretPosition(app: frontmostApp, tryAXFirst: false) {
+                saveSuccessfulPosition(position)
+                return position
+            }
+        }
+
+        // For Safari/Firefox, try AX first then fallback to mouse
+        if handler == .browserApp {
+            if let position = getBrowserCaretPosition(app: frontmostApp, tryAXFirst: true) {
+                saveSuccessfulPosition(position)
+                return position
+            }
+        }
+
+        // For terminal apps, use window-based positioning
+        if handler == .terminalApp {
+            if let position = getTerminalAppCaretPosition(app: frontmostApp) {
+                saveSuccessfulPosition(position)
+                return position
+            }
+        }
+
         // Method A: Try system-wide focused element first
         let systemWide = AXUIElementCreateSystemWide()
         var focusedElement: CFTypeRef?
@@ -662,6 +894,7 @@ final class TranscriptionOverlayController {
         if result == .success, let element = focusedElement {
             debugLog("getCaretPosition: Got focused element from system-wide")
             if let position = extractPositionFromElement(element as! AXUIElement) {
+                saveSuccessfulPosition(position)
                 return position
             }
         } else {
@@ -686,6 +919,7 @@ final class TranscriptionOverlayController {
                    let winElem = windowFocusedElement {
                     debugLog("getCaretPosition: Got focused element from window")
                     if let position = extractPositionFromElement(winElem as! AXUIElement) {
+                        saveSuccessfulPosition(position)
                         return position
                     }
                 }
@@ -693,6 +927,7 @@ final class TranscriptionOverlayController {
                 // Fallback: use window position
                 if let position = getElementPosition(window as! AXUIElement) {
                     debugLog("getCaretPosition: Using window position as fallback")
+                    saveSuccessfulPosition(position)
                     return position
                 }
             }
@@ -703,6 +938,7 @@ final class TranscriptionOverlayController {
                let appElem = appFocusedElement {
                 debugLog("getCaretPosition: Got focused element from app")
                 if let position = extractPositionFromElement(appElem as! AXUIElement) {
+                    saveSuccessfulPosition(position)
                     return position
                 }
             }
@@ -712,10 +948,252 @@ final class TranscriptionOverlayController {
 
         // Method C: Find the frontmost app (excluding Tok) and get its focused element
         if let position = getPositionFromFrontmostApp() {
+            saveSuccessfulPosition(position)
             return position
         }
 
+        // Method D: Use last successful position if recent (within 30 seconds)
+        if let lastPosition = lastSuccessfulCaretPosition,
+           let lastTime = lastSuccessfulCaretTime,
+           Date().timeIntervalSince(lastTime) < 30 {
+            debugLog("getCaretPosition: Using last successful position from \(Date().timeIntervalSince(lastTime))s ago")
+            return lastPosition
+        }
+
         debugLog("getCaretPosition: All methods failed")
+        return nil
+    }
+
+    /// Save a successful caret position for future fallback
+    private func saveSuccessfulPosition(_ position: NSPoint) {
+        lastSuccessfulCaretPosition = position
+        lastSuccessfulCaretTime = Date()
+        debugLog("saveSuccessfulPosition: Saved position \(position)")
+    }
+
+    /// Get caret position for Electron apps (VS Code, etc.)
+    /// These apps often don't properly expose accessibility info
+    private func getElectronAppCaretPosition(app: NSRunningApplication?) -> NSPoint? {
+        guard let app = app else { return nil }
+
+        debugLog("getElectronAppCaretPosition: Handling Electron app")
+
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+
+        // Get focused window
+        var focusedWindow: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
+              let window = focusedWindow else {
+            debugLog("getElectronAppCaretPosition: No focused window")
+            return nil
+        }
+
+        // Get window position and size
+        guard let windowPosition = getElementPosition(window as! AXUIElement) else {
+            debugLog("getElectronAppCaretPosition: Couldn't get window position")
+            return nil
+        }
+
+        var sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window as! AXUIElement, kAXSizeAttribute as CFString, &sizeValue) == .success,
+              let szValue = sizeValue else {
+            debugLog("getElectronAppCaretPosition: Couldn't get window size")
+            return nil
+        }
+
+        var windowSize = CGSize.zero
+        AXValueGetValue(szValue as! AXValue, .cgSize, &windowSize)
+
+        // Use mouse position if it's within the window
+        let mouseLocation = NSEvent.mouseLocation
+        let windowRect = NSRect(origin: windowPosition, size: windowSize)
+
+        if windowRect.contains(mouseLocation) {
+            debugLog("getElectronAppCaretPosition: Mouse is within window, using mouse position")
+            return mouseLocation
+        }
+
+        // Otherwise, position at a reasonable location in the window
+        // Typically the editor area is in the center-right of VS Code
+        let editorPosition = NSPoint(
+            x: windowPosition.x + windowSize.width * 0.4,
+            y: windowPosition.y + windowSize.height * 0.5
+        )
+        debugLog("getElectronAppCaretPosition: Using estimated editor position")
+        return editorPosition
+    }
+
+    /// Get caret position for terminal apps
+    private func getTerminalAppCaretPosition(app: NSRunningApplication?) -> NSPoint? {
+        guard let app = app else { return nil }
+
+        debugLog("getTerminalAppCaretPosition: Handling terminal app")
+
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+
+        // Get focused window
+        var focusedWindow: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
+              let window = focusedWindow else {
+            return nil
+        }
+
+        // Try to get the focused element (might be the terminal text area)
+        var focusedElement: CFTypeRef?
+        if AXUIElementCopyAttributeValue(window as! AXUIElement, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success,
+           let elem = focusedElement {
+            if let position = extractPositionFromElement(elem as! AXUIElement) {
+                return position
+            }
+        }
+
+        // Fall back to window position
+        return getElementPosition(window as! AXUIElement)
+    }
+
+    /// Get caret position for browser apps (Chrome, Safari, Firefox, etc.)
+    /// Web content typically lacks proper accessibility support for cursor position
+    /// so we use mouse position as the primary method
+    private func getBrowserCaretPosition(app: NSRunningApplication?, tryAXFirst: Bool) -> NSPoint? {
+        guard let app = app else { return nil }
+
+        debugLog("getBrowserCaretPosition: Handling browser app (tryAXFirst: \(tryAXFirst))")
+
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+
+        // Get focused window
+        var focusedWindow: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &focusedWindow) == .success,
+              let window = focusedWindow else {
+            debugLog("getBrowserCaretPosition: No focused window")
+            return nil
+        }
+
+        // Get window position and size for bounds checking
+        guard let windowPosition = getElementPosition(window as! AXUIElement) else {
+            debugLog("getBrowserCaretPosition: Couldn't get window position")
+            return nil
+        }
+
+        var sizeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window as! AXUIElement, kAXSizeAttribute as CFString, &sizeValue) == .success,
+              let szValue = sizeValue else {
+            debugLog("getBrowserCaretPosition: Couldn't get window size")
+            return nil
+        }
+
+        var windowSize = CGSize.zero
+        AXValueGetValue(szValue as! AXValue, .cgSize, &windowSize)
+
+        let windowRect = NSRect(origin: windowPosition, size: windowSize)
+
+        // For Safari/Firefox, try AX methods first (they have better accessibility support)
+        if tryAXFirst {
+            debugLog("getBrowserCaretPosition: Trying AX methods first")
+
+            // Try to find focused web area or text field
+            var focusedElement: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window as! AXUIElement, kAXFocusedUIElementAttribute as CFString, &focusedElement) == .success,
+               let elem = focusedElement {
+
+                // Check if this is a web area or text input
+                var roleValue: CFTypeRef?
+                if AXUIElementCopyAttributeValue(elem as! AXUIElement, kAXRoleAttribute as CFString, &roleValue) == .success,
+                   let role = roleValue as? String {
+                    debugLog("getBrowserCaretPosition: Focused element role: \(role)")
+
+                    // For text fields and text areas, try to get caret position
+                    if role == "AXTextField" || role == "AXTextArea" || role == "AXWebArea" || role == "AXComboBox" {
+                        if let position = extractPositionFromElement(elem as! AXUIElement) {
+                            debugLog("getBrowserCaretPosition: Got position from AX: \(position)")
+                            return position
+                        }
+                    }
+                }
+
+                // Try to get position from the focused element anyway
+                if let position = extractPositionFromElement(elem as! AXUIElement) {
+                    debugLog("getBrowserCaretPosition: Got position from focused element: \(position)")
+                    return position
+                }
+            }
+
+            // Try searching deeper in the hierarchy for focused web content
+            if let position = findWebContentInputPosition(in: window as! AXUIElement) {
+                debugLog("getBrowserCaretPosition: Got position from web content search: \(position)")
+                return position
+            }
+        }
+
+        // Use mouse position if it's within the browser window
+        let mouseLocation = NSEvent.mouseLocation
+        debugLog("getBrowserCaretPosition: Mouse location: \(mouseLocation), window rect: \(windowRect)")
+
+        if windowRect.contains(mouseLocation) {
+            debugLog("getBrowserCaretPosition: Using mouse position (within window)")
+            return mouseLocation
+        }
+
+        // Mouse is outside window - estimate position near the content area
+        // Browsers typically have tab bar + address bar at top (~100px) and content below
+        let estimatedContentY = windowPosition.y + windowSize.height - 150  // Below toolbar area
+        let estimatedPosition = NSPoint(
+            x: windowPosition.x + windowSize.width * 0.3,  // Roughly where content starts
+            y: estimatedContentY
+        )
+
+        debugLog("getBrowserCaretPosition: Using estimated content position: \(estimatedPosition)")
+        return estimatedPosition
+    }
+
+    /// Search for focused input elements in web content
+    private func findWebContentInputPosition(in element: AXUIElement, depth: Int = 0) -> NSPoint? {
+        // Limit recursion depth to avoid performance issues
+        guard depth < 5 else { return nil }
+
+        // Get children
+        var childrenValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childrenValue) == .success,
+              let children = childrenValue as? [AXUIElement] else {
+            return nil
+        }
+
+        for child in children {
+            // Check role
+            var roleValue: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(child, kAXRoleAttribute as CFString, &roleValue) == .success,
+                  let role = roleValue as? String else {
+                continue
+            }
+
+            // Check if this is a web content area or text input
+            if role == "AXWebArea" || role == "AXTextField" || role == "AXTextArea" || role == "AXComboBox" {
+                // Check if focused
+                var focusedValue: CFTypeRef?
+                if AXUIElementCopyAttributeValue(child, kAXFocusedAttribute as CFString, &focusedValue) == .success,
+                   let focused = focusedValue as? Bool, focused {
+                    debugLog("findWebContentInputPosition: Found focused \(role)")
+                    if let position = extractPositionFromElement(child) {
+                        return position
+                    }
+                }
+
+                // For web areas, search their children
+                if role == "AXWebArea" {
+                    if let position = findWebContentInputPosition(in: child, depth: depth + 1) {
+                        return position
+                    }
+                }
+            }
+
+            // Continue searching in other elements
+            if role == "AXGroup" || role == "AXScrollArea" || role == "AXSplitGroup" {
+                if let position = findWebContentInputPosition(in: child, depth: depth + 1) {
+                    return position
+                }
+            }
+        }
+
         return nil
     }
 
