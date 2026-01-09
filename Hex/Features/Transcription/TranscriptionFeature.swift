@@ -1120,7 +1120,8 @@ private extension TranscriptionFeature {
           if !combinedPrompt.isEmpty, let tokenizer = await transcription.getTokenizer() {
             decodeOptionsWithPrefill.promptTokens = tokenizer.encode(text: " " + combinedPrompt)
               .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
-            decodeOptionsWithPrefill.usePrefillPrompt = false
+            // 保持 usePrefillPrompt = true（預設值），讓 language/task tokens 正常預填充
+            // promptTokens 會作為「前文上下文」與預填充 tokens 一起使用，引導 Whisper 辨識特定詞彙
             print("[TranscriptionFeature] Applied combined prompt with \(decodeOptionsWithPrefill.promptTokens?.count ?? 0) tokens: '\(combinedPrompt.prefix(100))...'")
           }
 

@@ -15,6 +15,7 @@ struct CustomWordEntry: Codable, Equatable, Identifiable {
     var replacement: String    // For prompt: same as original; For replacement: target text (e.g., "臺灣")
     var isEnabled: Bool = true
     var caseSensitive: Bool = false
+    var matchWholeWord: Bool = false  // 完整詞彙匹配：只匹配獨立詞彙，避免部分匹配
     var createdAt: Date = Date()
     var source: EntrySource = .manual
     var entryType: EntryType = .replacement  // New: distinguish between prompt and replacement
@@ -34,7 +35,7 @@ struct CustomWordEntry: Codable, Equatable, Identifiable {
 
     // Custom Codable to handle missing entryType field (for backwards compatibility)
     enum CodingKeys: String, CodingKey {
-        case id, original, replacement, isEnabled, caseSensitive, createdAt, source, entryType
+        case id, original, replacement, isEnabled, caseSensitive, matchWholeWord, createdAt, source, entryType
     }
 
     init(
@@ -43,6 +44,7 @@ struct CustomWordEntry: Codable, Equatable, Identifiable {
         replacement: String,
         isEnabled: Bool = true,
         caseSensitive: Bool = false,
+        matchWholeWord: Bool = false,
         createdAt: Date = Date(),
         source: EntrySource = .manual,
         entryType: EntryType = .replacement
@@ -52,6 +54,7 @@ struct CustomWordEntry: Codable, Equatable, Identifiable {
         self.replacement = replacement
         self.isEnabled = isEnabled
         self.caseSensitive = caseSensitive
+        self.matchWholeWord = matchWholeWord
         self.createdAt = createdAt
         self.source = source
         self.entryType = entryType
@@ -64,6 +67,7 @@ struct CustomWordEntry: Codable, Equatable, Identifiable {
         replacement = try container.decode(String.self, forKey: .replacement)
         isEnabled = try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         caseSensitive = try container.decodeIfPresent(Bool.self, forKey: .caseSensitive) ?? false
+        matchWholeWord = try container.decodeIfPresent(Bool.self, forKey: .matchWholeWord) ?? false
 
         // Handle createdAt which can be Date, ISO8601 string, or missing
         if let dateValue = try? container.decodeIfPresent(Date.self, forKey: .createdAt) {
@@ -120,11 +124,32 @@ struct CustomWordDictionary: Codable, Equatable {
         enabledEntries.filter { $0.isReplacementEntry }
     }
 
-    /// Get prompt text for Whisper (combines all prompt words)
-    /// Format: space-separated list of words to bias transcription
+    /// Get prompt text for Whisper (combines all prompt words into contextual format)
+    /// 優化格式：將詞彙包裝成上下文句子以提升 Whisper 辨識效果
+    /// - Returns: Contextual prompt string for better transcription biasing
     var promptText: String {
         let words = enabledPromptEntries.map { $0.original }
-        return words.joined(separator: " ")
+        guard !words.isEmpty else { return "" }
+
+        // 判斷是否包含中文字符
+        let containsChinese = words.contains { word in
+            word.unicodeScalars.contains { scalar in
+                (0x4E00...0x9FFF).contains(scalar.value) ||  // CJK Unified Ideographs
+                (0x3400...0x4DBF).contains(scalar.value)     // CJK Extension A
+            }
+        }
+
+        // 根據語言使用不同的上下文格式
+        // Whisper prompt 作為「前文上下文」，使用句子格式比單純詞彙列表更有效
+        if containsChinese {
+            // 中文：使用逗號分隔的列表格式
+            let wordList = words.joined(separator: "、")
+            return "以下內容可能提及：\(wordList)。"
+        } else {
+            // 英文：使用逗號分隔的列表格式
+            let wordList = words.joined(separator: ", ")
+            return "The following may mention: \(wordList)."
+        }
     }
 
     /// Add a new entry, avoiding duplicates
@@ -158,25 +183,86 @@ struct CustomWordDictionary: Codable, Equatable {
     }
 
     /// Apply word replacements to text (only processes replacement-type entries)
+    /// 優化：支援完整詞彙匹配、按長度排序避免子字串衝突
     func applyReplacements(to text: String) -> String {
         guard isEnabled, !entries.isEmpty, !text.isEmpty else {
             return text
         }
 
         var result = text
-        let replacementEntries = enabledReplacementEntries
+        var replacementEntries = enabledReplacementEntries
+
+        // 優化：按 original 長度降序排列，避免較短字串先匹配導致的衝突
+        // 例如：先處理 "台灣大學" 再處理 "台灣"，避免 "台灣大學" 被拆開處理
+        replacementEntries.sort { $0.original.count > $1.original.count }
 
         // Only apply replacement entries, not prompt entries
         for entry in replacementEntries {
-            let options: String.CompareOptions = entry.caseSensitive ? [] : [.caseInsensitive]
-            result = result.replacingOccurrences(
-                of: entry.original,
-                with: entry.replacement,
-                options: options
-            )
+            if entry.matchWholeWord {
+                // 完整詞彙匹配：使用 regex 進行詞彙邊界匹配
+                result = applyWholeWordReplacement(
+                    to: result,
+                    original: entry.original,
+                    replacement: entry.replacement,
+                    caseSensitive: entry.caseSensitive
+                )
+            } else {
+                // 一般匹配：直接字串替換
+                let options: String.CompareOptions = entry.caseSensitive ? [] : [.caseInsensitive]
+                result = result.replacingOccurrences(
+                    of: entry.original,
+                    with: entry.replacement,
+                    options: options
+                )
+            }
         }
 
         return result
+    }
+
+    /// 完整詞彙匹配替換
+    /// 針對不同語言類型使用不同的詞彙邊界判斷邏輯
+    private func applyWholeWordReplacement(
+        to text: String,
+        original: String,
+        replacement: String,
+        caseSensitive: Bool
+    ) -> String {
+        // 判斷是否為 CJK 文字（中日韓字符沒有詞彙邊界標記如空格）
+        let isCJK = original.unicodeScalars.contains { scalar in
+            (0x4E00...0x9FFF).contains(scalar.value) ||  // CJK Unified Ideographs
+            (0x3400...0x4DBF).contains(scalar.value) ||  // CJK Extension A
+            (0x3040...0x309F).contains(scalar.value) ||  // Hiragana
+            (0x30A0...0x30FF).contains(scalar.value) ||  // Katakana
+            (0xAC00...0xD7AF).contains(scalar.value)     // Hangul
+        }
+
+        if isCJK {
+            // CJK 文字：直接替換，因為 CJK 沒有詞彙邊界概念
+            // 但仍然按長度排序處理（在呼叫此方法前已排序）
+            let options: String.CompareOptions = caseSensitive ? [] : [.caseInsensitive]
+            return text.replacingOccurrences(of: original, with: replacement, options: options)
+        } else {
+            // 非 CJK 文字：使用 \b 詞彙邊界進行匹配
+            let escapedOriginal = NSRegularExpression.escapedPattern(for: original)
+            let pattern = "\\b\(escapedOriginal)\\b"
+            let options: NSRegularExpression.Options = caseSensitive ? [] : [.caseInsensitive]
+
+            do {
+                let regex = try NSRegularExpression(pattern: pattern, options: options)
+                let range = NSRange(text.startIndex..., in: text)
+                return regex.stringByReplacingMatches(
+                    in: text,
+                    options: [],
+                    range: range,
+                    withTemplate: NSRegularExpression.escapedTemplate(for: replacement)
+                )
+            } catch {
+                // Regex 建立失敗時，fallback 到一般替換
+                let options: String.CompareOptions = caseSensitive ? [] : [.caseInsensitive]
+                return text.replacingOccurrences(of: original, with: replacement, options: options)
+            }
+        }
     }
 }
 
