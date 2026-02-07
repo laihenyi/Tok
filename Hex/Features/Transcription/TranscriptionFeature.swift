@@ -14,17 +14,6 @@ import IOKit.pwr_mgt
 import Carbon
 import Sauce
 
-// MARK: - Notification Names for Edit Overlay
-
-extension Notification.Name {
-    static let editOverlayConfirmed = Notification.Name("editOverlayConfirmed")
-    static let editOverlayCancelled = Notification.Name("editOverlayCancelled")
-    static let editOverlayTextChanged = Notification.Name("editOverlayTextChanged")
-    // Hotkey events from overlay (when overlay has keyboard focus)
-    static let overlayHotkeyPressed = Notification.Name("overlayHotkeyPressed")
-    static let overlayHotkeyReleased = Notification.Name("overlayHotkeyReleased")
-}
-
 // MARK: - Progress Tracking Structures
 
 struct RecordingProgress: Equatable {
@@ -33,22 +22,22 @@ struct RecordingProgress: Equatable {
   var peakLevel: Double = 0
   var shouldPlayAudioFeedback: Bool = false
   var recordingQuality: RecordingQuality = .unknown
-  
+
   enum RecordingQuality: Equatable {
     case unknown
     case poor
     case good
     case excellent
   }
-  
+
   mutating func update(meter: Meter, startTime: Date?) {
     if let startTime = startTime {
       duration = Date().timeIntervalSince(startTime)
     }
-    
+
     averageLevel = meter.averagePower
     peakLevel = meter.peakPower
-    
+
     // Determine recording quality based on audio levels
     if averageLevel > 0.7 {
       recordingQuality = .excellent
@@ -67,7 +56,7 @@ struct EnhancementProgress: Equatable {
   var message: String = ""
   var startTime: Date?
   var estimatedTimeRemaining: TimeInterval?
-  
+
   enum Stage: Equatable {
     case idle
     case connecting
@@ -76,10 +65,10 @@ struct EnhancementProgress: Equatable {
     case completed
     case error(String)
   }
-  
+
   mutating func updateStage(_ newStage: Stage) {
     stage = newStage
-    
+
     switch newStage {
     case .idle:
       message = ""
@@ -113,7 +102,7 @@ struct StreamingTranscription: Equatable {
   var currentText: String = ""
   var isActive: Bool = false
   var startTime: Date?
-  
+
   mutating func reset() {
     confirmedSegments = []
     unconfirmedSegments = []
@@ -121,15 +110,15 @@ struct StreamingTranscription: Equatable {
     isActive = false
     startTime = nil
   }
-  
+
   mutating func updateFromStream(_ update: StreamTranscriptionUpdate) {
     print("[StreamingTranscription] updateFromStream called")
     print("[StreamingTranscription] Before update - currentText: '\(currentText)'")
     print("[StreamingTranscription] Update currentText: '\(update.currentText)'")
-    
+
     confirmedSegments = update.confirmedSegments
     unconfirmedSegments = update.unconfirmedSegments
-    
+
     // Buffer rule: only accept the new currentText if it is
     // 1) non-empty AND
     // 2) at least as long as the current text.
@@ -141,13 +130,13 @@ struct StreamingTranscription: Equatable {
     } else {
       print("[StreamingTranscription] Skipping currentText update (buffer rule)")
     }
-    
+
     if !isActive && !currentText.isEmpty {
       isActive = true
       startTime = Date()
       print("[StreamingTranscription] Activated streaming transcription")
     }
-    
+
     print("[StreamingTranscription] After update - currentText: '\(currentText)', isActive: \(isActive)")
   }
 }
@@ -159,33 +148,34 @@ struct TranscriptionFeature {
     var isRecording: Bool = false
     var isTranscribing: Bool = false
     var isPrewarming: Bool = false
-    var isEnhancing: Bool = false // Add this to track when AI enhancement is active
+    var isEnhancing: Bool = false
     var error: String?
     var recordingStartTime: Date?
     var meter: Meter = .init(averagePower: 0, peakPower: 0)
     var assertionID: IOPMAssertionID?
-    var pendingTranscription: String? // Store original transcription for fallback
+    var pendingTranscription: String?
     /// Stores the combined real-time (streaming) transcription so it can be provided to AI enhancement later.
     var realTimeTranscription: String? = nil
-    
+
     // Real-time feedback properties
     var recordingProgress: RecordingProgress = RecordingProgress()
     var enhancementProgress: EnhancementProgress = EnhancementProgress()
     var lastAudioFeedbackTime: Date = Date()
     var shouldShowRecordingPulse: Bool = false
-    
+
     // Streaming transcription properties
     var streamingTranscription: StreamingTranscription = StreamingTranscription()
     var isStreamingTranscription: Bool = false
-    
+
     // Prompt derived from screenshot analysis that is fed into Whisper for better recognition
     var contextPrompt: String? = nil
-    
+
     // Alert state – set to true when a transcription potentially failed
     var showTranscriptionFailedAlert: Bool = false
 
-    // Track if edit overlay is currently visible (allows appending recordings)
-    var isOverlayVisible: Bool = false
+    // Foreground app context for style-aware AI enhancement
+    var foregroundAppInfo: ForegroundAppInfo? = nil
+    var detectedOutputStyle: OutputStyle = .general
 
     @Shared(.hexSettings) var hexSettings: HexSettings
     // DISABLED: History功能暫時停用
@@ -216,23 +206,23 @@ struct TranscriptionFeature {
     // Transcription result flow
     case transcriptionResult(String)
     case transcriptionError(Error)
-    
+
     // AI Enhancement flow
     case setEnhancingState(Bool)
     case aiEnhancementResult(String)
     case aiEnhancementError(Error)
     case ollamaBecameUnavailable
     case recheckOllamaAvailability
-    
+
     // Real-time feedback actions
     case updateRecordingProgress
     case updateEnhancementProgress(EnhancementProgress.Stage)
     case startRecordingPulse
     case stopRecordingPulse
-    
+
     // Streaming transcription actions
     case streamTranscriptionUpdate(StreamTranscriptionUpdate)
-    
+
     // Context prompt actions
     case setContextPrompt(String)
 
@@ -244,12 +234,8 @@ struct TranscriptionFeature {
     // Alert actions
     case setTranscriptionFailedAlert(Bool)
 
-    // Edit Overlay actions
-    case showEditOverlay(String)
-    case appendToOverlay(String)
-    case editOverlayConfirmed(String)
-    case editOverlayCancelled
-    case editOverlayTextChanged(original: String, edited: String)
+    // Foreground app detection
+    case setForegroundAppInfo(ForegroundAppInfo, OutputStyle)
   }
 
   enum CancelID {
@@ -273,7 +259,7 @@ struct TranscriptionFeature {
   @Dependency(\.soundEffects) var soundEffect
   @Dependency(\.aiEnhancement) var aiEnhancement
   @Dependency(\.screenCapture) var screenCapture
-  @Dependency(\.overlayClient) var overlayClient
+  @Dependency(\.foregroundApp) var foregroundApp
 
   var body: some ReducerOf<Self> {
     Reduce { state, action in
@@ -308,28 +294,12 @@ struct TranscriptionFeature {
       // MARK: - HotKey Flow
 
       case .hotKeyPressed:
-        // Ignore hotkey presses if we're already recording
-        // But allow new recording if overlay is visible (for appending text)
-        print("🔑 [TCA] hotKeyPressed - isRecording: \(state.isRecording), isTranscribing: \(state.isTranscribing), isOverlayVisible: \(state.isOverlayVisible)")
-        debugLog("[TCA] hotKeyPressed - isRecording: \(state.isRecording), isTranscribing: \(state.isTranscribing), isOverlayVisible: \(state.isOverlayVisible)")
-
-        // If already recording, ignore
-        guard !state.isRecording else {
-          print("🔑 [TCA] Hotkey press IGNORED - recording already in progress")
+        // Ignore hotkey presses if we're already recording or transcribing
+        guard !state.isRecording && !state.isTranscribing else {
           return .none
         }
 
-        // If transcribing but overlay is NOT visible, ignore (still processing)
-        // If overlay IS visible, allow new recording for appending
-        if state.isTranscribing && !state.isOverlayVisible {
-          print("🔑 [TCA] Hotkey press IGNORED - transcription in progress, overlay not visible")
-          return .none
-        }
-
-        print("🔑 [TCA] Hotkey press ACCEPTED - proceeding with recording (overlay visible: \(state.isOverlayVisible))")
-        // Proceed with recording - if overlay is visible, result will be appended
-        // Skip caret capture if overlay is already visible (no need to recapture position)
-        return handleHotKeyPressed(isTranscribing: false, skipCaretCapture: state.isOverlayVisible)
+        return handleHotKeyPressed(isTranscribing: false)
 
       case .hotKeyReleased:
         // If we're currently recording, then stop. Otherwise, just cancel
@@ -348,21 +318,20 @@ struct TranscriptionFeature {
       // MARK: - Transcription Results
 
       case let .transcriptionResult(result):
-        debugLog("[TCA] transcriptionResult received: \(result)")
         return handleTranscriptionResult(&state, result: result)
 
       case let .transcriptionError(error):
         return handleTranscriptionError(&state, error: error)
-        
+
       // MARK: - AI Enhancement Results
-      
+
       case let .setEnhancingState(isEnhancing):
         state.isEnhancing = isEnhancing
         return .none
-        
+
       case let .aiEnhancementResult(result):
         return handleAIEnhancement(&state, result: result)
-        
+
       case let .aiEnhancementError(error):
         // Check if this is an Ollama connectivity error
         let nsError = error as NSError
@@ -372,21 +341,21 @@ struct TranscriptionFeature {
         } else {
           // For other errors, we need to:
           // 1. Log the error
-          // 2. Disable AI enhancement status 
+          // 2. Disable AI enhancement status
           // 3. Fall back to the original transcription that produced this action
           print("AI Enhancement error: \(error)")
-          
+
           // Inform the user but avoid re-triggering AI enhancement
           state.error = "AI enhancement failed: \(error.localizedDescription). Using original transcription instead."
-          
+
           // Finalize the flow with the raw transcription without retrying enhancement
           return .send(.aiEnhancementResult(state.pendingTranscription ?? ""))
         }
-        
+
       case .ollamaBecameUnavailable:
         // When Ollama becomes unavailable, recheck availability and handle UI updates
         return .send(.recheckOllamaAvailability)
-        
+
       case .recheckOllamaAvailability:
         // Recheck if Ollama is available and update UI accordingly
         return .run { send in
@@ -403,15 +372,15 @@ struct TranscriptionFeature {
         }
 
       // MARK: - Real-time Feedback Actions
-      
+
       case .updateRecordingProgress:
         state.recordingProgress.update(meter: state.meter, startTime: state.recordingStartTime)
         return .none
-        
+
       case let .updateEnhancementProgress(stage):
         state.enhancementProgress.updateStage(stage)
         return .none
-        
+
       case .startRecordingPulse:
         state.shouldShowRecordingPulse = true
         // Immediately update the recording progress so the UI shows a non-zero duration as soon as possible.
@@ -426,20 +395,20 @@ struct TranscriptionFeature {
           }
           .cancellable(id: CancelID.recordingPulse)
         )
-        
+
       case .stopRecordingPulse:
         state.shouldShowRecordingPulse = false
         return .cancel(id: CancelID.recordingPulse)
-        
+
       // MARK: - Streaming Transcription Actions
-      
+
       case let .streamTranscriptionUpdate(update):
         // Only process streaming updates if we're currently streaming
         guard state.isStreamingTranscription else {
           print("[TranscriptionFeature] Ignoring stream update - streaming is not active")
           return .none
         }
-        
+
         // Delegate buffering logic to the helper on the StreamingTranscription struct
         state.streamingTranscription.updateFromStream(update)
         return .none
@@ -449,6 +418,13 @@ struct TranscriptionFeature {
       case let .setContextPrompt(prompt):
         print("[TranscriptionFeature] Setting context prompt: \"\(prompt)\"")
         state.contextPrompt = prompt
+        return .none
+
+      // MARK: - Foreground App Detection
+
+      case let .setForegroundAppInfo(info, style):
+        state.foregroundAppInfo = info
+        state.detectedOutputStyle = style
         return .none
 
       // MARK: - Model Prewarming Actions
@@ -512,11 +488,6 @@ struct TranscriptionFeature {
       // MARK: - Cancel Entire Flow
 
       case .cancel:
-        // Cancel if recording, transcribing, or overlay is visible
-        // 當 overlay 顯示時按 ESC，應該關閉 overlay
-        if state.isOverlayVisible {
-          return .send(.editOverlayCancelled)
-        }
         guard state.isRecording || state.isTranscribing else {
           return .none
         }
@@ -527,135 +498,6 @@ struct TranscriptionFeature {
       case let .setTranscriptionFailedAlert(flag):
         state.showTranscriptionFailedAlert = flag
         return .none
-
-      // MARK: - Edit Overlay Actions
-
-      case let .showEditOverlay(text):
-        // Show the edit overlay with the transcribed text
-        // Reset transcribing state so new recordings can be started
-        state.isTranscribing = false
-        state.isOverlayVisible = true
-        print("📝 [TCA] showEditOverlay - setting isOverlayVisible=true, isTranscribing=false")
-        debugLog("[TCA] showEditOverlay - setting isOverlayVisible=true, isTranscribing=false")
-        return .run { _ in
-          // Set up callbacks before showing
-          await overlayClient.setOnConfirm { confirmedText in
-            Task { @MainActor in
-              // This will be handled by the TCA store through a different mechanism
-              // For now, we use a notification-based approach
-              NotificationCenter.default.post(
-                name: .editOverlayConfirmed,
-                object: nil,
-                userInfo: ["text": confirmedText]
-              )
-            }
-          }
-          await overlayClient.setOnCancel {
-            Task { @MainActor in
-              NotificationCenter.default.post(name: .editOverlayCancelled, object: nil)
-            }
-          }
-          await overlayClient.setOnTextChanged { original, edited in
-            Task { @MainActor in
-              NotificationCenter.default.post(
-                name: .editOverlayTextChanged,
-                object: nil,
-                userInfo: ["original": original, "edited": edited]
-              )
-            }
-          }
-          await overlayClient.show(text)
-        }
-
-      case let .editOverlayConfirmed(text):
-        // User confirmed the edited text - paste it
-        // Reset ALL states to allow new recording (same as handleCancel)
-        state.isTranscribing = false
-        state.isRecording = false
-        state.isPrewarming = false
-        state.isEnhancing = false
-        state.shouldShowRecordingPulse = false
-        state.isStreamingTranscription = false
-        state.isOverlayVisible = false
-        state.meter = .init(averagePower: 0, peakPower: 0)
-        state.recordingProgress = RecordingProgress()
-        state.enhancementProgress.updateStage(.idle)
-        state.streamingTranscription.reset()
-        state.realTimeTranscription = nil
-
-        return .merge(
-          .cancel(id: CancelID.transcription),
-          .cancel(id: CancelID.delayedRecord),
-          .cancel(id: CancelID.recordingPulse),
-          .cancel(id: CancelID.recordingFeedback),
-          .cancel(id: CancelID.enhancementFeedback),
-          .cancel(id: CancelID.streamTranscription),
-          .cancel(id: CancelID.screenshotCapture),
-          .cancel(id: CancelID.hotKeyWatchdog),
-          .run { _ in
-            await transcription.stopStreamTranscription()
-          },
-          .run { _ in
-            await overlayClient.hide()
-            await pasteboard.paste(text)
-            await soundEffect.play(.pasteTranscript)
-          }
-        )
-
-      case .editOverlayCancelled:
-        // User cancelled - reset ALL states to allow new recording (same as handleCancel)
-        state.isTranscribing = false
-        state.isRecording = false
-        state.isPrewarming = false
-        state.isEnhancing = false
-        state.shouldShowRecordingPulse = false
-        state.isStreamingTranscription = false
-        state.isOverlayVisible = false
-        state.meter = .init(averagePower: 0, peakPower: 0)
-        state.recordingProgress = RecordingProgress()
-        state.enhancementProgress.updateStage(.idle)
-        state.streamingTranscription.reset()
-        state.realTimeTranscription = nil
-
-        return .merge(
-          .cancel(id: CancelID.transcription),
-          .cancel(id: CancelID.delayedRecord),
-          .cancel(id: CancelID.recordingPulse),
-          .cancel(id: CancelID.recordingFeedback),
-          .cancel(id: CancelID.enhancementFeedback),
-          .cancel(id: CancelID.streamTranscription),
-          .cancel(id: CancelID.screenshotCapture),
-          .cancel(id: CancelID.hotKeyWatchdog),
-          .run { _ in
-            await transcription.stopStreamTranscription()
-          },
-          .run { _ in
-            await overlayClient.hide()
-            await soundEffect.play(.cancel)
-          }
-        )
-
-      case let .appendToOverlay(text):
-        // Append new transcription to existing overlay text
-        debugLog("[TCA] appendToOverlay - appending text: \(text)")
-        // Reset transcribing state so user can record again
-        state.isTranscribing = false
-        return .run { _ in
-          await overlayClient.appendText(text)
-        }
-
-      case let .editOverlayTextChanged(original, edited):
-        // Track the correction for auto-learning
-        guard state.hexSettings.autoLearnFromCorrections else {
-          return .none
-        }
-        return .run { _ in
-          // CorrectionHistory handles diff analysis internally
-          // Pass the full original and edited strings, not individual corrections
-          let history = CorrectionHistory.shared
-          history.recordCorrection(original: original, edited: edited)
-          print("[AutoLearn] Recorded correction: '\(original)' → '\(edited)'")
-        }
       }
     }
   }
@@ -670,11 +512,11 @@ private extension TranscriptionFeature {
     actor MeterRateLimiter {
       private var lastUpdateTime = Date()
       private var lastMeter: Meter? = nil
-      
+
       func shouldUpdate(meter: Meter) -> Bool {
         let now = Date()
         let timeSinceLastUpdate = now.timeIntervalSince(lastUpdateTime)
-        
+
         // Always update if enough time has passed (ensures UI responsiveness)
         if timeSinceLastUpdate >= 0.05 { // Max 20 updates per second
           self.lastUpdateTime = now
@@ -687,24 +529,24 @@ private extension TranscriptionFeature {
           let peakDiff = abs(meter.peakPower - last.peakPower)
           // More responsive threshold for significant changes
           let shouldUpdate = averageDiff > 0.02 || peakDiff > 0.04
-          
+
           if shouldUpdate {
             self.lastUpdateTime = now
             self.lastMeter = meter
           }
-          
+
           return shouldUpdate
         }
-        
+
         self.lastUpdateTime = now
         self.lastMeter = meter
         return true // First update always passes through
       }
     }
-    
+
     return .run { send in
       let rateLimiter = MeterRateLimiter()
-      
+
       for await meter in await recording.observeAudioLevel() {
         // Check if we should send this update
         if await rateLimiter.shouldUpdate(meter: meter) {
@@ -722,7 +564,7 @@ private extension TranscriptionFeature {
     .run { send in
       @Shared(.isSettingHotKey) var isSettingHotKey: Bool
       @Shared(.hexSettings) var hexSettings: HexSettings
-      
+
       // Initialize with current user settings instead of hardcoded Option key
       var hotKeyProcessor: HotKeyProcessor = .init(hotkey: hexSettings.hotkey)
       var lastTriggerTime: Date = .distantPast
@@ -758,14 +600,7 @@ private extension TranscriptionFeature {
             print("🔥 [DEBUG] Hotkey trigger blocked - too soon after last trigger")
             return true
           }
-          
-          // TODO: Re-enable system state check after debugging
-          // Verify hotkey is actually pressed using system state
-          // guard Self.isHotKeyCurrentlyPressed(hexSettings.hotkey) else {
-          //   print("🔥 [DEBUG] Hotkey trigger blocked - system state check failed")
-          //   return true
-          // }
-          
+
           lastTriggerTime = now
           let hotkeyTriggerTime = Date()
           print("🔥 [DEBUG] HotKeyProcessor triggered .startRecording at: \(hotkeyTriggerTime.timeIntervalSince1970)")
@@ -808,23 +643,8 @@ private extension TranscriptionFeature {
 // MARK: - HotKey Press/Release Handlers
 
 private extension TranscriptionFeature {
-  func handleHotKeyPressed(isTranscribing: Bool, skipCaretCapture: Bool = false) -> Effect<Action> {
-    let hotkeyPressedTime = Date()
-    print("🎙️ [TIMING] HotKey pressed handler triggered at: \(hotkeyPressedTime.timeIntervalSince1970), skipCaretCapture: \(skipCaretCapture)")
-
+  func handleHotKeyPressed(isTranscribing: Bool) -> Effect<Action> {
     let maybeCancel = isTranscribing ? Effect.send(Action.cancel) : .none
-
-    // Capture caret position IMMEDIATELY before anything else changes focus
-    // This is critical for showing the overlay at the correct position later
-    // Skip this if overlay is already visible (we're appending, position already known)
-    let capturePosition: Effect<Action>
-    if skipCaretCapture {
-      capturePosition = .none
-    } else {
-      capturePosition = .run { _ in
-        await overlayClient.captureCaretPosition()
-      }
-    }
 
     // Kick off a quick microphone warm-up immediately so the hardware path is
     // already open by the time we call `recording.startRecording()` 200 ms later.
@@ -835,12 +655,8 @@ private extension TranscriptionFeature {
     // We wait 200ms before actually sending `.startRecording`
     // so the user can do a quick press => do something else
     // (like a double-tap).
-    // When appending (overlay visible), reduce delay to 100ms for faster response
-    let delayMs = skipCaretCapture ? 100 : 200
     let delayedStart = Effect.run { send in
-      print("🎙️ [TIMING] Starting \(delayMs)ms delay at: \(Date().timeIntervalSince1970)")
-      try await Task.sleep(for: .milliseconds(delayMs))
-      print("🎙️ [TIMING] \(delayMs)ms delay completed, sending startRecording at: \(Date().timeIntervalSince1970)")
+      try await Task.sleep(for: .milliseconds(200))
       await send(Action.startRecording)
     }
     .cancellable(id: CancelID.delayedRecord, cancelInFlight: true)
@@ -861,7 +677,7 @@ private extension TranscriptionFeature {
     }
     .cancellable(id: CancelID.hotKeyWatchdog, cancelInFlight: true)
 
-    return .merge(capturePosition, maybeCancel, warmUp, delayedStart, watchdog)
+    return .merge(maybeCancel, warmUp, delayedStart, watchdog)
   }
 
   func handleHotKeyReleased(isRecording: Bool) -> Effect<Action> {
@@ -960,6 +776,14 @@ private extension TranscriptionFeature {
         }
       }
       .cancellable(id: CancelID.screenshotCapture),
+      // Detect foreground app for context-aware AI enhancement style
+      .run { [foregroundApp, enableContextAwareStyle = settings.enableContextAwareStyle] send in
+        guard enableContextAwareStyle else { return }
+        let info = await foregroundApp.getForegroundApp()
+        let style = foregroundApp.inferOutputStyle(info)
+        print("[TranscriptionFeature] Foreground app: \(info.localizedName) (\(info.bundleIdentifier)) → style: \(style)")
+        await send(.setForegroundAppInfo(info, style))
+      },
       // Start streaming transcription for real-time feedback during recording
       .run { send in
         do {
@@ -1059,16 +883,16 @@ private extension TranscriptionFeature {
     // Otherwise, proceed to traditional transcription for final result
     state.isTranscribing = true
     state.error = nil
-    
+
     // Keep the context prompt (may be set by delayed screenshot capture earlier)
     let contextPrompt = state.contextPrompt
     let recordingDuration: TimeInterval = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
     let model = state.hexSettings.selectedModel
     let language = state.hexSettings.outputLanguage
     let settings = state.hexSettings
-    
+
     state.isPrewarming = true
-    
+
     return .merge(
       .send(.stopRecordingPulse),
       // Cancel screenshot capture if it hasn't fired yet, then cancel streaming transcription
@@ -1193,7 +1017,7 @@ private extension TranscriptionFeature {
             // Remove English hallucinations
             preferredResult = preferredResult.replacingOccurrences(of: "Thank you.", with: "", options: .caseInsensitive)
             preferredResult = preferredResult.replacingOccurrences(of: "Thank you", with: "", options: .caseInsensitive)
-            
+
             // Remove Chinese hallucinations
             preferredResult = preferredResult.replacingOccurrences(of: "謝謝大家", with: "", options: .caseInsensitive)
             preferredResult = preferredResult.replacingOccurrences(of: "謝謝", with: "", options: .caseInsensitive)
@@ -1202,11 +1026,11 @@ private extension TranscriptionFeature {
           }
 
           let rawFinalResult: String
-          if preferredResult.isEmpty && 
-             !streamingFallbackText.isEmpty && 
+          if preferredResult.isEmpty &&
+             !streamingFallbackText.isEmpty &&
              settings.enableStreamingFallback &&
              streamingFallbackText.trimmingCharacters(in: .whitespacesAndNewlines).count >= settings.minimumFallbackLength {
-            
+
             // Additional check: filter out likely hallucination text
             if !Self.isLikelyHallucinationText(streamingFallbackText) {
               print("[TranscriptionFeature] Both transcription variants are empty, using streaming fallback: '\(streamingFallbackText)'")
@@ -1263,18 +1087,17 @@ private extension TranscriptionFeature {
       state.realTimeTranscription = nil
       return .none
     }
-    // First check if we should use AI enhancement
-    if state.hexSettings.useAIEnhancement {
+    // First check if we should use AI enhancement (full mode = LLM processing)
+    if state.hexSettings.aiEnhancementMode == .full {
       // Keep state.isTranscribing = true since we're still processing
-      
+
       // Store the original transcription for error handling/fallback
       state.pendingTranscription = trimmedResult
-      
+
       // Extract values to avoid capturing inout parameter
       let providerType = state.hexSettings.aiProviderType
       let selectedAIModel = state.hexSettings.selectedAIModel
       let selectedRemoteModel = state.hexSettings.selectedRemoteModel
-      let promptText = state.hexSettings.aiEnhancementPrompt
       let temperature = state.hexSettings.aiEnhancementTemperature
       let groqAPIKey = state.hexSettings.groqAPIKey
       let baseContextPrompt = state.contextPrompt
@@ -1291,16 +1114,34 @@ private extension TranscriptionFeature {
       }
       let combinedContext: String? = combinedContextComponents.isEmpty ? nil : combinedContextComponents.joined(separator: "\n\n")
 
-      // Add an instruction so the model respects the language of the real-time transcription.
-      var enhancedPrompt = promptText
-      let languageRule = "If the REAL_TIME_TRANSCRIPTION appears to be in a language other than English, your final improved text must be in that same language and must NOT be translated to English."
-      if enhancedPrompt.isEmpty {
-        enhancedPrompt = languageRule
-      } else {
-        enhancedPrompt += "\n\n" + languageRule
-      }
+      // Detect actual language from transcription text, falling back to user setting
+      let detectedLanguage: String? = {
+        let userLang = state.hexSettings.outputLanguage
+        // Use actual text analysis to detect language (especially for mixed zh-en content)
+        let textLang = TextProcessor().detectLanguage(trimmedResult)
+        // If user hasn't set a language, or if text analysis detects mixed content, prefer text analysis
+        if userLang == nil || textLang == "mixed" {
+          return textLang
+        }
+        return userLang
+      }()
+      let outputStyle = state.detectedOutputStyle
+      let enableStructuredOutput = state.hexSettings.enableStructuredOutput
+      let options = EnhancementOptions.buildDynamic(
+        userCustomPrompt: state.hexSettings.aiEnhancementPrompt,
+        style: outputStyle,
+        language: detectedLanguage,
+        temperature: temperature,
+        context: combinedContext,
+        enableStructuredOutput: enableStructuredOutput
+      )
 
-      print("[TranscriptionFeature] Enhanced prompt: \(enhancedPrompt)")
+      // Append language preservation rule
+      var enhancedPrompt = options.prompt
+      let languageRule = "If the REAL_TIME_TRANSCRIPTION appears to be in a language other than English, your final improved text must be in that same language and must NOT be translated to English."
+      enhancedPrompt += "\n\n" + languageRule
+
+      print("[TranscriptionFeature] Enhanced prompt: \(enhancedPrompt.prefix(200))...")
 
       return enhanceWithAI(
         result: trimmedResult,
@@ -1321,41 +1162,19 @@ private extension TranscriptionFeature {
         return .none
       }
 
-      // Compute how long we recorded
-      let duration = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
-
-      // DISABLED: History功能暫時停用
-      // return finalizeRecordingAndStoreTranscript(
-      //   result: trimmedResult,
-      //   duration: duration,
-      //   transcriptionHistory: state.$transcriptionHistory
-      // )
-
-      // Check if edit overlay is enabled
-      if state.hexSettings.useEditOverlay {
-        // If overlay is already visible, append text instead of replacing
-        if state.isOverlayVisible {
-          debugLog("[TCA] handleTranscriptionResult - overlay visible, appending text")
-          return .send(.appendToOverlay(trimmedResult))
-        }
-        // Show edit overlay for user to review/edit before pasting
-        // Keep transcribing state until overlay is dismissed
-        return .send(.showEditOverlay(trimmedResult))
-      } else {
-        // Direct paste without overlay
-        state.isTranscribing = false
-        state.isPrewarming = false
-        state.realTimeTranscription = nil
-        return .run { _ in
-          await pasteboard.paste(trimmedResult)
-          await soundEffect.play(.pasteTranscript)
-        }
+      // Direct paste
+      state.isTranscribing = false
+      state.isPrewarming = false
+      state.realTimeTranscription = nil
+      return .run { _ in
+        await pasteboard.paste(trimmedResult)
+        await soundEffect.play(.pasteTranscript)
       }
     }
   }
-  
+
   // MARK: - AI Enhancement Handlers
-  
+
   // Use AI to enhance the transcription result
   private func enhanceWithAI(
     result: String,
@@ -1374,47 +1193,47 @@ private extension TranscriptionFeature {
     guard !trimmed.isEmpty else {
       return .send(.aiEnhancementResult(trimmed)) // Just pass through empty text
     }
-    
+
     let options = EnhancementOptions(
       prompt: promptText,
       temperature: temperature,
       context: contextPrompt
     )
-    
+
     // Determine the actual model to use based on provider
     let model = providerType == .ollama ? selectedAIModel : selectedRemoteModel
     let apiKey = providerType == .groq ? groqAPIKey : nil
-    
+
     print("[TranscriptionFeature] Starting AI enhancement with \(providerType.displayName), model: \(model)")
-    
+
     // We need to use .send to set the enhancing state through the proper action
     return .merge(
       // First update the state to indicate enhancement is starting
       .send(.setEnhancingState(true)),
       .send(.updateEnhancementProgress(.connecting)),
-      
+
       // Play enhancement start sound
       .run { _ in
         await soundEffect.play(.enhancementStart)
       },
-      
+
       // Then run the enhancement
       .run { send in
         do {
           print("[TranscriptionFeature] Calling aiEnhancement.enhance()")
-          
+
           // Update progress to processing
           await send(.updateEnhancementProgress(.processing))
-          
+
           // Access the raw value directly to avoid argument label issues
           let enhanceMethod = aiEnhancement.enhance
           let enhancedText = try await enhanceMethod(trimmed, model, options, providerType, apiKey) { progress in
             // Optional: Could update UI with progress information here if needed
           }
-          
+
           // Update progress to finalizing
           await send(.updateEnhancementProgress(.finalizing))
-          
+
           print("[TranscriptionFeature] AI enhancement succeeded")
           await send(.aiEnhancementResult(enhancedText))
         } catch {
@@ -1426,20 +1245,27 @@ private extension TranscriptionFeature {
         }
       }
     )
-    // Don't make this cancellable to avoid premature cancellation
-    // This may have been causing the issue with the enhancement being cancelled
   }
-  
+
   // Handle the AI enhancement result
   private func handleAIEnhancement(
     _ state: inout State,
     result: String
   ) -> Effect<Action> {
+    // Capture original transcription before clearing for auto-learning comparison
+    let originalTranscription = state.pendingTranscription
+    let shouldLearnFromAI = state.hexSettings.autoLearnFromCorrections
+
     state.isTranscribing = false
     state.isPrewarming = false
-    state.isEnhancing = false  // Reset the enhancing state
-    state.pendingTranscription = nil  // Clear the pending transcription since enhancement succeeded
-    state.realTimeTranscription = nil  // Clear stored real-time transcription
+    state.isEnhancing = false
+    state.pendingTranscription = nil
+    state.realTimeTranscription = nil
+
+    // Learn from AI corrections if auto-learning is enabled
+    if shouldLearnFromAI, let original = originalTranscription, !original.isEmpty, !result.isEmpty, original != result {
+      CorrectionHistory.shared.recordAICorrection(original: original, enhanced: result)
+    }
 
     // If empty text, nothing else to do
     guard !result.isEmpty else {
@@ -1449,69 +1275,25 @@ private extension TranscriptionFeature {
       )
     }
 
-    // Compute how long we recorded
-    let duration = state.recordingStartTime.map { Date().timeIntervalSince($0) } ?? 0
+    // Direct paste
+    return .merge(
+      .send(.updateEnhancementProgress(.completed)),
 
-    // DISABLED: History功能暫時停用
-    // finalizeRecordingAndStoreTranscript(
-    //   result: result,
-    //   duration: duration,
-    //   transcriptionHistory: state.$transcriptionHistory
-    // ),
+      // Play enhancement complete sound
+      .run { _ in
+        await soundEffect.play(.enhancementComplete)
+      },
 
-    // Check if edit overlay is enabled
-    if state.hexSettings.useEditOverlay {
-      // If overlay is already visible, append text instead of replacing
-      if state.isOverlayVisible {
-        debugLog("[TCA] handleAIEnhancement - overlay visible, appending text")
-        return .merge(
-          .send(.updateEnhancementProgress(.completed)),
-          .run { _ in
-            await soundEffect.play(.enhancementComplete)
-          },
-          .send(.appendToOverlay(result)),
-          .run { send in
-            // Clear progress after a short delay
-            try await Task.sleep(for: .milliseconds(1000))
-            await send(.updateEnhancementProgress(.idle))
-          }
-        )
+      .run { _ in
+        await pasteboard.paste(result)
+        await soundEffect.play(.pasteTranscript)
+      },
+      .run { send in
+        // Clear progress after a short delay
+        try await Task.sleep(for: .milliseconds(1000))
+        await send(.updateEnhancementProgress(.idle))
       }
-      // Show edit overlay for user to review/edit before pasting
-      return .merge(
-        .send(.updateEnhancementProgress(.completed)),
-        .run { _ in
-          await soundEffect.play(.enhancementComplete)
-        },
-        .send(.showEditOverlay(result)),
-        .run { send in
-          // Clear progress after a short delay
-          try await Task.sleep(for: .milliseconds(1000))
-          await send(.updateEnhancementProgress(.idle))
-        }
-      )
-    } else {
-      // Direct paste without overlay
-      return .merge(
-        .send(.updateEnhancementProgress(.completed)),
-
-        // Play enhancement complete sound
-        .run { _ in
-          await soundEffect.play(.enhancementComplete)
-        },
-
-        // 只粘貼結果，不保存歷史記錄
-        .run { _ in
-          await pasteboard.paste(result)
-          await soundEffect.play(.pasteTranscript)
-        },
-        .run { send in
-          // Clear progress after a short delay
-          try await Task.sleep(for: .milliseconds(1000))
-          await send(.updateEnhancementProgress(.idle))
-        }
-      )
-    }
+    )
   }
 
   func handleTranscriptionError(
@@ -1526,64 +1308,6 @@ private extension TranscriptionFeature {
       await soundEffect.play(.cancel)
     }
   }
-
-  // DISABLED: History功能暫時停用
-  // /// Move file to permanent location, create a transcript record, paste text, and play sound.
-  // func finalizeRecordingAndStoreTranscript(
-  //   result: String,
-  //   duration: TimeInterval,
-  //   transcriptionHistory: Shared<TranscriptionHistory>
-  // ) -> Effect<Action> {
-  //   .run { send in
-  //     // Detect potential transcription failure (long recording but short/empty text)
-  //     let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
-  //     if duration >= 10 && trimmed.count < 10 {
-  //       await send(.setTranscriptionFailedAlert(true))
-  //     }
-  //
-  //     do {
-  //       let originalURL = await recording.stopRecording()
-  //
-  //       // Move the file to a permanent location
-  //       let fm = FileManager.default
-  //       let supportDir = try fm.url(
-  //         for: .applicationSupportDirectory,
-  //         in: .userDomainMask,
-  //         appropriateFor: nil,
-  //         create: true
-  //       )
-  //       let ourAppFolder = supportDir.appendingPathComponent("com.kitlangton.Hex", isDirectory: true)
-  //       let recordingsFolder = ourAppFolder.appendingPathComponent("Recordings", isDirectory: true)
-  //       try fm.createDirectory(at: recordingsFolder, withIntermediateDirectories: true)
-  //
-  //       // Create a unique file name
-  //       let filename = "\(Date().timeIntervalSince1970).wav"
-  //       let finalURL = recordingsFolder.appendingPathComponent(filename)
-  //
-  //       // Move temp => final
-  //       try fm.moveItem(at: originalURL, to: finalURL)
-  //
-  //       // Build a transcript object
-  //       let transcript = Transcript(
-  //         timestamp: Date(),
-  //         text: result,
-  //         audioPath: finalURL,
-  //         duration: duration
-  //       )
-  //
-  //       // Append to the in-memory shared history
-  //       transcriptionHistory.withLock {
-  //         $0.history.insert(transcript, at: 0)
-  //       }
-  //
-  //       // Paste text (and copy if enabled via pasteWithClipboard)
-  //       await pasteboard.paste(result)
-  //       await soundEffect.play(.pasteTranscript)
-  //     } catch {
-  //       await send(.transcriptionError(error))
-  //     }
-  //   }
-  // }
 }
 
 // MARK: - Cancel Handler
@@ -1596,7 +1320,7 @@ private extension TranscriptionFeature {
     state.isEnhancing = false
     state.shouldShowRecordingPulse = false
     state.isStreamingTranscription = false
-    
+
     // Reset meter and progress states so UI returns to idle state
     state.meter = .init(averagePower: 0, peakPower: 0)
     // Reset progress states
@@ -1618,13 +1342,6 @@ private extension TranscriptionFeature {
       .run { _ in
         await transcription.stopStreamTranscription()
       },
-      // Don't cancel AI enhancement as it might cause issues with Ollama
-      // This creates a UI inconsistency where the UI shows cancellation
-      // but enhancement continues in background. We intentionally allow this
-      // to prevent issues with Ollama's streaming API and ensure stability.
-      // TODO: Consider implementing a safer cancellation approach or state tracking
-      // to properly ignore late results after cancellation.
-      // .cancel(id: CancelID.aiEnhancement),
       .run { _ in
         await soundEffect.play(.cancel)
       }
@@ -1667,9 +1384,9 @@ struct TranscriptionView: View {
 
   var status: TranscriptionIndicatorView.Status {
     let computedStatus: TranscriptionIndicatorView.Status
-    
+
     if store.isEnhancing {
-      computedStatus = .enhancing 
+      computedStatus = .enhancing
     } else if store.isTranscribing {
       computedStatus = .transcribing
     } else if store.isRecording {
@@ -1682,13 +1399,7 @@ struct TranscriptionView: View {
     } else {
       computedStatus = .hidden
     }
-    
-    // Debug logging to understand status and data flow
-    print("[TranscriptionView] Status: \(computedStatus)")
-    print("[TranscriptionView] isRecording: \(store.isRecording), isStreamingTranscription: \(store.isStreamingTranscription)")
-    print("[TranscriptionView] streamingTranscription.currentText: '\(store.streamingTranscription.currentText)'")
-    print("[TranscriptionView] streamingTranscription.isActive: \(store.streamingTranscription.isActive)")
-    
+
     return computedStatus
   }
 
@@ -1766,12 +1477,12 @@ private extension TranscriptionFeature {
   /// Converts zh-cn/zh-tw to zh for WhisperKit processing
   static func normalizeLanguageForWhisper(_ language: String?) -> String? {
     guard let language = language else { return nil }
-    
+
     // WhisperKit uses "zh" for all Chinese variants
     if language.hasPrefix("zh") {
       return "zh"
     }
-    
+
     return language
   }
 }
@@ -1849,19 +1560,19 @@ private extension TranscriptionFeature {
 
     return false
   }
-  
+
   /// Detects repeating patterns in text
   private static func hasRepeatingPattern(_ text: String) -> Bool {
     guard text.count >= 4 else { return false }
-    
+
     let chars = Array(text)
     let maxPatternLength = chars.count / 2
-    
+
     // Check for patterns of length 1 to maxPatternLength
     for patternLength in 1...maxPatternLength {
       let pattern = String(chars[0..<patternLength])
       let expectedRepeats = chars.count / patternLength
-      
+
       // If we can repeat this pattern to fill most of the string, it's likely repetitive
       if expectedRepeats >= 2 {
         let reconstructed = String(repeating: pattern, count: expectedRepeats)
@@ -1870,33 +1581,14 @@ private extension TranscriptionFeature {
         }
       }
     }
-    
+
     return false
   }
-  
+
   /// Detects text that's just a single character repeated
   private static func isRepeatedSingleCharacter(_ text: String) -> Bool {
     guard text.count >= 3 else { return false }
     let firstChar = text.first
     return text.allSatisfy { $0 == firstChar }
-  }
-}
-
-// MARK: - Debug Logging Helper
-
-private func debugLog(_ message: String) {
-  let logFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tok_overlay_debug.log")
-  let timestamp = ISO8601DateFormatter().string(from: Date())
-  let line = "[\(timestamp)] \(message)\n"
-  if let data = line.data(using: .utf8) {
-    if FileManager.default.fileExists(atPath: logFile.path) {
-      if let handle = try? FileHandle(forWritingTo: logFile) {
-        handle.seekToEndOfFile()
-        handle.write(data)
-        handle.closeFile()
-      }
-    } else {
-      try? data.write(to: logFile)
-    }
   }
 }

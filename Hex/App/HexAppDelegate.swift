@@ -39,39 +39,6 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 			object: nil
 		)
 
-		// Add overlay notification observers
-		NotificationCenter.default.addObserver(
-			self,
-			selector: #selector(handleEditOverlayConfirmed(_:)),
-			name: .editOverlayConfirmed,
-			object: nil
-		)
-		NotificationCenter.default.addObserver(
-			self,
-			selector: #selector(handleEditOverlayCancelled),
-			name: .editOverlayCancelled,
-			object: nil
-		)
-		NotificationCenter.default.addObserver(
-			self,
-			selector: #selector(handleEditOverlayTextChanged(_:)),
-			name: .editOverlayTextChanged,
-			object: nil
-		)
-		// Add overlay hotkey notification observers
-		NotificationCenter.default.addObserver(
-			self,
-			selector: #selector(handleOverlayHotkeyPressed),
-			name: .overlayHotkeyPressed,
-			object: nil
-		)
-		NotificationCenter.default.addObserver(
-			self,
-			selector: #selector(handleOverlayHotkeyReleased),
-			name: .overlayHotkeyReleased,
-			object: nil
-		)
-
 		// Send app launch action to check permissions and onboarding status
 		HexApp.appStore.send(.appDidLaunch)
 
@@ -126,60 +93,6 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 		Task {
 			await updateAppMode()
 		}
-	}
-
-	// MARK: - Edit Overlay Handlers
-
-	@objc private func handleEditOverlayConfirmed(_ notification: Notification) {
-		debugLog("[AppDelegate] handleEditOverlayConfirmed called")
-		guard let text = notification.userInfo?["text"] as? String else {
-			debugLog("[AppDelegate] handleEditOverlayConfirmed - no text in userInfo")
-			return
-		}
-		debugLog("[AppDelegate] Sending editOverlayConfirmed action with text: \(text)")
-		HexApp.appStore.send(.transcription(.editOverlayConfirmed(text)))
-		debugLog("[AppDelegate] editOverlayConfirmed action sent")
-	}
-
-	@objc private func handleEditOverlayCancelled() {
-		debugLog("[AppDelegate] handleEditOverlayCancelled called")
-		HexApp.appStore.send(.transcription(.editOverlayCancelled))
-		debugLog("[AppDelegate] editOverlayCancelled action sent")
-	}
-
-	private func debugLog(_ message: String) {
-		let logFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tok_overlay_debug.log")
-		let timestamp = ISO8601DateFormatter().string(from: Date())
-		let line = "[\(timestamp)] \(message)\n"
-		if let data = line.data(using: .utf8) {
-			if FileManager.default.fileExists(atPath: logFile.path) {
-				if let handle = try? FileHandle(forWritingTo: logFile) {
-					handle.seekToEndOfFile()
-					handle.write(data)
-					handle.closeFile()
-				}
-			} else {
-				try? data.write(to: logFile)
-			}
-		}
-	}
-
-	@objc private func handleEditOverlayTextChanged(_ notification: Notification) {
-		guard let original = notification.userInfo?["original"] as? String,
-			  let edited = notification.userInfo?["edited"] as? String else { return }
-		HexApp.appStore.send(.transcription(.editOverlayTextChanged(original: original, edited: edited)))
-	}
-
-	@objc private func handleOverlayHotkeyPressed() {
-		debugLog("[AppDelegate] handleOverlayHotkeyPressed called")
-		HexApp.appStore.send(.transcription(.hotKeyPressed))
-		debugLog("[AppDelegate] hotKeyPressed action sent from overlay")
-	}
-
-	@objc private func handleOverlayHotkeyReleased() {
-		debugLog("[AppDelegate] handleOverlayHotkeyReleased called")
-		HexApp.appStore.send(.transcription(.hotKeyReleased))
-		debugLog("[AppDelegate] hotKeyReleased action sent from overlay")
 	}
 
 	@MainActor

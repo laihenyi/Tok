@@ -43,35 +43,13 @@ struct PasteboardClientLive {
 
     @MainActor
     func paste(text: String) async {
-        debugLog("[Pasteboard] paste called with text: \(text)")
-        debugLog("[Pasteboard] useClipboardPaste: \(hexSettings.useClipboardPaste)")
         if hexSettings.useClipboardPaste {
-            debugLog("[Pasteboard] Using clipboard paste method")
             await pasteWithClipboard(text)
         } else {
-            debugLog("[Pasteboard] Using AppleScript typing method")
             simulateTypingWithAppleScript(text)
         }
-        debugLog("[Pasteboard] paste completed")
     }
 
-    private func debugLog(_ message: String) {
-        let logFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("tok_overlay_debug.log")
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let line = "[\(timestamp)] \(message)\n"
-        if let data = line.data(using: .utf8) {
-            if FileManager.default.fileExists(atPath: logFile.path) {
-                if let handle = try? FileHandle(forWritingTo: logFile) {
-                    handle.seekToEndOfFile()
-                    handle.write(data)
-                    handle.closeFile()
-                }
-            } else {
-                try? data.write(to: logFile)
-            }
-        }
-    }
-    
     @MainActor
     func copy(text: String) async {
         let pasteboard = NSPasteboard.general
@@ -83,7 +61,7 @@ struct PasteboardClientLive {
     private static var savedChangeCount: Int = 0
     // Stores the previous pasteboard contents name for tracking
     private static var savedPasteboardName: String?
-    
+
     // More efficient approach that uses NSPasteboard's built-in functionality
     // Instead of copying all the data, we'll track the pasteboard state and create
     // a temporary pasteboard to hold the original data
@@ -164,7 +142,7 @@ struct PasteboardClientLive {
         // Release the temporary pasteboard by clearing it
         backupPasteboard.clearContents()
     }
-    
+
     // Legacy method to maintain compatibility - will be removed in future
     func restorePasteboardState(pasteboard: NSPasteboard, savedItems: [[String: Any]]) {
         // This is kept for compatibility but shouldn't be used anymore
@@ -202,7 +180,7 @@ struct PasteboardClientLive {
             end tell
         end tell
         """
-        
+
         var error: NSDictionary?
         if let scriptObject = NSAppleScript(source: script) {
             let result = scriptObject.executeAndReturnError(&error)
@@ -237,10 +215,7 @@ struct PasteboardClientLive {
     }
 
     func pasteWithClipboard(_ text: String) async {
-        debugLog("[Pasteboard] pasteWithClipboard started")
-
         // Wait a moment for the target app to be fully activated
-        // This is crucial when paste is called right after overlay closes
         try? await Task.sleep(for: .milliseconds(50))
 
         let pasteboard = NSPasteboard.general
@@ -251,16 +226,10 @@ struct PasteboardClientLive {
         // Set our text in the clipboard
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-        debugLog("[Pasteboard] Text set in clipboard")
 
         // Get frontmost app for debugging and determine paste strategy
         let frontApp = NSWorkspace.shared.frontmostApplication
         let bundleID = frontApp?.bundleIdentifier ?? ""
-        if let frontApp = frontApp {
-            debugLog("[Pasteboard] Frontmost app: \(frontApp.localizedName ?? "unknown") (bundleID: \(bundleID))")
-        } else {
-            debugLog("[Pasteboard] WARNING: No frontmost application detected!")
-        }
 
         // Check if this is an Electron/Chromium app (AppleScript menu paste won't work)
         let isElectronOrChromium = bundleID.contains("microsoft.VSCode") ||
@@ -279,33 +248,26 @@ struct PasteboardClientLive {
 
         // For Electron/Chromium apps, skip AppleScript and go directly to CGEvent keypresses
         if isElectronOrChromium {
-            debugLog("[Pasteboard] Electron/Chromium app detected, using CGEvent keypresses directly")
+            print("[Pasteboard] Electron/Chromium app detected, using CGEvent keypresses directly")
         } else {
             // First try the AppleScript approach - it's more reliable in most native apps
-            debugLog("[Pasteboard] Trying AppleScript paste method")
             pasteSucceeded = PasteboardClientLive.pasteToFrontmostApp()
-            debugLog("[Pasteboard] AppleScript paste result: \(pasteSucceeded)")
         }
 
         // If menu-based paste failed, try simulated keypresses
         if !pasteSucceeded {
-            debugLog("[Pasteboard] Using keystroke simulation for paste")
-            print("Using simulated keypresses for paste")
+            print("[Pasteboard] Using keystroke simulation for paste")
 
             // Add a delay to allow system to process and target app to be ready
             // Use longer delay for VS Code as it needs more time to regain focus
             let delayMs = isVSCode ? 200 : 100
-            debugLog("[Pasteboard] Waiting \(delayMs)ms for app to be ready")
             try? await Task.sleep(for: .milliseconds(delayMs))
 
             // For VS Code and other Electron apps, click at current mouse position first
             // to ensure the correct pane has keyboard focus, then use AppleScript keystroke
             if isVSCode {
-                debugLog("[Pasteboard] VS Code detected, clicking at mouse position first")
-
                 // Click at current mouse position to ensure focus
                 let mouseLocation = NSEvent.mouseLocation
-                debugLog("[Pasteboard] Mouse position: \(mouseLocation)")
 
                 // Convert to screen coordinates for CGEvent (flip Y axis)
                 if let mainScreen = NSScreen.main {
@@ -320,30 +282,23 @@ struct PasteboardClientLive {
                     if let mouseUp = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: cgPoint, mouseButton: .left) {
                         mouseUp.post(tap: .cgSessionEventTap)
                     }
-                    debugLog("[Pasteboard] Mouse click posted at \(cgPoint)")
                 }
 
                 // Wait for click to be processed
                 try? await Task.sleep(for: .milliseconds(100))
 
                 // Now use AppleScript keystroke
-                debugLog("[Pasteboard] Using AppleScript keystroke Cmd+V for VS Code")
                 let keystrokeSucceeded = PasteboardClientLive.pasteWithAppleScriptKeystroke()
-                debugLog("[Pasteboard] AppleScript keystroke result: \(keystrokeSucceeded)")
                 pasteSucceeded = keystrokeSucceeded
             } else if isElectronOrChromium {
                 // For other Electron/Chromium apps, use AppleScript keystroke which is more reliable
                 // for apps with complex input handling (like xterm.js terminals)
-                debugLog("[Pasteboard] Using AppleScript keystroke Cmd+V for Electron app")
                 let keystrokeSucceeded = PasteboardClientLive.pasteWithAppleScriptKeystroke()
-                debugLog("[Pasteboard] AppleScript keystroke result: \(keystrokeSucceeded)")
                 pasteSucceeded = keystrokeSucceeded
             } else {
                 // For other apps, use CGEvent
                 let vKeyCode: CGKeyCode = await MainActor.run { Sauce.shared.keyCode(for: .v) }
                 let cmdKeyCode: CGKeyCode = 55 // Command key
-
-                debugLog("[Pasteboard] Posting CGEvent Cmd+V (vKeyCode=\(vKeyCode))")
 
                 // Create and post key events with proper timing
                 autoreleasepool {
@@ -376,11 +331,10 @@ struct PasteboardClientLive {
                     }
                 }
 
-                debugLog("[Pasteboard] CGEvent Cmd+V posted")
                 pasteSucceeded = true
             }
         }
-        
+
         // Only restore original pasteboard contents if:
         // 1. User doesn't want to keep text in clipboard AND
         // 2. The paste operation succeeded AND
@@ -388,20 +342,20 @@ struct PasteboardClientLive {
         if !hexSettings.copyToClipboard && pasteSucceeded && backupPasteboard != nil {
             // Give paste operation time to complete
             try? await Task.sleep(for: .milliseconds(200))
-            
+
             // Restore the original pasteboard state
             autoreleasepool {
                 restorePasteboardFromBackup(mainPasteboard: pasteboard, backupPasteboard: backupPasteboard)
             }
         }
-        
+
         // If we failed to paste AND user doesn't want clipboard retention,
         // log the issue but leave text in clipboard as fallback
         if !pasteSucceeded && !hexSettings.copyToClipboard {
             print("Paste operation failed. Text remains in clipboard as fallback.")
         }
     }
-    
+
     func simulateTypingWithAppleScript(_ text: String) {
         let escapedText = text.replacingOccurrences(of: "\"", with: "\\\"")
         let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"\(escapedText)\"")
@@ -418,42 +372,33 @@ struct PasteboardClientLive {
         case elementDoesNotSupportTextEditing
         case failedToInsertText
     }
-    
+
     static func insertTextAtCursor(_ text: String) throws {
         // Get the system-wide accessibility element
         let systemWideElement = AXUIElementCreateSystemWide()
-        
+
         // Get the focused element
         var focusedElementRef: CFTypeRef?
         let axError = AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElementRef)
-        
+
         guard axError == .success, let focusedElementRef = focusedElementRef else {
             throw PasteError.focusedElementNotFound
         }
-        
+
         let focusedElement = focusedElementRef as! AXUIElement
-        
+
         // Verify if the focused element supports text insertion
         var value: CFTypeRef?
         let supportsText = AXUIElementCopyAttributeValue(focusedElement, kAXValueAttribute as CFString, &value) == .success
         let supportsSelectedText = AXUIElementCopyAttributeValue(focusedElement, kAXSelectedTextAttribute as CFString, &value) == .success
-        
+
         if !supportsText && !supportsSelectedText {
             throw PasteError.elementDoesNotSupportTextEditing
         }
-        
-        // // Get any selected text
-        // var selectedText: String = ""
-        // if AXUIElementCopyAttributeValue(focusedElement, kAXSelectedTextAttribute as CFString, &value) == .success,
-        //    let selectedValue = value as? String {
-        //     selectedText = selectedValue
-        // }
-        
-        // print("selected text: \(selectedText)")
-        
+
         // Insert text at cursor position by replacing selected text (or empty selection)
         let insertResult = AXUIElementSetAttributeValue(focusedElement, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
-        
+
         if insertResult != .success {
             throw PasteError.failedToInsertText
         }

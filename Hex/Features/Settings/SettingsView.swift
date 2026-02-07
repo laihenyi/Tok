@@ -3,7 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
 	@Bindable var store: StoreOf<SettingsFeature>
-	
+
 	var body: some View {
 		Form {
 			// --- Permissions Section ---
@@ -57,7 +57,7 @@ struct SettingsView: View {
 			} header: {
 				Text("Permissions")
 			}
-      
+
 			// --- Input Device Selection Section ---
 			if store.microphonePermission == .granted && !store.availableInputDevices.isEmpty {
 				Section {
@@ -75,7 +75,7 @@ struct SettingsView: View {
 						} icon: {
 							Image(systemName: "mic.circle")
 						}
-						
+
 						Button(action: {
 							store.send(.loadAvailableInputDevices)
 						}) {
@@ -84,9 +84,9 @@ struct SettingsView: View {
 						.buttonStyle(.borderless)
 						.help("Refresh available input devices")
 					}
-					
+
 					// Show fallback note for selected device not connected
-					if let selectedID = store.hexSettings.selectedMicrophoneID, 
+					if let selectedID = store.hexSettings.selectedMicrophoneID,
 					   !store.availableInputDevices.contains(where: { $0.id == selectedID }) {
 						Text("Selected device not connected. System default will be used.")
 							.font(.caption)
@@ -110,7 +110,7 @@ struct SettingsView: View {
 					}
 				}
 				.pickerStyle(.menu)
-				
+
 				// Show Traditional Chinese toggle (works for auto-detected Chinese text too)
 				Toggle("Convert to Traditional Chinese", isOn: $store.hexSettings.preferTraditionalChinese)
 					.help("Convert transcribed Chinese text to Traditional Chinese characters (繁體中文)\nWorks with auto-detected Chinese text when output language is not specified")
@@ -123,7 +123,7 @@ struct SettingsView: View {
 				let hotKey = store.hexSettings.hotkey
 				let key = store.isSettingHotKey ? nil : hotKey.key
 				let modifiers = store.isSettingHotKey ? store.currentModifiers : hotKey.modifiers
-				
+
 				VStack(spacing: 12) {
 					// Info text for full keyboard shortcut support
 					if hotKey.key != nil {
@@ -132,7 +132,7 @@ struct SettingsView: View {
 							.foregroundColor(.secondary)
 							.frame(maxWidth: .infinity, alignment: .center)
 					}
-					
+
 					// Hot key view
 					HStack {
 						Spacer()
@@ -146,7 +146,7 @@ struct SettingsView: View {
 						store.send(.startSettingHotKey)
 					}
 				}
-				
+
 				// Double-tap toggle (for key+modifier combinations)
 				if hotKey.key != nil {
 					Label {
@@ -158,7 +158,7 @@ struct SettingsView: View {
 						Image(systemName: "hand.tap")
 					}
 				}
-				
+
 				// Minimum key time (for modifier-only shortcuts)
                 if store.hexSettings.hotkey.key == nil {
                     Label {
@@ -169,7 +169,7 @@ struct SettingsView: View {
                         Image(systemName: "clock")
                     }
                 }
-                
+
                 // Hotkey conflict warning
                 if store.hexSettings.hotkey.modifiers.contains(.option) && store.hexSettings.hotkey.key == nil {
                     Label {
@@ -186,7 +186,7 @@ struct SettingsView: View {
                             .foregroundColor(.orange)
                     }
                 }
-                
+
                 // Streaming fallback controls (advanced)
                 Label {
                     VStack(alignment: .leading, spacing: 8) {
@@ -194,7 +194,7 @@ struct SettingsView: View {
                         Text("When formal transcription fails, use real-time transcription as backup. May include noise-generated text.")
                             .font(.caption)
                             .foregroundColor(.secondary)
-                        
+
                         if store.hexSettings.enableStreamingFallback {
                             HStack {
                                 Text("Min length:")
@@ -253,14 +253,14 @@ struct SettingsView: View {
 				} icon: {
 					Image(systemName: "doc.on.doc.fill")
 				}
-				
+
 				Label {
 					Toggle("Copy to clipboard", isOn: $store.hexSettings.copyToClipboard)
 					Text("Copy transcription text to clipboard in addition to pasting it")
 				} icon: {
 					Image(systemName: "doc.on.clipboard")
 				}
-                
+
                 Label {
                     Toggle("Disable auto-capitalization", isOn: $store.hexSettings.disableAutoCapitalization)
                     Text("Disable automatic capitalization in transcriptions")
@@ -271,21 +271,12 @@ struct SettingsView: View {
 				Divider()
 					.padding(.vertical, 4)
 
-				// Edit Overlay Settings
-				Label {
-					Toggle("顯示編輯浮窗", isOn: $store.hexSettings.useEditOverlay)
-					Text("轉錄後顯示編輯浮窗，讓您在貼上前可以檢視和修改文字")
-				} icon: {
-					Image(systemName: "rectangle.and.pencil.and.ellipsis")
-				}
-
 				Label {
 					Toggle("自動學習修正", isOn: $store.hexSettings.autoLearnFromCorrections)
-					Text("自動學習您的修正，頻繁修正的詞彙會自動加入詞庫")
+					Text("自動從 AI 增強結果學習，頻繁修正的詞彙會自動加入詞庫")
 				} icon: {
 					Image(systemName: "brain.head.profile")
 				}
-				.disabled(!store.hexSettings.useEditOverlay)
 
 				// Custom Words Dictionary link
 				NavigationLink {
@@ -316,7 +307,7 @@ struct SettingsView: View {
 				} icon: {
 					Image(systemName: "zzz")
 				}
-                
+
                 Label {
                     Toggle(
                         "Pause Media while Recording",

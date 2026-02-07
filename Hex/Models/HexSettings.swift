@@ -33,7 +33,7 @@ struct HexSettings: Codable, Equatable {
     // Model warm status tracking (only for transcription models that need prewarming)
     var transcriptionModelWarmStatus: ModelWarmStatus = .cold
     // AI Enhancement options
-    var useAIEnhancement: Bool = false
+    var aiEnhancementMode: AIEnhancementMode = .smart
     var selectedAIModel: String = "gemma3"
     var aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt
     var aiEnhancementTemperature: Double = 0.3
@@ -55,9 +55,15 @@ struct HexSettings: Codable, Equatable {
     var enableStreamingFallback: Bool = false // Disabled by default to prevent hallucinations
     var minimumFallbackLength: Int = 10 // Minimum length for fallback text to be used
 
-    // Edit Overlay options (輸入法風格的編輯視窗)
-    var useEditOverlay: Bool = true // Show edit overlay before pasting
     var autoLearnFromCorrections: Bool = true // Auto-learn from user corrections
+
+    // Smart Text Processing (local, no LLM required)
+    var removeFillerWords: Bool = true // Remove spoken filler words (嗯, um, uh, etc.)
+    var resolveSelfCorrections: Bool = true // Resolve mid-sentence self-corrections
+
+    // Context-aware settings
+    var enableContextAwareStyle: Bool = true // Auto-adjust output style based on foreground app
+    var enableStructuredOutput: Bool = false // Auto-format lists and numbered steps
 
 	// Define coding keys to match struct properties
 	enum CodingKeys: String, CodingKey {
@@ -79,7 +85,7 @@ struct HexSettings: Codable, Equatable {
         case enableScreenCapture
         case hasCompletedOnboarding
         case preferTraditionalChinese
-        case useAIEnhancement
+        case aiEnhancementMode
         case selectedAIModel
         case aiEnhancementPrompt
         case aiEnhancementTemperature
@@ -94,8 +100,11 @@ struct HexSettings: Codable, Equatable {
         case developerModeEnabled
         case enableStreamingFallback
         case minimumFallbackLength
-        case useEditOverlay
         case autoLearnFromCorrections
+        case removeFillerWords
+        case resolveSelfCorrections
+        case enableContextAwareStyle
+        case enableStructuredOutput
 	}
 
 	init(
@@ -117,7 +126,7 @@ struct HexSettings: Codable, Equatable {
         enableScreenCapture: Bool = false,
         hasCompletedOnboarding: Bool = false,
         preferTraditionalChinese: Bool = true,
-        useAIEnhancement: Bool = false,
+        aiEnhancementMode: AIEnhancementMode = .smart,
         selectedAIModel: String = "gemma3",
         aiEnhancementPrompt: String = EnhancementOptions.defaultPrompt,
         aiEnhancementTemperature: Double = 0.3,
@@ -132,8 +141,11 @@ struct HexSettings: Codable, Equatable {
         developerModeEnabled: Bool = false,
         enableStreamingFallback: Bool = false,
         minimumFallbackLength: Int = 10,
-        useEditOverlay: Bool = true,
-        autoLearnFromCorrections: Bool = true
+        autoLearnFromCorrections: Bool = true,
+        removeFillerWords: Bool = true,
+        resolveSelfCorrections: Bool = true,
+        enableContextAwareStyle: Bool = true,
+        enableStructuredOutput: Bool = false
 	) {
 		self.soundEffectsEnabled = soundEffectsEnabled
 		self.hotkey = hotkey
@@ -153,7 +165,7 @@ struct HexSettings: Codable, Equatable {
         self.enableScreenCapture = enableScreenCapture
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.preferTraditionalChinese = preferTraditionalChinese
-        self.useAIEnhancement = useAIEnhancement
+        self.aiEnhancementMode = aiEnhancementMode
         self.selectedAIModel = selectedAIModel
         self.aiEnhancementPrompt = aiEnhancementPrompt
         self.aiEnhancementTemperature = aiEnhancementTemperature
@@ -168,8 +180,11 @@ struct HexSettings: Codable, Equatable {
         self.developerModeEnabled = developerModeEnabled
         self.enableStreamingFallback = enableStreamingFallback
         self.minimumFallbackLength = minimumFallbackLength
-        self.useEditOverlay = useEditOverlay
         self.autoLearnFromCorrections = autoLearnFromCorrections
+        self.removeFillerWords = removeFillerWords
+        self.resolveSelfCorrections = resolveSelfCorrections
+        self.enableContextAwareStyle = enableContextAwareStyle
+        self.enableStructuredOutput = enableStructuredOutput
 	}
 
 	// Custom decoder that handles missing fields
@@ -205,8 +220,19 @@ struct HexSettings: Codable, Equatable {
         enableScreenCapture = try container.decodeIfPresent(Bool.self, forKey: .enableScreenCapture) ?? false
         hasCompletedOnboarding = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? false
         preferTraditionalChinese = try container.decodeIfPresent(Bool.self, forKey: .preferTraditionalChinese) ?? true
-        // AI Enhancement settings
-        useAIEnhancement = try container.decodeIfPresent(Bool.self, forKey: .useAIEnhancement) ?? false
+        // AI Enhancement settings (backward compatible: reads old useAIEnhancement bool, prefers new enum)
+        if let mode = try container.decodeIfPresent(AIEnhancementMode.self, forKey: .aiEnhancementMode) {
+            aiEnhancementMode = mode
+        } else {
+            // Fall back to legacy "useAIEnhancement" bool using a raw key
+            let legacyKey = AnyCodingKey(stringValue: "useAIEnhancement")
+            let legacyContainer = try decoder.container(keyedBy: AnyCodingKey.self)
+            if let legacyBool = try legacyContainer.decodeIfPresent(Bool.self, forKey: legacyKey) {
+                aiEnhancementMode = legacyBool ? .full : .off
+            } else {
+                aiEnhancementMode = .smart
+            }
+        }
         selectedAIModel = try container.decodeIfPresent(String.self, forKey: .selectedAIModel) ?? "gemma3"
         aiEnhancementPrompt = try container.decodeIfPresent(String.self, forKey: .aiEnhancementPrompt) ?? EnhancementOptions.defaultPrompt
         aiEnhancementTemperature = try container.decodeIfPresent(Double.self, forKey: .aiEnhancementTemperature) ?? 0.3
@@ -228,9 +254,13 @@ struct HexSettings: Codable, Equatable {
         // Streaming fallback options
         enableStreamingFallback = try container.decodeIfPresent(Bool.self, forKey: .enableStreamingFallback) ?? false
         minimumFallbackLength = try container.decodeIfPresent(Int.self, forKey: .minimumFallbackLength) ?? 10
-        // Edit Overlay options
-        useEditOverlay = try container.decodeIfPresent(Bool.self, forKey: .useEditOverlay) ?? true
         autoLearnFromCorrections = try container.decodeIfPresent(Bool.self, forKey: .autoLearnFromCorrections) ?? true
+        // Smart Text Processing
+        removeFillerWords = try container.decodeIfPresent(Bool.self, forKey: .removeFillerWords) ?? true
+        resolveSelfCorrections = try container.decodeIfPresent(Bool.self, forKey: .resolveSelfCorrections) ?? true
+        // Context-aware settings
+        enableContextAwareStyle = try container.decodeIfPresent(Bool.self, forKey: .enableContextAwareStyle) ?? true
+        enableStructuredOutput = try container.decodeIfPresent(Bool.self, forKey: .enableStructuredOutput) ?? false
 	}
 }
 
@@ -247,6 +277,29 @@ Your task is to:
 
 Provide a brief, contextual summary that would help a transcription system better understand what the user might be talking about.
 """
+
+/// AI Enhancement processing modes
+enum AIEnhancementMode: String, Codable, CaseIterable, Equatable {
+    case off = "off"       // No enhancement
+    case smart = "smart"   // Local text processing only (filler removal + self-correction, no LLM)
+    case full = "full"     // Local processing + LLM post-processing
+
+    var displayName: String {
+        switch self {
+        case .off: return "Off"
+        case .smart: return "Smart"
+        case .full: return "Full (AI)"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .off: return "No text processing"
+        case .smart: return "Remove filler words and fix self-corrections locally"
+        case .full: return "Smart processing + AI-powered grammar and style improvement"
+        }
+    }
+}
 
 /// AI Provider types supported by the app
 enum AIProviderType: String, Codable, CaseIterable, Equatable {
@@ -306,6 +359,14 @@ func getCachedSettings() -> HexSettings {
     cachedSettings = defaultSettings
     lastSettingsLoadTime = Date()
     return defaultSettings
+}
+
+/// Generic coding key for reading legacy JSON keys not in the CodingKeys enum.
+private struct AnyCodingKey: CodingKey {
+    var stringValue: String
+    var intValue: Int?
+    init(stringValue: String) { self.stringValue = stringValue; self.intValue = nil }
+    init?(intValue: Int) { self.stringValue = "\(intValue)"; self.intValue = intValue }
 }
 
 extension SharedReaderKey
