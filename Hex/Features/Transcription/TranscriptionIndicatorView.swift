@@ -31,8 +31,6 @@ struct TranscriptionIndicatorView: View {
   let enhanceBaseColor: Color = .green
   let streamingBaseColor: Color = .green
 
-  // Access to cleanWhisperTokens for helper methods
-  @Dependency(\.transcription) private var transcriptionClient
 
   private var backgroundColor: Color {
     switch status {
@@ -149,33 +147,15 @@ struct TranscriptionIndicatorView: View {
         switch status {
         case .streamingTranscription:
           if let streaming = streamingTranscription {
-            VStack(alignment: .center, spacing: 6) {
-              // First row: capsule + waveform + duration inside one StatusBar
-              StatusBar {
-                capsule
-                VoiceWaveView(power: min(1, averagePower * 3))
-                  .frame(width: 160, height: 16)
-                  .clipShape(RoundedRectangle(cornerRadius: 0))
-                Text(durationText(for: streaming))
-                  .font(.system(size: 12, weight: .medium))
-                  .foregroundColor(.white)
-                  .frame(minWidth: 42, alignment: .center)
-              }
-              // Live transcription text underneath
-              Text(displayText(for: streaming))
-                .font(.system(size: dynamicFontSize(for: streaming), weight: .medium))
+            StatusBar {
+              capsule
+              VoiceWaveView(power: min(1, averagePower * 3))
+                .frame(width: 160, height: 16)
+                .clipShape(RoundedRectangle(cornerRadius: 0))
+              Text(durationText(for: streaming))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(.white)
-                .multilineTextAlignment(.leading)
-                .lineLimit(5)
-                .truncationMode(.head)
-                .minimumScaleFactor(CGFloat(min(1, CGFloat(9) / dynamicFontSize(for: streaming))))
-                .frame(minWidth: 160, maxWidth: 420, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                  RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.black.opacity(0.9))
-                )
+                .frame(minWidth: 42, alignment: .center)
             }
           }
         case .enhancing:
@@ -219,32 +199,6 @@ struct TranscriptionIndicatorView: View {
     return "\(seconds)s"
   }
 
-  private func displayText(for streaming: StreamingTranscription) -> String {
-    let confirmedText = streaming.confirmedSegments.map(\.text).joined(separator: " ")
-    let unconfirmedText = streaming.unconfirmedSegments.map(\.text).joined(separator: " ")
-    var parts: [String] = []
-    if !confirmedText.isEmpty { parts.append(confirmedText) }
-    if !streaming.currentText.isEmpty {
-      parts.append(streaming.currentText)
-    } else if !unconfirmedText.isEmpty {
-      parts.append("\(unconfirmedText)...")
-    }
-    guard !parts.isEmpty else { return "Listening..." }
-    return transcriptionClient.cleanWhisperTokens(parts.joined(separator: " "))
-  }
-
-  private func dynamicFontSize(for streaming: StreamingTranscription) -> CGFloat {
-    let base: CGFloat = 15
-    let length = displayText(for: streaming).count
-    switch length {
-    case 0..<100:   return base
-    case 100..<160: return base - 1
-    case 160..<220: return base - 2
-    case 220..<280: return base - 3
-    case 280..<350: return base - 4
-    default:        return max(base - 5, 10)
-    }
-  }
 }
 
 // Optimized view hierarchy to improve performance

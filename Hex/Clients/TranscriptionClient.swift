@@ -376,9 +376,10 @@ actor TranscriptionClientLive {
     // Perform the transcription.
     let results = try await whisperKit.transcribe(audioPath: url.path, decodeOptions: options)
 
-    // Concatenate results from all segments.
-    let rawText = results.map(\.text).joined(separator: " ")
-    
+    // Build text using segment-level gaps (from VAD chunking) to insert punctuation.
+    // Each segment is a continuous speech chunk; gaps between segments = speaker pauses.
+    let rawText = buildTextWithSegmentPausePunctuation(from: results)
+
     // Performance optimization: process text in single pass (cleaning + conversion)
     var text = processTranscriptionText(rawText, settings: settings)
     
@@ -391,6 +392,283 @@ actor TranscriptionClientLive {
     }
     
     return text
+  }
+
+  // MARK: - Segment-Based Pause Punctuation
+
+  /// Uses VAD segment boundaries to insert punctuation based on speaker pauses.
+  /// WhisperKit with `chunkingStrategy: .vad` splits audio at silence gaps.
+  /// Each segment = one continuous speech chunk. We examine the gap between
+  /// consecutive segments to decide punctuation:
+  /// - Gap ≥ 0.15s (short segments) → enumeration comma 、
+  /// - Gap ≥ 0.3s → comma ， or enumeration comma 、
+  /// - Gap ≥ 0.8s → period 。, question mark ？, or exclamation mark ！
+  /// No word-level timestamps needed — preserves transcription quality for Chinese.
+  private nonisolated func buildTextWithSegmentPausePunctuation(
+    from results: [TranscriptionResult]
+  ) -> String {
+    // Flatten all segments across results, preserving order
+    let allSegments = results.flatMap(\.segments)
+
+    guard allSegments.count >= 2 else {
+      // Single segment (common with Large model) — use conjunction-based
+      // punctuation as fallback when segment timing isn't available.
+      let plain = results.map(\.text).joined(separator: " ")
+      let withPunctuation = insertPunctuationAtConjunctions(plain)
+      print("[TranscriptionClient] Single-segment fallback: conjunction-based punctuation")
+      return normalizePunctuation(withPunctuation)
+    }
+
+    let enumerationThreshold: Float = 0.15
+    let commaThreshold: Float = 0.3
+    let periodThreshold: Float = 0.8
+
+    var output = ""
+    for i in 0..<allSegments.count {
+      let segment = allSegments[i]
+      let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !text.isEmpty else { continue }
+
+      output += text
+
+      // Check gap to next segment
+      if i + 1 < allSegments.count {
+        let gap = allSegments[i + 1].start - segment.end
+        let nextText = allSegments[i + 1].text.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Only insert punctuation if text doesn't already end with one
+        let lastChar = text.last ?? Character(" ")
+        let alreadyPunctuated = "。，？！；：、.?!,;:？！，".contains(lastChar)
+
+        if !alreadyPunctuated {
+          if gap >= periodThreshold {
+            // Long pause → sentence end: pick 。/？/！ based on content
+            output += determineSentenceEndPunctuation(text)
+          } else if gap >= commaThreshold {
+            // Medium pause → clause break: pick ，or 、based on context
+            output += determineClausePunctuation(text, next: nextText)
+          } else if gap >= enumerationThreshold {
+            // Short pause → only insert 、for enumeration-like patterns
+            if looksLikeEnumeration(text, next: nextText) {
+              output += "、"
+            }
+          }
+        }
+      }
+    }
+
+    // Normalize and clean up punctuation
+    output = normalizePunctuation(output)
+
+    print("[TranscriptionClient] Segment-pause punctuation: \(allSegments.count) segments")
+    return output
+  }
+
+  // MARK: - Punctuation Classification
+
+  /// Picks sentence-ending punctuation based on content analysis.
+  /// Only called when a long pause (≥ 0.8s) is detected between segments.
+  private nonisolated func determineSentenceEndPunctuation(_ text: String) -> String {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if isQuestionPattern(trimmed) { return "？" }
+    if isExclamatoryPattern(trimmed) { return "！" }
+    return "。"
+  }
+
+  /// Picks clause-level punctuation: 、for enumeration-like pairs, ，otherwise.
+  private nonisolated func determineClausePunctuation(_ text: String, next nextText: String) -> String {
+    if looksLikeEnumeration(text, next: nextText) {
+      return "、"
+    }
+    return "，"
+  }
+
+  /// Detects Chinese question patterns.
+  private nonisolated func isQuestionPattern(_ text: String) -> Bool {
+    guard !text.isEmpty else { return false }
+
+    // 1. Question-ending particles (語氣助詞)
+    let questionEndings = ["嗎", "呢", "麼", "嘛"]
+    for ending in questionEndings {
+      if text.hasSuffix(ending) { return true }
+    }
+
+    // 2. A-not-A patterns (反覆問句)
+    let aNotAPatterns = [
+      "是不是", "有沒有", "能不能", "可不可以", "會不會",
+      "要不要", "對不對", "好不好", "行不行", "願不願意",
+      "算不算", "夠不夠", "想不想",
+    ]
+    for pattern in aNotAPatterns {
+      if text.contains(pattern) { return true }
+    }
+
+    // 3. Choice questions with 還是
+    if text.contains("還是") { return true }
+
+    // 4. Trailing interrogative adverbs (句末疑問)
+    let trailingQuestion = ["多少", "幾個", "幾天", "幾次", "什麼", "怎樣", "如何", "哪裡"]
+    for word in trailingQuestion {
+      if text.hasSuffix(word) { return true }
+    }
+
+    return false
+  }
+
+  /// Detects Chinese exclamatory / imperative patterns.
+  private nonisolated func isExclamatoryPattern(_ text: String) -> Bool {
+    guard !text.isEmpty else { return false }
+
+    // 1. Degree-complement endings (程度補語)
+    let degreeEndings = ["死了", "極了", "透了", "壞了", "慘了", "爆了", "翻了"]
+    for ending in degreeEndings {
+      if text.hasSuffix(ending) { return true }
+    }
+
+    // 2. Emphatic exclamatory particles
+    let exclamatoryEndings = ["耶", "哇", "噢", "唷", "欸", "咧"]
+    for ending in exclamatoryEndings {
+      if text.hasSuffix(ending) { return true }
+    }
+
+    // 3. Strong exclamatory / imperative phrases
+    let strongKeywords = [
+      "救命", "天啊", "我的天", "太棒了", "太好了", "太厲害",
+      "太扯", "夠了", "閉嘴", "不要啊", "好痛", "好可怕",
+    ]
+    for keyword in strongKeywords {
+      if text.contains(keyword) { return true }
+    }
+
+    // 4. Imperative verbs at the start (祈使句)
+    let imperativeStarters = ["別", "不要", "不准", "不許", "快", "趕快", "馬上", "立刻", "給我"]
+    for starter in imperativeStarters {
+      if text.hasPrefix(starter) { return true }
+    }
+
+    return false
+  }
+
+  /// Heuristic: two segments look like an enumeration (列舉) when both are
+  /// short noun-like phrases (≤ 5 Chinese characters each).
+  private nonisolated func looksLikeEnumeration(_ text: String, next nextText: String) -> Bool {
+    let currentCJKCount = text.filter(\.isChineseCharacter).count
+    let nextCJKCount = nextText.filter(\.isChineseCharacter).count
+    // Both segments are short — likely parallel list items
+    return currentCJKCount >= 1 && currentCJKCount <= 5
+        && nextCJKCount >= 1 && nextCJKCount <= 5
+  }
+
+  // MARK: - Conjunction-Based Punctuation Fallback
+
+  /// Fallback for single-segment results (common with Large model):
+  /// Inserts commas before reliable Chinese conjunctions that mark clause boundaries.
+  /// Only used when VAD segment timing is not available.
+  private nonisolated func insertPunctuationAtConjunctions(_ text: String) -> String {
+    guard !text.isEmpty else { return text }
+    let hasChinese = text.contains(where: { $0.isChineseCharacter })
+    guard hasChinese else { return text }
+
+    var result = text
+    let allPunct: Set<Character> = ["。", "，", "？", "！", "；", "：", "、"]
+
+    // Reliable Chinese conjunctions — sorted longest-first to prevent partial matches
+    let conjunctions = [
+      // Adversative (轉折)
+      "但是", "然而", "可是", "不過",
+      // Consequential (因果)
+      "所以", "因此", "因而",
+      // Causal (原因)
+      "因為", "由於",
+      // Additive (遞進)
+      "而且", "並且", "況且",
+      // Concessive (讓步)
+      "雖然", "儘管", "即使",
+      // Conditional (條件)
+      "如果", "假如", "要是",
+      // Sequential (順序)
+      "然後", "接著", "接下來",
+      // Disjunctive (選擇)
+      "或者",
+    ].sorted { $0.count > $1.count }
+
+    for conj in conjunctions {
+      var searchStart = result.startIndex
+      while searchStart < result.endIndex,
+            let range = result.range(of: conj, range: searchStart..<result.endIndex) {
+        // Skip if conjunction is at the very start of text
+        guard range.lowerBound != result.startIndex else {
+          searchStart = range.upperBound
+          continue
+        }
+
+        // Skip if there's already punctuation right before
+        let charBefore = result[result.index(before: range.lowerBound)]
+        guard !allPunct.contains(charBefore) else {
+          searchStart = range.upperBound
+          continue
+        }
+
+        // Insert ，before the conjunction
+        result.insert("，", at: range.lowerBound)
+        // Advance past the inserted comma + the conjunction
+        let offset = result.distance(from: result.startIndex, to: range.lowerBound)
+        let newOffset = offset + 1 + conj.count // +1 for the inserted comma
+        searchStart = result.index(result.startIndex, offsetBy: min(newOffset, result.count))
+      }
+    }
+
+    return result
+  }
+
+  /// Normalizes punctuation in transcription output:
+  /// 1. Converts half-width punctuation to full-width for Chinese text
+  /// 2. Removes duplicate/consecutive punctuation (e.g. "?。" → "？")
+  /// 3. Adds ending punctuation if missing
+  private nonisolated func normalizePunctuation(_ text: String) -> String {
+    var result = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !result.isEmpty else { return result }
+
+    // Step 1: Half-width → full-width for Chinese-containing text
+    let hasChinese = result.contains(where: { $0.isChineseCharacter })
+    if hasChinese {
+      let replacements: [(String, String)] = [
+        ("?", "？"), ("!", "！"), (",", "，"), (";", "；"), (":", "："),
+      ]
+      for (half, full) in replacements {
+        result = result.replacingOccurrences(of: half, with: full)
+      }
+    }
+
+    // Step 2: Remove consecutive punctuation — keep only the first meaningful one
+    // e.g. "？。" → "？", "。，" → "。"
+    let allPunctuation: Set<Character> = ["。", "，", "？", "！", "；", "：", "、"]
+    var cleaned = ""
+    var lastWasPunctuation = false
+    for char in result {
+      if allPunctuation.contains(char) {
+        if !lastWasPunctuation {
+          cleaned.append(char)
+        }
+        lastWasPunctuation = true
+      } else {
+        cleaned.append(char)
+        lastWasPunctuation = false
+      }
+    }
+    result = cleaned
+
+    // Step 3: Add ending punctuation if missing (use same classifiers)
+    if let last = result.last, !allPunctuation.contains(last) {
+      if isQuestionPattern(result) {
+        result += "？"
+      } else if isExclamatoryPattern(result) {
+        result += "！"
+      }
+      // Don't force a period — if the speaker didn't pause, respect that
+    }
+
+    return result
   }
 
   // MARK: - Private Helpers
@@ -428,6 +706,18 @@ actor TranscriptionClientLive {
         processed = convertToTraditionalChinese(processed)
         print("[processTranscriptionText] After Traditional Chinese conversion: '\(processed)'")
       }
+    }
+
+    // Step 2.5: Smart text processing (filler removal + self-correction)
+    if let settings = settings, (settings.removeFillerWords || settings.resolveSelfCorrections) {
+        let processor = TextProcessor()
+        let options = TextProcessingOptions(
+            removeFillers: settings.removeFillerWords,
+            resolveSelfCorrections: settings.resolveSelfCorrections,
+            detectedLanguage: settings.outputLanguage
+        )
+        processed = processor.process(processed, options: options)
+        print("[processTranscriptionText] After text processing: '\(processed)'")
     }
 
     // Step 3: Apply custom word replacements
