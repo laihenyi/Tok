@@ -82,6 +82,21 @@ final class CorrectionHistory: ObservableObject {
         saveHistory()
     }
 
+    /// Record corrections identified by AI enhancement comparison
+    func recordAICorrection(original: String, enhanced: String) {
+        guard original != enhanced else { return }
+
+        let aiCorrections = diffTracker.analyzeAICorrection(original: original, enhanced: enhanced)
+
+        for correction in aiCorrections {
+            addOrUpdateRecord(original: correction.original, corrected: correction.corrected)
+        }
+
+        if !aiCorrections.isEmpty {
+            saveHistory()
+        }
+    }
+
     /// Get corrections that are ready for learning (occurred enough times)
     func getCorrectionsReadyForLearning() -> [CorrectionRecord] {
         records.filter { $0.shouldSuggestForLearning && !$0.addedToDictionary }
@@ -247,8 +262,8 @@ final class AutoLearningManager {
                 return
             }
 
-            // Add new entry
-            let newEntry = CustomWordEntry(
+            // Add replacement entry
+            let replacementEntry = CustomWordEntry(
                 original: record.original,
                 replacement: record.corrected,
                 isEnabled: true,
@@ -256,8 +271,24 @@ final class AutoLearningManager {
                 source: .learned,
                 entryType: .replacement
             )
+            dictionary.entries.append(replacementEntry)
 
-            dictionary.entries.append(newEntry)
+            // Also add a prompt entry so WhisperKit recognizes the corrected form
+            let promptExists = dictionary.entries.contains {
+                $0.original == record.corrected && $0.entryType == .prompt
+            }
+            if !promptExists {
+                let promptEntry = CustomWordEntry(
+                    original: record.corrected,
+                    replacement: "",
+                    isEnabled: true,
+                    caseSensitive: false,
+                    source: .learned,
+                    entryType: .prompt
+                )
+                dictionary.entries.append(promptEntry)
+            }
+
             dictionary.lastModified = Date()
 
             // Save dictionary

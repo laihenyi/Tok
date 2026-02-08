@@ -28,8 +28,8 @@ struct AIEnhancementView: View {
                     .font(.caption)
             }
             
-            // Only show other settings if AI enhancement is enabled
-            if store.hexSettings.useAIEnhancement {
+            // Only show other settings if AI enhancement is in full mode
+            if store.hexSettings.aiEnhancementMode == .full {
                 // Provider Selection Section
                 providerSelectionSection
                 
@@ -325,26 +325,34 @@ struct AIEnhancementView: View {
     // Activation Toggle
     private var activationToggle: some View {
         VStack(spacing: 8) {
-            // Main toggle row
-            Toggle(isOn: Binding(
-                get: { store.hexSettings.useAIEnhancement },
-                set: { newValue in 
-                    store.$hexSettings.withLock { $0.useAIEnhancement = newValue }
-                    
-                    // When enabling, check Ollama status
-                    if newValue {
+            // Enhancement mode picker
+            Picker("Enhancement Mode", selection: Binding(
+                get: { store.hexSettings.aiEnhancementMode },
+                set: { newValue in
+                    store.$hexSettings.withLock { $0.aiEnhancementMode = newValue }
+
+                    // When switching to full mode, check Ollama status
+                    if newValue == .full {
                         Task {
                             await store.send(.checkOllamaAvailability).finish()
                         }
                     }
                 }
             )) {
-                Text("Use AI Enhancement")
-                    .font(.body)
+                ForEach(AIEnhancementMode.allCases, id: \.self) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
             }
-            
-            // Connection status indicator (only show if AI enhancement is enabled and Ollama is available)
-            if store.hexSettings.useAIEnhancement && store.isOllamaAvailable {
+            .pickerStyle(.segmented)
+
+            // Description of the selected mode
+            Text(store.hexSettings.aiEnhancementMode.description)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Connection status indicator (only show if full mode and Ollama is available)
+            if store.hexSettings.aiEnhancementMode == .full && store.isOllamaAvailable {
                 HStack(spacing: 4) {
                     Circle()
                         .fill(Color.green)

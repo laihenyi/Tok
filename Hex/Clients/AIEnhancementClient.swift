@@ -48,21 +48,27 @@ struct AIEnhancementClient {
 struct EnhancementOptions {
     /// The prompt to send to the AI model for text enhancement
     var prompt: String
-    
+
     /// Temperature controls randomness: lower values (0.1-0.3) are more precise,
     /// higher values (0.7-1.0) give more creative/varied results
     var temperature: Double
-    
+
     /// Maximum number of tokens to generate in the response
     var maxTokens: Int
-    
+
     /// Optional context information (e.g., screenshot summary) to help the model
     var context: String?
-    
+
+    /// The inferred output style from the foreground application
+    var outputStyle: OutputStyle = .general
+
+    /// The detected primary language of the transcription
+    var detectedLanguage: String? = nil
+
     /// Default prompt for enhancing transcribed text with clear instructions
     static let defaultPrompt = """
     You are a professional editor improving transcribed text from speech-to-text.
-    
+
     Your task is to:
     1. Fix grammar, punctuation, and capitalization
     2. Correct obvious transcription errors and typos
@@ -71,12 +77,12 @@ struct EnhancementOptions {
     5. Make the text flow naturally as written text
     6. DO NOT add any new information that wasn't in the original
     7. DO NOT remove any information from the original text
-    
+
     Focus only on improving readability while preserving the exact meaning.
 
     Respond **only** with the edited text, no explanation, no preamble.
     """
-    
+
     /// Default enhancement options for transcribed text
     static let `default` = EnhancementOptions(
         prompt: defaultPrompt,
@@ -84,13 +90,46 @@ struct EnhancementOptions {
         maxTokens: 1000,
         context: nil
     )
-    
+
     /// Custom initialization with sensible defaults
-    init(prompt: String = defaultPrompt, temperature: Double = 0.3, maxTokens: Int = 1000, context: String? = nil) {
+    init(prompt: String = defaultPrompt, temperature: Double = 0.3, maxTokens: Int = 1000, context: String? = nil, outputStyle: OutputStyle = .general, detectedLanguage: String? = nil) {
         self.prompt = prompt
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.context = context
+        self.outputStyle = outputStyle
+        self.detectedLanguage = detectedLanguage
+    }
+
+    /// Build options with a dynamic prompt based on style and language.
+    /// Falls back to the user's custom prompt if they've customised it.
+    static func buildDynamic(
+        userCustomPrompt: String?,
+        style: OutputStyle = .general,
+        language: String? = nil,
+        temperature: Double = 0.3,
+        context: String? = nil,
+        enableStructuredOutput: Bool = false
+    ) -> EnhancementOptions {
+        let prompt: String
+        if let custom = userCustomPrompt, !custom.isEmpty, custom != defaultPrompt {
+            // User has a custom prompt — respect it
+            prompt = custom
+        } else {
+            prompt = EnhancementPromptTemplates.buildPrompt(
+                style: style,
+                language: language,
+                includeStructuredOutput: enableStructuredOutput
+            )
+        }
+        return EnhancementOptions(
+            prompt: prompt,
+            temperature: temperature,
+            maxTokens: 1500,
+            context: context,
+            outputStyle: style,
+            detectedLanguage: language
+        )
     }
 }
 

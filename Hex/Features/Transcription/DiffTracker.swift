@@ -235,4 +235,25 @@ extension DiffTracker {
 
         return (corrections, uniquePhrases)
     }
+
+    /// Analyze AI enhancement corrections — only high-confidence word corrections (2~10 chars).
+    /// Filters out pure punctuation/whitespace changes that AI commonly makes.
+    func analyzeAICorrection(original: String, enhanced: String) -> [WordCorrection] {
+        let (corrections, phrases) = analyzeCorrection(original: original, edited: enhanced)
+        let all = corrections + phrases
+
+        return all.filter { correction in
+            // Skip pure punctuation/whitespace changes
+            let origStripped = correction.original.filter { !$0.isPunctuation && !$0.isWhitespace }
+            let corrStripped = correction.corrected.filter { !$0.isPunctuation && !$0.isWhitespace }
+            guard origStripped != corrStripped else { return false }
+
+            // Only learn corrections in the 2~10 character range (high confidence)
+            let origLen = correction.original.count
+            let corrLen = correction.corrected.count
+            guard origLen >= 2 && origLen <= 10 && corrLen >= 2 && corrLen <= 10 else { return false }
+
+            return true
+        }
+    }
 }
