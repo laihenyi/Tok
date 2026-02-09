@@ -414,7 +414,7 @@ actor TranscriptionClientLive {
       // Single segment (common with Large model) — use conjunction-based
       // punctuation as fallback when segment timing isn't available.
       let plain = results.map(\.text).joined(separator: " ")
-      let withPunctuation = insertPunctuationAtConjunctions(plain)
+      let withPunctuation = insertPunctuationAtClauseBoundaries(plain)
       print("[TranscriptionClient] Single-segment fallback: conjunction-based punctuation")
       return normalizePunctuation(withPunctuation)
     }
@@ -456,6 +456,10 @@ actor TranscriptionClientLive {
         }
       }
     }
+
+    // Also apply clause-boundary markers within segments (VAD only handles
+    // inter-segment gaps; intra-segment clause boundaries need explicit markers)
+    output = insertPunctuationAtClauseBoundaries(output)
 
     // Normalize and clean up punctuation
     output = normalizePunctuation(output)
@@ -503,8 +507,19 @@ actor TranscriptionClientLive {
       if text.contains(pattern) { return true }
     }
 
-    // 3. Choice questions with 還是
-    if text.contains("還是") { return true }
+    // 3. Choice questions: 「A還是B」 pattern — only when 還是 connects two options,
+    //    not when used as adverb meaning "still" (e.g. 還是有很多問題)
+    if let range = text.range(of: "還是") {
+      let afterStillIdx = range.upperBound
+      // "還是" as choice requires a noun/clause after, not 有/很/不/沒/會/比較 (adverbial "still")
+      if afterStillIdx < text.endIndex {
+        let charAfter = text[afterStillIdx]
+        let adverbFollowers: Set<Character> = ["有", "很", "不", "沒", "會", "要", "得", "比", "能", "可", "應", "該", "算", "蠻", "挺", "滿"]
+        if !adverbFollowers.contains(charAfter) {
+          return true
+        }
+      }
+    }
 
     // 4. Trailing interrogative adverbs (句末疑問)
     let trailingQuestion = ["多少", "幾個", "幾天", "幾次", "什麼", "怎樣", "如何", "哪裡"]
@@ -559,12 +574,12 @@ actor TranscriptionClientLive {
         && nextCJKCount >= 1 && nextCJKCount <= 5
   }
 
-  // MARK: - Conjunction-Based Punctuation Fallback
+  // MARK: - Clause-Boundary Punctuation Fallback
 
   /// Fallback for single-segment results (common with Large model):
-  /// Inserts commas before reliable Chinese conjunctions that mark clause boundaries.
-  /// Only used when VAD segment timing is not available.
-  private nonisolated func insertPunctuationAtConjunctions(_ text: String) -> String {
+  /// Inserts commas before clause-boundary markers (conjunctions, temporal adverbs,
+  /// discourse markers) when VAD segment timing is not available.
+  private nonisolated func insertPunctuationAtClauseBoundaries(_ text: String) -> String {
     guard !text.isEmpty else { return text }
     let hasChinese = text.contains(where: { $0.isChineseCharacter })
     guard hasChinese else { return text }
@@ -572,8 +587,8 @@ actor TranscriptionClientLive {
     var result = text
     let allPunct: Set<Character> = ["。", "，", "？", "！", "；", "：", "、"]
 
-    // Reliable Chinese conjunctions — sorted longest-first to prevent partial matches
-    let conjunctions = [
+    // Clause-boundary markers — sorted longest-first to prevent partial matches
+    let clauseMarkers = [
       // Adversative (轉折)
       "但是", "然而", "可是", "不過",
       // Consequential (因果)
@@ -581,7 +596,7 @@ actor TranscriptionClientLive {
       // Causal (原因)
       "因為", "由於",
       // Additive (遞進)
-      "而且", "並且", "況且",
+      "而且", "並且", "況且", "另外", "此外", "同時",
       // Concessive (讓步)
       "雖然", "儘管", "即使",
       // Conditional (條件)
@@ -590,13 +605,17 @@ actor TranscriptionClientLive {
       "然後", "接著", "接下來",
       // Disjunctive (選擇)
       "或者",
+      // Temporal (時間)
+      "目前", "現在", "之前", "之後", "後來", "剛才", "最近", "當時",
+      // Discourse (語篇)
+      "其實", "事實上", "總之", "簡單來說",
     ].sorted { $0.count > $1.count }
 
-    for conj in conjunctions {
+    for marker in clauseMarkers {
       var searchStart = result.startIndex
       while searchStart < result.endIndex,
-            let range = result.range(of: conj, range: searchStart..<result.endIndex) {
-        // Skip if conjunction is at the very start of text
+            let range = result.range(of: marker, range: searchStart..<result.endIndex) {
+        // Skip if marker is at the very start of text
         guard range.lowerBound != result.startIndex else {
           searchStart = range.upperBound
           continue
@@ -609,11 +628,11 @@ actor TranscriptionClientLive {
           continue
         }
 
-        // Insert ，before the conjunction
+        // Insert ，before the clause marker
         result.insert("，", at: range.lowerBound)
-        // Advance past the inserted comma + the conjunction
+        // Advance past the inserted comma + the marker
         let offset = result.distance(from: result.startIndex, to: range.lowerBound)
-        let newOffset = offset + 1 + conj.count // +1 for the inserted comma
+        let newOffset = offset + 1 + marker.count // +1 for the inserted comma
         searchStart = result.index(result.startIndex, offsetBy: min(newOffset, result.count))
       }
     }
@@ -658,14 +677,15 @@ actor TranscriptionClientLive {
     }
     result = cleaned
 
-    // Step 3: Add ending punctuation if missing (use same classifiers)
+    // Step 3: Add ending punctuation if missing
     if let last = result.last, !allPunctuation.contains(last) {
       if isQuestionPattern(result) {
         result += "？"
       } else if isExclamatoryPattern(result) {
         result += "！"
+      } else {
+        result += "。"
       }
-      // Don't force a period — if the speaker didn't pause, respect that
     }
 
     return result
