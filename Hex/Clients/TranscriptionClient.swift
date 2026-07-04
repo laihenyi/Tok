@@ -496,17 +496,30 @@ actor TranscriptionClientLive {
             // is thinking hesitation — always a comma, never a period
             output += "，"
             handled = true
+          } else if gap >= commaThreshold, startsWithBackwardBindingOpener(nextText) {
+            // Next segment continues this clause (還是/或者/而且…) — the
+            // sentence is not over regardless of pause length (MOE: 選擇問句
+            // 只在句末用問號)
+            output += "，"
+            handled = true
           } else if gap >= periodThreshold {
             // Long pause → sentence end: pick 。/？/！ based on content
             output += determineSentenceEndPunctuation(text)
             handled = true
           } else if gap >= commaThreshold {
-            // Medium pause → clause break: pick ，or 、based on context
-            output += determineClausePunctuation(text, next: nextText)
+            // Medium pause → clause break: pick ，or 、based on context,
+            // but never before a coordinating conjunction (MOE: 頓號不與
+            // 連接詞並用 — 蘋果、香蕉和橘子)
+            if !startsWithCoordinatingConjunction(nextText) {
+              output += determineClausePunctuation(text, next: nextText)
+            }
             handled = true
           } else if gap >= enumerationThreshold {
-            // Short pause → only insert 、for enumeration-like patterns
-            if splitTrailingConnective(text) == nil, looksLikeEnumeration(text, next: nextText) {
+            // Short pause → only insert 、for enumeration-like patterns,
+            // and never before a coordinating conjunction
+            if splitTrailingConnective(text) == nil,
+               looksLikeEnumeration(text, next: nextText),
+               !startsWithCoordinatingConjunction(nextText) {
               output += "、"
               handled = true
             }
@@ -555,10 +568,27 @@ actor TranscriptionClientLive {
   private nonisolated func isQuestionPattern(_ text: String) -> Bool {
     guard !text.isEmpty else { return false }
 
+    // 0. Rhetorical questions (反問句) — MOE: 反問用問號（你不肯，難道我肯？）
+    let rhetoricalMarkers = ["難道", "豈不", "豈能", "何必", "何嘗"]
+    for marker in rhetoricalMarkers {
+      if text.contains(marker) { return true }
+    }
+
     // 1. Question-ending particles (語氣助詞)
     let questionEndings = ["嗎", "呢", "麼", "嘛"]
     for ending in questionEndings {
       if text.hasSuffix(ending) { return true }
+    }
+
+    // Indirect questions (間接問句) — MOE: 疑問詞只是陳述句的一部分時用句號
+    // （我不知道他去哪裡。）Embedding predicates suppress the checks below,
+    // but never the final particles above (你知道嗎 is still a question).
+    let embeddingPredicates = [
+      "知道", "曉得", "清楚", "記得", "明白", "瞭解", "了解",
+      "告訴", "好奇", "關心", "取決", "問",
+    ]
+    if embeddingPredicates.contains(where: { text.contains($0) }) {
+      return false
     }
 
     // 2. A-not-A patterns (反覆問句)
@@ -623,6 +653,13 @@ actor TranscriptionClientLive {
     let imperativeStarters = ["別", "不要", "不准", "不許", "快", "趕快", "馬上", "立刻", "給我"]
     for starter in imperativeStarters {
       if text.hasPrefix(starter) { return true }
+    }
+
+    // 5. Exclamatory sentences (感嘆句) — MOE: 好大的雨啊！
+    //    Degree adverb + sentence-final particle 啊/呀/哪
+    if let last = text.last, "啊呀哪".contains(last) {
+      let degreeAdverbs = ["好", "真", "太", "多麼"]
+      if degreeAdverbs.contains(where: { text.contains($0) }) { return true }
     }
 
     return false
@@ -699,8 +736,12 @@ actor TranscriptionClientLive {
   /// Discourse openers: a segment BEGINNING with one of these marks a new
   /// clause even when the gap is zero — the VAD split plus the opener word
   /// is evidence enough (…獲得均衡｜當然如果… → 均衡，當然).
+  /// Includes imperative starters (請/麻煩): a segment opening with one
+  /// starts a new imperative clause (…不太適合在戶外走動，請注意安全).
   private static let discourseOpeners: [String] = [
     "當然", "其實", "事實上", "總之", "簡單來說",
+    "坦白說", "老實說", "說真的", "基本上", "換句話說", "也就是說", "總而言之",
+    "請", "麻煩",
   ]
 
   private nonisolated func endsWithNonFinalTail(_ text: String) -> Bool {
@@ -709,6 +750,27 @@ actor TranscriptionClientLive {
 
   private nonisolated func startsWithDiscourseOpener(_ text: String) -> Bool {
     Self.discourseOpeners.contains { text.hasPrefix($0) }
+  }
+
+  /// Openers that bind BACKWARD — the previous clause is not finished, so a
+  /// pause before one takes a comma, never a period. MOE: 選擇問句只在句末
+  /// 用問號（今天是星期六，還是星期日？）。
+  private static let backwardBindingOpeners: [String] = [
+    "還是", "或者", "或是", "而且", "並且", "以及", "甚至",
+  ]
+
+  private nonisolated func startsWithBackwardBindingOpener(_ text: String) -> Bool {
+    Self.backwardBindingOpeners.contains { text.hasPrefix($0) }
+  }
+
+  /// Coordinating conjunctions that replace enumeration punctuation entirely.
+  /// MOE: 頓號不與連接詞並用（蘋果、香蕉和橘子）。
+  private static let coordinatingConjunctions: [String] = [
+    "和", "與", "及", "跟", "或", "還有",
+  ]
+
+  private nonisolated func startsWithCoordinatingConjunction(_ text: String) -> Bool {
+    Self.coordinatingConjunctions.contains { text.hasPrefix($0) }
   }
 
   /// Temporal adverbs are clause starters only in some positions — they also

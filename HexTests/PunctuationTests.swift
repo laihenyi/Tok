@@ -140,6 +140,88 @@ struct PunctuationTests {
     #expect(output.contains("均衡，當然"))
   }
 
+  /// 坦白說/老實說 are discourse openers too. Real case 2026-07-04:
+  /// 「非常的炎熱」|「坦白說」 gap 0.00 must not fuse into 「炎熱坦白說」.
+  @Test
+  func discourseOpenerTanbaishuo_getsCommaBeforeIt() {
+    let segments = [
+      TranscriptionSegment(text: "非常的炎熱", start: 2.0, end: 4.0),
+      TranscriptionSegment(text: "坦白說", start: 4.0, end: 6.0),
+      TranscriptionSegment(text: "不太適合在戶外走動", start: 6.0, end: 8.0),
+    ]
+    let output = client.punctuatedText(from: segments)
+    #expect(output.contains("炎熱，坦白說"))
+  }
+
+  /// A segment starting with imperative 請 opens a new clause
+  /// (…不太適合在戶外走動，請注意安全), but mid-phrase VAD splits like
+  /// 請注意|安全 must stay untouched.
+  @Test
+  func imperativeQingAtSegmentStart_getsCommaBeforeIt() {
+    let segments = [
+      TranscriptionSegment(text: "不太適合在戶外走動", start: 6.0, end: 8.0),
+      TranscriptionSegment(text: "請注意", start: 8.0, end: 10.0),
+      TranscriptionSegment(text: "安全", start: 10.0, end: 12.0),
+    ]
+    let output = client.punctuatedText(from: segments)
+    #expect(output == "不太適合在戶外走動，請注意安全。")
+  }
+
+  // MARK: - MOE punctuation rules (教育部《重訂標點符號手冊》)
+
+  /// 間接問句用句號：疑問詞只是陳述句的一部分時（我不知道他去哪裡），
+  /// 整句是陳述語氣，句末用句號不用問號。
+  @Test
+  func indirectQuestion_endsWithPeriodNotQuestionMark() {
+    let output = client.normalizePunctuation("我不知道他去哪裡")
+    #expect(output == "我不知道他去哪裡。")
+  }
+
+  /// 直接疑問句仍用問號——間接問句防護不可誤殺直接發問。
+  @Test
+  func directQuestion_stillGetsQuestionMark() {
+    let output = client.normalizePunctuation("你要去哪裡")
+    #expect(output == "你要去哪裡？")
+  }
+
+  /// 反問句用問號（MOE：你不肯，難道我肯？）
+  @Test
+  func rhetoricalQuestion_getsQuestionMark() {
+    let output = client.normalizePunctuation("難道我會忘記你的生日")
+    #expect(output == "難道我會忘記你的生日？")
+  }
+
+  /// 選擇問句只在句末用問號：選項間的停頓用逗號，
+  /// 不可切成「星期六。還是星期日？」
+  @Test
+  func choiceQuestionAcrossSegments_usesCommaBeforeHaishi() {
+    let segments = [
+      TranscriptionSegment(text: "今天是星期六", start: 0.0, end: 2.0),
+      TranscriptionSegment(text: "還是星期日", start: 3.0, end: 5.0),
+    ]
+    let output = client.punctuatedText(from: segments)
+    #expect(output == "今天是星期六，還是星期日？")
+  }
+
+  /// 頓號不與連接詞並用：蘋果、香蕉和橘子（不是「香蕉、和橘子」）
+  @Test
+  func enumerationBeforeCoordinatingConjunction_getsNoDunhao() {
+    let segments = [
+      TranscriptionSegment(text: "蘋果", start: 0.0, end: 1.0),
+      TranscriptionSegment(text: "香蕉", start: 1.2, end: 2.0),
+      TranscriptionSegment(text: "和橘子", start: 2.2, end: 3.0),
+    ]
+    let output = client.punctuatedText(from: segments)
+    #expect(output == "蘋果、香蕉和橘子。")
+  }
+
+  /// 感嘆句用驚嘆號（MOE：好大的雨啊！）——程度副詞＋句末語氣詞啊/呀
+  @Test
+  func exclamatorySentenceWithDegreeAdverb_getsExclamationMark() {
+    let output = client.normalizePunctuation("好大的雨啊")
+    #expect(output == "好大的雨啊！")
+  }
+
   // MARK: - Whisper special tokens
 
   /// Segment text arrives with raw Whisper tokens (<|zh|>, <|1.28|>…).
