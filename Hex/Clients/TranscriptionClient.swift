@@ -676,11 +676,11 @@ actor TranscriptionClientLive {
   }
 
   #if DEBUG
-  /// Appends a diagnostic line to /tmp/tok-punctuation.log (debug builds only,
+  /// Appends a diagnostic line to a log file (debug builds only,
   /// stdout is discarded for LaunchServices-launched apps).
-  private nonisolated static func appendDiagnostic(_ text: String) {
+  nonisolated static func appendDiagnostic(_ text: String, to path: String = "/tmp/tok-punctuation.log") {
     print(text, terminator: "")
-    let url = URL(fileURLWithPath: "/tmp/tok-punctuation.log")
+    let url = URL(fileURLWithPath: path)
     guard let data = text.data(using: .utf8) else { return }
     if let handle = try? FileHandle(forWritingTo: url) {
       defer { try? handle.close() }
@@ -871,6 +871,10 @@ actor TranscriptionClientLive {
   nonisolated func normalizePunctuation(_ text: String) -> String {
     var result = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !result.isEmpty else { return result }
+
+    // Step 0: Strip U+FFFD — byte-level tokens truncated at a decode-window
+    // boundary decode to the replacement character
+    result = result.replacingOccurrences(of: "\u{FFFD}", with: "")
 
     // Step 1: Half-width → full-width for Chinese-containing text
     let hasChinese = result.contains(where: { $0.isChineseCharacter })
@@ -1101,6 +1105,46 @@ actor TranscriptionClientLive {
     // The initializer automatically calls `loadModels`.
     whisperKit = try await WhisperKit(config)
     currentModelName = modelName
+
+    // Guard every decode against the prefill-EOT abort bug — see
+    // PrefillEOTSuppressionFilter. Injected once per model load; applies to
+    // decodes with and without promptTokens (harmless for the latter: it
+    // only forces each window to emit at least one real token).
+    if let whisperKit, let tokenizer = whisperKit.tokenizer {
+      let eotFilter = PrefillEOTSuppressionFilter(
+        endToken: tokenizer.specialTokens.endToken,
+        startOfTranscriptToken: tokenizer.specialTokens.startOfTranscriptToken
+      )
+      // The built-in TimestampRulesFilter disables itself when promptTokens
+      // are in use — this port re-enables timestamp coherence for prompted
+      // decodes only. See PromptTimestampRulesFilter.
+      let timestampFilter = PromptTimestampRulesFilter(
+        timeTokenBegin: tokenizer.specialTokens.timeTokenBegin,
+        endToken: tokenizer.specialTokens.endToken,
+        noTimestampsToken: tokenizer.specialTokens.noTimestampsToken,
+        startOfPreviousToken: tokenizer.specialTokens.startOfPreviousToken,
+        startOfTranscriptToken: tokenizer.specialTokens.startOfTranscriptToken
+      )
+      whisperKit.textDecoder.logitsFilters =
+        (whisperKit.textDecoder.logitsFilters ?? []) + [eotFilter, timestampFilter]
+    }
+
+    #if DEBUG
+    // Mirror WhisperKit's internal debug log to a file so decode aborts
+    // (EOT sampled during prefill, temperature fallbacks) are observable —
+    // stdout is discarded for LaunchServices-launched apps. Filtered to the
+    // decode-loop lines that reveal where and why a window stopped.
+    Logging.shared.logLevel = .debug
+    Logging.shared.loggingCallback = { message in
+      let keep = message.contains("Fallback")
+        || message.contains("Completed window")
+        || message.contains("Predicted next tokenIndex")
+        || message.contains("Running main loop")
+        || message.contains("Decoding Temperature")
+      guard keep else { return }
+      Self.appendDiagnostic("[WhisperKit] \(message)\n", to: "/tmp/tok-whisperkit.log")
+    }
+    #endif
 
     // Finalize load progress
     loadingProgress.completedUnitCount = 100

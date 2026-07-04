@@ -796,16 +796,19 @@ private extension TranscriptionFeature {
             chunkingStrategy: .vad
           )
 
-          // Add custom word prompt entries (提示詞) for streaming transcription
-          // promptTokens are prepended to prefill tokens to bias transcription
+          // Add punctuation primer + custom word prompt entries (提示詞)
+          // for streaming transcription; promptTokens are prepended to
+          // prefill tokens to bias transcription
           let customWordDict = getCachedCustomWordDictionary()
           let customWordPrompt = customWordDict.promptText
-          if !customWordPrompt.isEmpty, let tokenizer = await transcription.getTokenizer() {
-            let promptTokens = tokenizer.encode(text: " " + customWordPrompt)
+          let primer = TranscriptionFeature.punctuationPrimer(forNormalizedLanguage: normalizedLanguage) ?? ""
+          let streamPrompt = (primer + " " + customWordPrompt).trimmingCharacters(in: .whitespaces)
+          if !streamPrompt.isEmpty, let tokenizer = await transcription.getTokenizer() {
+            let promptTokens = tokenizer.encode(text: " " + streamPrompt)
               .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
-            decodeOptions.promptTokens = promptTokens
             // Keep usePrefillPrompt as default (true) - promptTokens will be prepended
-            print("[TranscriptionFeature] Streaming: Added \(customWordDict.enabledPromptEntries.count) custom word prompts (\(promptTokens.count) tokens): '\(customWordPrompt)'")
+            decodeOptions = TranscriptionFeature.applyingPromptTokens(promptTokens, to: decodeOptions)
+            print("[TranscriptionFeature] Streaming: prompt (\(promptTokens.count) tokens): '\(streamPrompt.prefix(80))'")
           }
 
           print("Starting streaming transcription for real-time feedback…")
@@ -925,8 +928,13 @@ private extension TranscriptionFeature {
           var decodeOptionsWithPrefill = baseOptions
 
           var combinedPrompt = ""
+          // Punctuation style primer for Chinese — biases the decoder to
+          // emit punctuation (and Traditional characters) on its own
+          if let primer = TranscriptionFeature.punctuationPrimer(forNormalizedLanguage: normalizedLanguage) {
+            combinedPrompt += primer
+          }
           if !settings.voiceRecognitionPrompt.isEmpty {
-            combinedPrompt += settings.voiceRecognitionPrompt.trimmingCharacters(in: .whitespaces)
+            combinedPrompt += " " + settings.voiceRecognitionPrompt.trimmingCharacters(in: .whitespaces)
           }
           if let prompt = contextPrompt, !prompt.isEmpty {
             combinedPrompt += " " + prompt.trimmingCharacters(in: .whitespaces)
@@ -941,12 +949,17 @@ private extension TranscriptionFeature {
           }
 
           if !combinedPrompt.isEmpty, let tokenizer = await transcription.getTokenizer() {
-            decodeOptionsWithPrefill.promptTokens = tokenizer.encode(text: " " + combinedPrompt)
+            let promptTokens = tokenizer.encode(text: " " + combinedPrompt)
               .filter { $0 < tokenizer.specialTokens.specialTokenBegin }
             // 保持 usePrefillPrompt = true（預設值），讓 language/task tokens 正常預填充
             // promptTokens 會作為「前文上下文」與預填充 tokens 一起使用，引導 Whisper 辨識特定詞彙
+            decodeOptionsWithPrefill = TranscriptionFeature.applyingPromptTokens(promptTokens, to: decodeOptionsWithPrefill)
             print("[TranscriptionFeature] Applied combined prompt with \(decodeOptionsWithPrefill.promptTokens?.count ?? 0) tokens: '\(combinedPrompt.prefix(100))...'")
           }
+          #if DEBUG
+          TranscriptionClientLive.appendDiagnostic(
+            "[Prompt] language=\(normalizedLanguage ?? "auto") tokens=\(decodeOptionsWithPrefill.promptTokens?.count ?? 0) combined='\(combinedPrompt)'\n")
+          #endif
 
           // Transcription WITH prefill prompt
           print("Transcribing recorded audio WITH prefill prompt…")
@@ -1484,6 +1497,52 @@ private extension TranscriptionFeature {
     }
 
     return language
+  }
+}
+
+extension TranscriptionFeature {
+  /// Style primer prepended to the Whisper prompt for Chinese output.
+  /// The decoder continues the prompt's style, so a punctuated Traditional
+  /// Chinese primer biases the model to emit punctuation (and Traditional
+  /// characters) on its own — covering clause boundaries that have no pause
+  /// and no marker word, which the rule-based system cannot see.
+  /// Meta-descriptive wording avoids leaking content into the transcript.
+  /// Only applies when the language is explicitly Chinese; with auto-detect
+  /// (nil) a Chinese primer would bias other languages toward Chinese.
+  /// Must NOT contain 「：」 — the decoder mirrors the primer's style, and a
+  /// colon in the primer made it separate clauses with colons (observed
+  /// 2026-07-04: 今天艷陽高照：氣溫非常高：…).
+  /// The dense punctuation listing matters: a prose-style primer weakened
+  /// clause-boundary punctuation probability enough that greedy sampling
+  /// drifted onto fullwidth byte tokens (Ｂ) between poem lines.
+  static func punctuationPrimer(forNormalizedLanguage language: String?) -> String? {
+    guard language == "zh" else { return nil }
+    return "以下是普通話的句子，內容會用到逗號、頓號、問號？驚嘆號！以及句號。"
+  }
+
+  /// Applies prompt tokens to decoding options.
+  ///
+  /// WhisperKit 0.18 disables the prefill KV cache whenever promptTokens are
+  /// set (TextDecoder.swift: "currently breaks if it starts at non-zero
+  /// index"), so the decode loop starts at index 0 — the <|startofprev|>
+  /// token. The firstTokenLogProbThreshold check (default -1.5) then fires
+  /// on that position, where the model is predicting the first token of
+  /// arbitrary "previous text" and the sampled logprob is inherently low.
+  /// Result: the whole window aborts and the transcription comes back
+  /// empty. Disabling the threshold alongside promptTokens restores output.
+  static func applyingPromptTokens(_ tokens: [Int], to options: DecodingOptions) -> DecodingOptions {
+    var result = options
+    result.promptTokens = tokens
+    result.firstTokenLogProbThreshold = nil
+    // Block the byte-fallback path for fullwidth-form characters (U+FFxx,
+    // UTF-8 lead byte EF → token 171): at clause boundaries greedy sampling
+    // starts the shared EF BC prefix intending fullwidth punctuation, then
+    // derails on the last byte (Ｂ, ６). Common fullwidth punctuation all
+    // has dedicated single tokens, which remain available.
+    if !result.supressTokens.contains(171) {
+      result.supressTokens.append(171)
+    }
+    return result
   }
 }
 

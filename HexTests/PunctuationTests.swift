@@ -6,9 +6,11 @@
 //  adaptive thresholds, clause-marker word list, and normalization.
 //
 
+import CoreML
 import Foundation
 @testable import Tok
 import Testing
+import WhisperKit
 
 struct PunctuationTests {
   let client = TranscriptionClientLive()
@@ -220,6 +222,148 @@ struct PunctuationTests {
   func exclamatorySentenceWithDegreeAdverb_getsExclamationMark() {
     let output = client.normalizePunctuation("好大的雨啊")
     #expect(output == "好大的雨啊！")
+  }
+
+  // MARK: - Model-level punctuation primer
+
+  /// 中文標點風格引導 prompt：必須涵蓋常用標點，decoder 才會延續該風格
+  /// 自行輸出標點。但不得含「：」——實測 2026-07-04 primer 帶冒號時，
+  /// 模型把冒號當子句分隔符（今天艷陽高照：氣溫非常高：…）。
+  @Test
+  func punctuationPrimer_forChinese_containsFullPunctuationSet() throws {
+    let primer = try #require(TranscriptionFeature.punctuationPrimer(forNormalizedLanguage: "zh"))
+    for mark in ["，", "。", "？", "！", "、"] {
+      #expect(primer.contains(mark))
+    }
+    #expect(!primer.contains("："))
+  }
+
+  /// 非中文或自動偵測（nil）不加中文引導——避免把其他語言的音訊
+  /// 偏向中文輸出。
+  @Test
+  func punctuationPrimer_forNonChineseOrAutoDetect_isNil() {
+    #expect(TranscriptionFeature.punctuationPrimer(forNormalizedLanguage: "en") == nil)
+    #expect(TranscriptionFeature.punctuationPrimer(forNormalizedLanguage: nil) == nil)
+  }
+
+  /// WhisperKit 0.18：帶 promptTokens 時 prefill cache 被停用，decode loop
+  /// 從 <|startofprev|> 開始，第一個取樣 token 的 logprob 天生偏低，
+  /// 預設 firstTokenLogProbThreshold(-1.5) 會直接砍掉整段輸出（空字串）。
+  /// 套用 promptTokens 時必須同時停用該閾值。
+  @Test
+  func applyingPromptTokens_disablesFirstTokenLogProbThreshold() {
+    let base = DecodingOptions(language: "zh", chunkingStrategy: .vad)
+    #expect(base.firstTokenLogProbThreshold != nil)
+
+    let applied = TranscriptionFeature.applyingPromptTokens([1, 2, 3], to: base)
+    #expect(applied.promptTokens == [1, 2, 3])
+    #expect(applied.firstTokenLogProbThreshold == nil)
+    // 其餘設定不可被動到
+    #expect(applied.language == "zh")
+  }
+
+  /// 帶 prompt 解碼在段落邊界會走 byte 路徑輸出全形亂碼（Ｂ＝EF BC A2、
+  /// ６＝EF BC 96，與全形標點，＝EF BC 8C 同字首；實測 2026-07-04 詩句間
+  /// 反覆出現 [171,120,95] byte 序列）。壓制 EF 字首 byte token 171 封死
+  /// byte 逃生路徑——常用全形標點都有單一 token，不受影響。
+  @Test
+  func applyingPromptTokens_suppressesFullwidthByteFallback() {
+    let base = DecodingOptions(language: "zh", chunkingStrategy: .vad)
+    let applied = TranscriptionFeature.applyingPromptTokens([1, 2, 3], to: base)
+    #expect(applied.supressTokens.contains(171))
+  }
+
+  /// WhisperKit 0.18 的 decode loop 在 prefill（強制餵入 prompt）期間仍會
+  /// 取樣，一旦 argmax 取到 <|endoftext|> 就把整個 window 中止成空字串
+  /// （實測 2026-07-04：tokenIndex 51 取到 EOT，prefill 需 88 步）。
+  /// 此 filter 必須在 prefill 期間把 EOT logit 壓成 -inf，
+  /// prefill 結束後不得再干預。
+  @Test
+  func prefillEOTSuppression_masksEOTOnlyDuringPrefill() throws {
+    let eot = 5, sot = 6
+    let filter = PrefillEOTSuppressionFilter(endToken: eot, startOfTranscriptToken: sot)
+
+    func makeLogits() throws -> MLMultiArray {
+      let logits = try MLMultiArray(shape: [1, 1, 10], dataType: .float16)
+      for i in 0..<10 { logits[[0, 0, i] as [NSNumber]] = 0 }
+      return logits
+    }
+    func eotValue(_ logits: MLMultiArray) -> Float {
+      logits[[0, 0, eot] as [NSNumber]].floatValue
+    }
+
+    // Prefill：tokens = [startofprev, prompt…, SOT, lang, task, timestamp]，
+    // 長度在 prefill 期間固定為 sotIndex + 4 → 必須壓制 EOT
+    let prefillTokens = [7, 1, 2, 3, sot, 8, 9, 4]
+    let masked = filter.filterLogits(try makeLogits(), withTokens: prefillTokens)
+    #expect(eotValue(masked) == -.infinity)
+
+    // Prefill 結束（已取樣出第一個實際 token）→ 不得干預
+    let sampling = filter.filterLogits(try makeLogits(), withTokens: prefillTokens + [42])
+    #expect(eotValue(sampling) == 0)
+
+    // 防禦：tokens 中沒有 SOT → 不得干預
+    let noSOT = filter.filterLogits(try makeLogits(), withTokens: [7, 1, 2, 3])
+    #expect(eotValue(noSOT) == 0)
+  }
+
+  /// WhisperKit 0.18 的 TimestampRulesFilter 只在 tokens.prefix(3) 找 task
+  /// token，帶 promptTokens 時 task token 在第 85 位 → 整個 filter 失效，
+  /// 「timestamp 機率總和高於任何文字 token 就強制輸出 timestamp」的規則
+  /// 消失，段落邊界處 greedy 取樣滑到全形亂碼（實測 2026-07-04：詩句間
+  /// 輸出Ｂ＝EF BC A2，正是全形標點的 byte 字首家族）。
+  /// 修正版 filter 只在帶 prompt（tokens 以 <|startofprev|> 開頭）時啟動。
+  @Test
+  func promptTimestampRules_appliesOnlyWithPromptPrefix() throws {
+    // Fake vocab layout: text 0–9, endToken 10, noTimestamps 11,
+    // timestamps 12–19. Prompt-only values (never used as indices): 100/101.
+    let filter = PromptTimestampRulesFilter(
+      timeTokenBegin: 12, endToken: 10, noTimestampsToken: 11,
+      startOfPreviousToken: 100, startOfTranscriptToken: 101
+    )
+
+    func makeLogits() throws -> MLMultiArray {
+      let logits = try MLMultiArray(shape: [1, 1, 20], dataType: .float16)
+      for i in 0..<20 { logits[[0, 0, i] as [NSNumber]] = 0 }
+      // 讓文字 token 與 endToken 明顯勝出，避免「timestamp 機率總和」
+      // 規則在假 logits 上誤觸發，聚焦測試成對規則本身
+      logits[[0, 0, 1] as [NSNumber]] = 20
+      logits[[0, 0, 10] as [NSNumber]] = 20
+      return logits
+    }
+    func value(_ logits: MLMultiArray, _ i: Int) -> Float {
+      logits[[0, 0, i] as [NSNumber]].floatValue
+    }
+
+    // prompt 前綴：[startofprev, prompt…, SOT, lang, task, ts] → 取樣區從 index 8 起
+    let prefix = [100, 1, 2, 3, 101, 5, 6, 12]
+
+    // 無 <|startofprev|>（一般解碼）→ 完全不干預，交給內建 filter
+    let dormant = filter.filterLogits(try makeLogits(), withTokens: [101, 5, 6, 12])
+    #expect(value(dormant, 11) == 0)
+
+    // 帶 prompt、取樣中 → 必須壓制 <|notimestamps|>
+    let active = filter.filterLogits(try makeLogits(), withTokens: prefix)
+    #expect(value(active, 11) == -.infinity)
+
+    // 剛輸出一個 timestamp（未成對）→ 文字 token 全部壓制，逼出成對 timestamp
+    let pairing = filter.filterLogits(try makeLogits(), withTokens: prefix + [5, 13])
+    #expect(value(pairing, 1) == -.infinity)
+    #expect(value(pairing, 10) == 20) // endToken 例外：timestamp 後可直接結束
+
+    // timestamp 已成對 → 換文字 token，timestamp 區壓制
+    let paired = filter.filterLogits(try makeLogits(), withTokens: prefix + [13, 13])
+    #expect(value(paired, 13) == -.infinity)
+    #expect(value(paired, 1) == 20)
+  }
+
+  /// Window 邊界截斷的 byte token 會解碼成 U+FFFD（�）殘留在輸出
+  ///（實測 2026-07-04：「低頭思故鄉�。」）。normalizePunctuation 是
+  /// 兩條輸出路徑的共同終點，必須在此清除。
+  @Test
+  func normalizePunctuation_stripsReplacementCharacter() {
+    let output = client.normalizePunctuation("低頭思故鄉\u{FFFD}")
+    #expect(output == "低頭思故鄉。")
   }
 
   // MARK: - Whisper special tokens
