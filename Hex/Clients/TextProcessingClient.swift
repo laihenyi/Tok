@@ -86,19 +86,23 @@ struct TextProcessor: Sendable {
         // Chinese correction signals – each pattern captures:
         //   (preceding clause)(signal word)(corrected clause)
         // We keep everything before the preceding clause + the corrected clause.
+        // NOTE: 應該是 is deliberately absent — it is an epistemic marker
+        // (應該是吧), not a correction signal.
         let zhSignals = [
             "不對[，、,\\s]*",
             "不是[，、,\\s]*",
             "我是說[，、,\\s]*",
             "我的意思是[，、,\\s]*",
-            "應該是[，、,\\s]*",
             "更正[，、,\\s]*",
         ]
 
         for signal in zhSignals {
             // Match: a Chinese clause (non-greedy) + signal + rest
-            // The "clause" is bounded by sentence-level punctuation or start of string
-            let pattern = "(?<=[。；！？\\n]|^)([^。；！？\\n]*?)" + signal + "([^。；！？\\n]+)"
+            // The "clause" is bounded by sentence-level punctuation or start of string.
+            // The signal must be pause-delimited (preceded by comma/space) or
+            // clause-initial — a bare mid-clause 不是 is negation (我不是故意的),
+            // not a correction, and must be preserved.
+            let pattern = "(?<=[。；！？\\n]|^)([^。；！？\\n]*?[，、,\\s]+|)" + signal + "([^。；！？\\n]+)"
             if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
                 let range = NSRange(result.startIndex..., in: result)
                 result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "$2")
@@ -154,14 +158,16 @@ struct TextProcessor: Sendable {
         //
         // "就是" is tricky: "就是這個" should keep it, but "就是，" or "，就是，" is filler.
         // Strategy: remove when followed by punctuation/whitespace/end, or preceded by same.
+        // NOTE: 基本上 is deliberately absent — it is a stance-bearing discourse
+        // opener (the punctuation system even inserts a comma after it), so
+        // listing it here would delete it from every sentence it opens.
         let standaloneFillers = [
-            "嗯+",           // 嗯, 嗯嗯
+            "嗯+[，、\\s]*",  // 嗯, 嗯嗯
             "啊[，、。\\s]",  // 啊 as filler (followed by punctuation/space)
-            "呃+",           // 呃, 呃呃
+            "呃+[，、\\s]*",  // 呃, 呃呃
             "那個[，、\\s]+", // 那個 as filler (followed by punctuation/space)
             "就是說[，、\\s]+",
             "怎麼說[，、\\s]+",
-            "基本上[，、\\s]+",
             "然後[，、\\s]+(?=然後|嗯|啊|就是)", // "然後" only when chained with more fillers
         ]
 
