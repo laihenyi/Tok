@@ -416,42 +416,107 @@ actor TranscriptionClientLive {
       let plain = results.map(\.text).joined(separator: " ")
       let withPunctuation = insertPunctuationAtClauseBoundaries(plain)
       print("[TranscriptionClient] Single-segment fallback: conjunction-based punctuation")
+      #if DEBUG
+      Self.appendDiagnostic("[Punctuation] single-segment fallback: \(results.count) results, text='\(plain)'\n")
+      #endif
       return normalizePunctuation(withPunctuation)
     }
 
-    let enumerationThreshold: Float = 0.15
-    let commaThreshold: Float = 0.3
-    let periodThreshold: Float = 0.8
+    let segments = allSegments.map {
+      TranscriptionSegment(text: $0.text, start: TimeInterval($0.start), end: TimeInterval($0.end))
+    }
+    print("[TranscriptionClient] Segment-pause punctuation: \(segments.count) segments")
+    return punctuatedText(from: segments)
+  }
+
+  nonisolated func punctuatedText(from segments: [TranscriptionSegment]) -> String {
+    // Adaptive thresholds: slow speakers pause longer everywhere, so anchor
+    // thresholds to this recording's own rhythm (median inter-segment gap)
+    // instead of absolute seconds. Only scales up — fast speech keeps the
+    // absolute floors, so short recordings behave exactly as before.
+    let gaps = zip(segments.dropFirst(), segments).map { max(0, $0.start - $1.end) }
+    var scale: TimeInterval = 1.0
+    if gaps.count >= 3 {
+      let median = gaps.sorted()[gaps.count / 2]
+      scale = min(max(median / 0.3, 1.0), 3.0)
+    }
+    let enumerationThreshold: TimeInterval = 0.15 * scale
+    let commaThreshold: TimeInterval = 0.3 * scale
+    let periodThreshold: TimeInterval = 0.8 * scale
+
+    // Diagnostic (debug builds only): segment boundaries and gap timings
+    #if DEBUG
+    let gapSummary = gaps.map { String(format: "%.2f", $0) }.joined(separator: ", ")
+    var diagnostic = "[Punctuation] \(segments.count) segments, scale=\(String(format: "%.2f", scale)), gaps=[\(gapSummary)]\n"
+    for (i, seg) in segments.enumerated() {
+      diagnostic += "[Punctuation]   seg[\(i)] \(String(format: "%.2f–%.2f", seg.start, seg.end)) '\(seg.text.trimmingCharacters(in: .whitespacesAndNewlines))'\n"
+    }
+    Self.appendDiagnostic(diagnostic)
+    #endif
 
     var output = ""
-    for i in 0..<allSegments.count {
-      let segment = allSegments[i]
-      let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+    for i in 0..<segments.count {
+      let segment = segments[i]
+      // Strip raw Whisper tokens (<|zh|>, <|1.28|>…) BEFORE analysis:
+      // punctuation inserted around tokens survives dedup as "。，" once the
+      // tokens are removed downstream, and tokens break suffix/adjacency checks
+      let text = cleanWhisperTokens(from: segment.text)
       guard !text.isEmpty else { continue }
 
       output += text
 
       // Check gap to next segment
-      if i + 1 < allSegments.count {
-        let gap = allSegments[i + 1].start - segment.end
-        let nextText = allSegments[i + 1].text.trimmingCharacters(in: .whitespacesAndNewlines)
+      if i + 1 < segments.count {
+        let gap = segments[i + 1].start - segment.end
+        let nextText = cleanWhisperTokens(from: segments[i + 1].text)
 
         // Only insert punctuation if text doesn't already end with one
         let lastChar = text.last ?? Character(" ")
         let alreadyPunctuated = "。，？！；：、.?!,;:？！，".contains(lastChar)
 
         if !alreadyPunctuated {
-          if gap >= periodThreshold {
+          var handled = false
+
+          // A pause right after a forward-binding connective (一旦/如果/但是…)
+          // is speaker hesitation, not a clause boundary: the connective
+          // belongs to the NEXT clause, so punctuation goes before it
+          // (…有快有慢，一旦如果…). A segment that is only a connective gets
+          // no punctuation at all.
+          if gap >= commaThreshold, let (body, connective) = splitTrailingConnective(text) {
+            if !body.isEmpty {
+              output.removeLast(connective.count)
+              let punct = gap >= periodThreshold
+                ? determineSentenceEndPunctuation(body)
+                : "，"
+              output += punct + connective
+            }
+            handled = true
+          } else if gap >= commaThreshold, endsWithNonFinalTail(text) {
+            // A pause after a word that cannot end a sentence (重點在於…)
+            // is thinking hesitation — always a comma, never a period
+            output += "，"
+            handled = true
+          } else if gap >= periodThreshold {
             // Long pause → sentence end: pick 。/？/！ based on content
             output += determineSentenceEndPunctuation(text)
+            handled = true
           } else if gap >= commaThreshold {
             // Medium pause → clause break: pick ，or 、based on context
             output += determineClausePunctuation(text, next: nextText)
+            handled = true
           } else if gap >= enumerationThreshold {
             // Short pause → only insert 、for enumeration-like patterns
-            if looksLikeEnumeration(text, next: nextText) {
+            if splitTrailingConnective(text) == nil, looksLikeEnumeration(text, next: nextText) {
               output += "、"
+              handled = true
             }
+          }
+
+          // Zero/short gap but the next segment opens with a discourse
+          // marker (當然/其實…): the VAD split plus the opener is enough
+          // evidence of a clause boundary
+          if !handled, startsWithDiscourseOpener(nextText) {
+            output += "，"
           }
         }
       }
@@ -464,7 +529,6 @@ actor TranscriptionClientLive {
     // Normalize and clean up punctuation
     output = normalizePunctuation(output)
 
-    print("[TranscriptionClient] Segment-pause punctuation: \(allSegments.count) segments")
     return output
   }
 
@@ -574,12 +638,106 @@ actor TranscriptionClientLive {
         && nextCJKCount >= 1 && nextCJKCount <= 5
   }
 
+  #if DEBUG
+  /// Appends a diagnostic line to /tmp/tok-punctuation.log (debug builds only,
+  /// stdout is discarded for LaunchServices-launched apps).
+  private nonisolated static func appendDiagnostic(_ text: String) {
+    print(text, terminator: "")
+    let url = URL(fileURLWithPath: "/tmp/tok-punctuation.log")
+    guard let data = text.data(using: .utf8) else { return }
+    if let handle = try? FileHandle(forWritingTo: url) {
+      defer { try? handle.close() }
+      _ = try? handle.seekToEnd()
+      try? handle.write(contentsOf: data)
+    } else {
+      try? data.write(to: url)
+    }
+  }
+  #endif
+
+  // MARK: - Clause Marker Vocabulary
+
+  /// Connectives that bind to the FOLLOWING clause and cannot end one.
+  /// A pause right after any of these is speaker hesitation — punctuation
+  /// belongs before the connective, never after it.
+  /// Sorted longest-first to prevent partial matches.
+  private static let forwardBindingConnectives: [String] = [
+    // Adversative (轉折)
+    "但是", "然而", "可是", "不過",
+    // Consequential (因果)
+    "所以", "因此", "因而",
+    // Causal (原因)
+    "因為", "由於",
+    // Additive (遞進)
+    "而且", "並且", "況且", "另外", "此外", "同時",
+    // Concessive (讓步)
+    "雖然", "儘管", "即使",
+    // Conditional (條件)
+    "如果", "假如", "要是", "一旦", "只要", "除非",
+    // Alternative consequence (否則類)
+    "否則", "不然",
+    // Sequential (順序)
+    "然後", "接著", "接下來",
+    // Disjunctive (選擇)
+    "或者", "或是",
+  ].sorted { $0.count > $1.count }
+
+  /// Conditional connectives that commonly appear right after a subject
+  /// (天氣一旦變冷、你只要說) or between short noun phrases (牛奶或是咖啡).
+  /// Safe as pause-relocation anchors, but too noisy for blind comma
+  /// insertion inside continuous text.
+  private static let relocationOnlyConnectives: Set<String> = ["一旦", "只要", "除非", "或是"]
+
+  /// Words that cannot end a sentence (在於/就是/例如…). A long pause after
+  /// one is thinking hesitation — it demotes to a comma, never a period.
+  private static let nonFinalTails: [String] = [
+    "在於", "對於", "關於", "屬於", "等於", "位於",
+    "就是", "而是", "像是", "甚至是",
+    "例如", "譬如", "比如", "包括", "以及", "加上",
+  ]
+
+  /// Discourse openers: a segment BEGINNING with one of these marks a new
+  /// clause even when the gap is zero — the VAD split plus the opener word
+  /// is evidence enough (…獲得均衡｜當然如果… → 均衡，當然).
+  private static let discourseOpeners: [String] = [
+    "當然", "其實", "事實上", "總之", "簡單來說",
+  ]
+
+  private nonisolated func endsWithNonFinalTail(_ text: String) -> Bool {
+    Self.nonFinalTails.contains { text.hasSuffix($0) }
+  }
+
+  private nonisolated func startsWithDiscourseOpener(_ text: String) -> Bool {
+    Self.discourseOpeners.contains { text.hasPrefix($0) }
+  }
+
+  /// Temporal adverbs are clause starters only in some positions — they also
+  /// appear as noun-phrase modifiers (現在的工作), so insertion needs context
+  /// guards. 之前/之後 are excluded entirely: they are frequently
+  /// postpositional (去美國之前) and structurally unpredictable.
+  private static let temporalMarkers: [String] = [
+    "目前", "現在", "後來", "剛才", "最近", "當時",
+  ]
+
+  /// Discourse markers (語篇).
+  private static let discourseMarkers: [String] = [
+    "其實", "事實上", "總之", "簡單來說",
+  ]
+
+  /// If the text ends with a forward-binding connective, split it off.
+  private nonisolated func splitTrailingConnective(_ text: String) -> (body: String, connective: String)? {
+    for marker in Self.forwardBindingConnectives where text.hasSuffix(marker) {
+      return (String(text.dropLast(marker.count)), marker)
+    }
+    return nil
+  }
+
   // MARK: - Clause-Boundary Punctuation Fallback
 
   /// Fallback for single-segment results (common with Large model):
   /// Inserts commas before clause-boundary markers (conjunctions, temporal adverbs,
   /// discourse markers) when VAD segment timing is not available.
-  private nonisolated func insertPunctuationAtClauseBoundaries(_ text: String) -> String {
+  nonisolated func insertPunctuationAtClauseBoundaries(_ text: String) -> String {
     guard !text.isEmpty else { return text }
     let hasChinese = text.contains(where: { $0.isChineseCharacter })
     guard hasChinese else { return text }
@@ -587,29 +745,12 @@ actor TranscriptionClientLive {
     var result = text
     let allPunct: Set<Character> = ["。", "，", "？", "！", "；", "：", "、"]
 
-    // Clause-boundary markers — sorted longest-first to prevent partial matches
-    let clauseMarkers = [
-      // Adversative (轉折)
-      "但是", "然而", "可是", "不過",
-      // Consequential (因果)
-      "所以", "因此", "因而",
-      // Causal (原因)
-      "因為", "由於",
-      // Additive (遞進)
-      "而且", "並且", "況且", "另外", "此外", "同時",
-      // Concessive (讓步)
-      "雖然", "儘管", "即使",
-      // Conditional (條件)
-      "如果", "假如", "要是",
-      // Sequential (順序)
-      "然後", "接著", "接下來",
-      // Disjunctive (選擇)
-      "或者",
-      // Temporal (時間)
-      "目前", "現在", "之前", "之後", "後來", "剛才", "最近", "當時",
-      // Discourse (語篇)
-      "其實", "事實上", "總之", "簡單來說",
-    ].sorted { $0.count > $1.count }
+    // Insertion list — sorted longest-first to prevent partial matches
+    let clauseMarkers = (
+      Self.forwardBindingConnectives.filter { !Self.relocationOnlyConnectives.contains($0) }
+        + Self.temporalMarkers
+        + Self.discourseMarkers
+    ).sorted { $0.count > $1.count }
 
     for marker in clauseMarkers {
       var searchStart = result.startIndex
@@ -628,6 +769,27 @@ actor TranscriptionClientLive {
           continue
         }
 
+        // Skip if the marker directly follows another connective — compound
+        // clusters like 一旦如果 or 但是如果 must not be split internally
+        let prefix = result[..<range.lowerBound]
+        guard !Self.forwardBindingConnectives.contains(where: { prefix.hasSuffix($0) }) else {
+          searchStart = range.upperBound
+          continue
+        }
+
+        // Temporal adverbs in noun-phrase or prepositional contexts are not
+        // clause boundaries (現在的工作、從現在開始)
+        if Self.temporalMarkers.contains(marker) {
+          if range.upperBound < result.endIndex, result[range.upperBound] == "的" {
+            searchStart = range.upperBound
+            continue
+          }
+          if "的在從到比是了".contains(charBefore) {
+            searchStart = range.upperBound
+            continue
+          }
+        }
+
         // Insert ，before the clause marker
         result.insert("，", at: range.lowerBound)
         // Advance past the inserted comma + the marker
@@ -644,7 +806,7 @@ actor TranscriptionClientLive {
   /// 1. Converts half-width punctuation to full-width for Chinese text
   /// 2. Removes duplicate/consecutive punctuation (e.g. "?。" → "？")
   /// 3. Adds ending punctuation if missing
-  private nonisolated func normalizePunctuation(_ text: String) -> String {
+  nonisolated func normalizePunctuation(_ text: String) -> String {
     var result = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !result.isEmpty else { return result }
 
@@ -657,6 +819,18 @@ actor TranscriptionClientLive {
       for (half, full) in replacements {
         result = result.replacingOccurrences(of: half, with: full)
       }
+    }
+
+    // Step 1.5: Collapse whitespace between two punctuation marks so the
+    // dedup below sees them as consecutive ("。 ：" → "。：")
+    while true {
+      let collapsed = result.replacingOccurrences(
+        of: "([。，？！；：、])\\s+([。，？！；：、])",
+        with: "$1$2",
+        options: .regularExpression
+      )
+      if collapsed == result { break }
+      result = collapsed
     }
 
     // Step 2: Remove consecutive punctuation — keep only the first meaningful one
