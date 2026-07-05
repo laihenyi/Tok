@@ -88,9 +88,13 @@ struct TextProcessor: Sendable {
         // We keep everything before the preceding clause + the corrected clause.
         // NOTE: 應該是 is deliberately absent — it is an epistemic marker
         // (應該是吧), not a correction signal.
+        // 不對/不是 are ambiguous with negation, so they additionally REQUIRE
+        // a trailing pause: a spoken correction pauses after the signal
+        // (不對，去台南), while negation runs straight on (不是的/不是問題).
+        // Explicit phrases (我是說…) are unambiguous and stay lenient.
         let zhSignals = [
-            "不對[，、,\\s]*",
-            "不是[，、,\\s]*",
+            "不對[，、,\\s]+",
+            "不是[，、,\\s]+",
             "我是說[，、,\\s]*",
             "我的意思是[，、,\\s]*",
             "更正[，、,\\s]*",

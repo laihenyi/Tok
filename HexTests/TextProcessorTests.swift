@@ -46,6 +46,16 @@ struct TextProcessorTests {
     #expect(processor.process("不對，去台南。", options: options) == "去台南。")
   }
 
+  /// 句首否定（不是的／不是這樣）後面沒有停頓，不是修正訊號。
+  /// 實測 2026-07-05：使用者說「不是的。」輸出只剩「的。」。
+  /// 真修正的訊號詞後方必有停頓（不對，去台南），無停頓即否定。
+  @Test
+  func clauseInitialNegation_withoutTrailingPause_isPreserved() {
+    #expect(processor.process("不是的。", options: options) == "不是的。")
+    #expect(processor.process("不是這樣的。", options: options) == "不是這樣的。")
+    #expect(processor.process("這個方案，不是問題。", options: options) == "這個方案，不是問題。")
+  }
+
   /// 明確修正片語（我是說）維持既有行為。
   @Test
   func explicitCorrectionPhrase_stillResolves() {
