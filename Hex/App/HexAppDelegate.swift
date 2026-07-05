@@ -16,6 +16,10 @@ class HexAppDelegate: NSObject, NSApplicationDelegate {
 			return
 		}
 
+		// Seed bundled default dictionaries on first launch — must run before
+		// anything reads the custom-word or phonetic-glossary files
+		DefaultDictionaryInstaller.installDefaults()
+
 		// Reset model warm status to cold since models are unloaded when app closes
 		$hexSettings.withLock { $0.transcriptionModelWarmStatus = .cold }
 
