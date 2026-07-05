@@ -15,7 +15,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "47E05DED2D444EC600D26DA6"
-               BuildableName = "Tok.app"
+               BuildableName = "PE tok.app"
                BlueprintName = "Tok"
                ReferencedContainer = "container:Hex.xcodeproj">
             </BuildableReference>
@@ -57,7 +57,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "47E05DED2D444EC600D26DA6"
-            BuildableName = "Tok.app"
+            BuildableName = "PE tok.app"
             BlueprintName = "Tok"
             ReferencedContainer = "container:Hex.xcodeproj">
          </BuildableReference>
@@ -74,7 +74,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "47E05DED2D444EC600D26DA6"
-            BuildableName = "Tok.app"
+            BuildableName = "PE tok.app"
             BlueprintName = "Tok"
             ReferencedContainer = "container:Hex.xcodeproj">
          </BuildableReference>

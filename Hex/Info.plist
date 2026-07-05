@@ -3,25 +3,25 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>Tok (Fixed)</string>
+	<string>PE tok</string>
 	<key>NSAccessibilityUsageDescription</key>
 	<string>Tok needs accessibility access to monitor keyboard events for hotkey detection.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Tok needs microphone access to record and transcribe your speech.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Tok needs microphone access to record and transcribe your speech.</string>
 	<key>NSScreenCaptureDescription</key>
 	<string>Tok needs screen recording permission to capture screenshots for AI analysis and context understanding.</string>
-	<key>SUFeedURL</key>
-	<string>https://post-ci-update.doubleqsun.workers.dev/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>Tvo3tYgr75QhBuf7CzSHl0+jsZPXEq4LItEmC5czaMs=</string>
 	<key>SUAutomaticallyUpdate</key>
 	<false/>
 	<key>SUEnableAutomaticChecks</key>
 	<false/>
+	<key>SUFeedURL</key>
+	<string>https://post-ci-update.doubleqsun.workers.dev/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>Tvo3tYgr75QhBuf7CzSHl0+jsZPXEq4LItEmC5czaMs=</string>
 </dict>
 </plist>

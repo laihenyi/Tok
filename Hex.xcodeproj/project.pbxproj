@@ -286,7 +286,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tok.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Tok";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PE tok.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PE tok";
 			};
 			name = Debug;
 		};
@@ -305,7 +305,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tok.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Tok";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/PE tok.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PE tok";
 			};
 			name = Release;
 		};
@@ -447,7 +447,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Hex/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Tok;
+				INFOPLIST_KEY_CFBundleDisplayName = "PE tok";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Hex needs to control keyboard events to simulate paste operations.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Hex needs microphone access in order to transcribe your voice.";
@@ -459,7 +459,8 @@
 				MARKETING_VERSION = 0.2.1;
 				OTHER_LDFLAGS = "";
 				PRODUCT_BUNDLE_IDENTIFIER = "xyz.2qs.Tok-Fixed";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = Tok;
+				PRODUCT_NAME = "PE tok";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -483,7 +484,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Hex/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Tok;
+				INFOPLIST_KEY_CFBundleDisplayName = "PE tok";
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Hex needs to control keyboard events to simulate paste operations.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Hex needs microphone access in order to transcribe your voice.";
@@ -494,7 +495,8 @@
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.2.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "xyz.2qs.Tok-Fixed";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_MODULE_NAME = Tok;
+				PRODUCT_NAME = "PE tok";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
