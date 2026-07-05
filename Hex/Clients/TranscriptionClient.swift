@@ -987,6 +987,14 @@ actor TranscriptionClientLive {
     processed = customWordDictionary.applyReplacements(to: processed)
     print("[processTranscriptionText] After replacements: '\(processed)' (changed: \(beforeReplacement != processed))")
 
+    // Step 3.5: Phonetic glossary correction — repairs homophone-class
+    // misrecognitions of standard terms (whole glossary, no prompt-token cost)
+    let beforeGlossary = processed
+    processed = getCachedPhoneticGlossary().correct(processed)
+    if beforeGlossary != processed {
+      print("[processTranscriptionText] After phonetic glossary: '\(processed)'")
+    }
+
     return processed
   }
 
